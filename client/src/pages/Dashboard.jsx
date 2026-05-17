@@ -164,8 +164,7 @@ export default function Dashboard() {
 
   const handleGraphNodeClick = (lesson) => {
     if (lesson.locked) return
-    // Navigate to lesson page (placeholder for now)
-    navigate(`/lesson/${lesson.id}`)
+    navigate(`/topic/${activeTopicId}/lesson/${lesson.id}`)
   }
 
   const handleStateChange = async (lessonId, newState) => {

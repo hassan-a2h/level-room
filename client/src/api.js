@@ -214,3 +214,38 @@ export async function submitTestOut(topicId, lessonId, answers) {
   }
   return body
 }
+
+// Lesson Chat API
+export async function getLesson(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok && !body.locked) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function sendChatMessage(topicId, lessonId, content) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ content }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function continueLesson(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}

@@ -5,6 +5,7 @@ import db, { initSchema } from './db.js'
 import settingsRouter from './routes/settings.js'
 import dashboardRouter from './routes/dashboard.js'
 import curriculumRouter from './routes/curriculum.js'
+import lessonsRouter from './routes/lessons.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -29,6 +30,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/settings', settingsRouter)
 app.use('/api', dashboardRouter)
 app.use('/api', curriculumRouter)
+app.use('/api', lessonsRouter)
 
 const PORT = process.env.PORT || 3200
 app.listen(PORT, () => {

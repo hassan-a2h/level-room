@@ -169,6 +169,23 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration002)
     })()
   }
+
+  const migration003 = '003_add_lesson_chunk_tracking'
+  const check003 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration003)
+  if (!check003) {
+    db.transaction(() => {
+      try {
+        db.exec(`ALTER TABLE progress ADD COLUMN current_chunk INTEGER DEFAULT 0`)
+      } catch {}
+      try {
+        db.exec(`ALTER TABLE progress ADD COLUMN total_chunks INTEGER DEFAULT 0`)
+      } catch {}
+      try {
+        db.exec(`ALTER TABLE topics ADD COLUMN interaction_mode TEXT DEFAULT 'socratic'`)
+      } catch {}
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration003)
+    })()
+  }
 }
 
 /**
