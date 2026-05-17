@@ -169,7 +169,7 @@ describe('QuizPanel', () => {
     expect(screen.getByText(/85%/)).toBeInTheDocument()
   })
 
-  it('submits answers and shows fail result with gaps', async () => {
+  it('submits answers and shows remediation panel on fail', async () => {
     getQuiz.mockResolvedValue({
       questions: [
         { id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 },
@@ -202,47 +202,8 @@ describe('QuizPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(/not quite/i)).toBeInTheDocument()
     })
-    expect(screen.getByText(/60%/)).toBeInTheDocument()
     expect(screen.getByText(/did not understand jsx syntax/i)).toBeInTheDocument()
-  })
-
-  it('shows retry button after failing and resets on click', async () => {
-    getQuiz.mockResolvedValue({
-      questions: [
-        { id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 },
-      ],
-      answers: {},
-      evaluation: null,
-    })
-
-    submitQuiz.mockResolvedValue({
-      overallScore: 60,
-      passed: false,
-      criticalGap: true,
-      feedback: [
-        { questionId: 'q1', correctness: 'incorrect', score: 0, explanation: 'Wrong.' },
-      ],
-      gaps: ['Gap'],
-    })
-
-    render(<QuizPanel topicId={1} lessonId={1} onBack={vi.fn()} />)
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/type your answer/i)).toBeInTheDocument()
-    })
-
-    fireEvent.change(screen.getByPlaceholderText(/type your answer/i), { target: { value: 'Wrong' } })
-    fireEvent.click(screen.getByRole('button', { name: /submit answers/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /try again/i }))
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/type your answer/i)).toBeInTheDocument()
-    })
+    expect(screen.getByRole('button', { name: /take retest/i })).toBeInTheDocument()
   })
 
   it('shows back to dashboard button on pass', async () => {

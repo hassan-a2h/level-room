@@ -207,6 +207,16 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration004)
     })()
   }
+
+  const migration005 = '005_add_remediation_columns'
+  const check005 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration005)
+  if (!check005) {
+    db.transaction(() => {
+      try { db.exec('ALTER TABLE progress ADD COLUMN remediation_attempts INTEGER DEFAULT 0') } catch {}
+      try { db.exec('ALTER TABLE progress ADD COLUMN last_gaps TEXT') } catch {}
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration005)
+    })()
+  }
 }
 
 /**

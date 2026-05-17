@@ -314,7 +314,7 @@ export function startQuiz({ topicId, lessonId }) {
 export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers, evaluation, attemptId }) {
   const tx = transaction((_topicId, _lessonId, _passed, _quizScore, _answers, _evaluation, _attemptId) => {
     const progress = get(
-      'SELECT id, state, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT id, state, quiz_attempts, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
       _topicId,
       _lessonId,
     )
@@ -327,14 +327,46 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
 
     const newState = _passed ? STATES.PASSED : STATES.REMEDIATING
     const completedAt = _passed ? new Date().toISOString() : null
+    const gaps = Array.isArray(_evaluation?.gaps) ? _evaluation.gaps : []
+    const gapsJson = JSON.stringify(gaps)
+    const newRemediationAttempts = _passed ? (progress.remediation_attempts || 0) : (progress.remediation_attempts || 0) + 1
 
     run(
-      'UPDATE progress SET state = ?, quiz_score = ?, quiz_attempts = quiz_attempts + 1, completed_at = ? WHERE id = ?',
+      `UPDATE progress SET state = ?, quiz_score = ?, quiz_attempts = quiz_attempts + 1, completed_at = ?, remediation_attempts = ?, last_gaps = ? WHERE id = ?`,
       newState,
       _quizScore,
       completedAt,
+      newRemediationAttempts,
+      gapsJson,
       progress.id,
     )
+
+    if (!_passed && gaps.length > 0) {
+      // Log or update mistakes_log entries for each gap
+      for (const gap of gaps) {
+        const existing = get(
+          'SELECT id, recurring FROM mistakes_log WHERE topic_id = ? AND lesson_id = ? AND description = ?',
+          _topicId,
+          _lessonId,
+          gap,
+        )
+        if (existing) {
+          run(
+            'UPDATE mistakes_log SET recurring = 1, cleared_after = 0 WHERE id = ?',
+            existing.id,
+          )
+        } else {
+          run(
+            'INSERT INTO mistakes_log (topic_id, lesson_id, description, recurring, cleared_after) VALUES (?, ?, ?, ?, ?)',
+            _topicId,
+            _lessonId,
+            gap,
+            0,
+            0,
+          )
+        }
+      }
+    }
 
     if (_passed) {
       scheduleSrs(_topicId, _lessonId)

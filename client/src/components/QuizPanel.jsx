@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { startQuiz, getQuiz, submitQuiz } from '../api.js'
+import RemediationPanel from './RemediationPanel.jsx'
 
 const TYPE_LABELS = {
   Recall: 'Recall',
@@ -66,7 +67,7 @@ function QuestionCard({ question, answer, onAnswerChange, index, total, disabled
   )
 }
 
-function EvaluationResult({ evaluation, onBack, onRetry }) {
+function EvaluationResult({ evaluation, onBack, onRetry, onStartRemediation }) {
   const isPass = evaluation.passed
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -129,10 +130,10 @@ function EvaluationResult({ evaluation, onBack, onRetry }) {
         ) : (
           <>
             <button
-              onClick={onRetry}
+              onClick={onStartRemediation || onRetry}
               className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
             >
-              Try Again
+              {onStartRemediation ? 'Review & Retest' : 'Try Again'}
             </button>
             <button
               onClick={onBack}
@@ -153,6 +154,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
   const [evaluation, setEvaluation] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [remediationMode, setRemediationMode] = useState(false)
 
   // Load existing quiz on mount
   useEffect(() => {
@@ -184,6 +186,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
         setQuestions(data.questions)
         setAnswers({})
         setEvaluation(null)
+        setRemediationMode(false)
       }
     } catch (err) {
       setError(err.message || 'Failed to start quiz.')
@@ -208,6 +211,9 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
     try {
       const result = await submitQuiz(topicId, lessonId, answers)
       setEvaluation({ ...result, _questions: questions, _answers: answers })
+      if (!result.passed) {
+        setRemediationMode(true)
+      }
     } catch (err) {
       setError(err.message || 'Failed to submit quiz.')
     } finally {
@@ -219,7 +225,31 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
     setEvaluation(null)
     setAnswers({})
     setError('')
+    setRemediationMode(false)
   }, [])
+
+  const handleRemediateBack = useCallback(() => {
+    setRemediationMode(false)
+    setEvaluation(null)
+    setAnswers({})
+    setError('')
+  }, [])
+
+  // If remediation mode is active, show the full remediation panel
+  if (remediationMode) {
+    return (
+      <RemediationPanel
+        topicId={topicId}
+        lessonId={lessonId}
+        initialGaps={evaluation?.gaps || []}
+        initialAttempts={1}
+        onBack={handleRemediateBack}
+        onReteach={() => {}}
+        onPrereq={onBack}
+        onDefer={onBack}
+      />
+    )
+  }
 
   // If evaluation already exists from prior attempt, show result
   if (evaluation) {

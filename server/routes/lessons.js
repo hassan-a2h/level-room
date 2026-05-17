@@ -124,9 +124,9 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
     }
 
     const progress = get(
-      'SELECT state, current_chunk, total_chunks, quiz_score, quiz_attempts, started_at, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT state, current_chunk, total_chunks, quiz_score, quiz_attempts, started_at, completed_at, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
       topicId, lessonId
-    ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0 }
+    ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0, remediation_attempts: 0, last_gaps: null }
 
     const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
@@ -474,6 +474,28 @@ Generate a JSON object with a "questions" array. Each question must have:
 - weight (integer: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3)
 
 All questions must be free-text (no multiple choice). Make them context-aware and related to the lesson content. Return ONLY valid JSON.`
+}
+
+/**
+ * Build retest quiz prompt focused only on missed gaps.
+ */
+function buildRetestPrompt({ lessonTitle, lessonOutcomes, gaps, messages }) {
+  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  return `You are an expert tutor. The learner previously failed a quiz on "${lessonTitle}" and specifically struggled with these gaps:
+${gaps.map((g) => `- ${g}`).join('\n')}
+
+Lesson outcomes: ${lessonOutcomes.join('; ')}
+
+Conversation context:
+${context}
+
+Generate a SHORT retest of 1-3 free-text questions that target ONLY the gaps listed above. Do NOT ask about concepts the learner already demonstrated mastery of. Each question must have:
+- id (string)
+- text (string, the question prompt)
+- type (one of: Recall, Explain, Apply, Diagnose, Transfer)
+- weight (integer: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3)
+
+Return ONLY valid JSON with a "questions" array.`
 }
 
 /**
@@ -913,6 +935,311 @@ router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/test-out/finish error:', err.message)
     return res.status(500).json({ error: 'Failed to finish test-out.' })
+  }
+})
+
+/**
+ * GET /api/topics/:id/lessons/:lid/remediate
+ * Get current remediation state (gaps, attempts).
+ */
+router.get('/topics/:id/lessons/:lid/remediate', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    const progress = get(
+      'SELECT state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      topicId, lessonId
+    )
+
+    if (!progress) {
+      return res.status(404).json({ error: 'No progress found for this lesson.' })
+    }
+
+    let gaps = []
+    try {
+      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
+    } catch {
+      gaps = []
+    }
+
+    return res.json({
+      state: progress.state,
+      remediationAttempts: progress.remediation_attempts || 0,
+      gaps,
+    })
+  } catch (err) {
+    console.error('GET /api/topics/:id/lessons/:lid/remediate error:', err.message)
+    return res.status(500).json({ error: 'Failed to load remediation state.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/remediate/chat
+ * Send a user message during remediation and stream targeted re-teach response.
+ */
+router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+    const { content } = req.body
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return res.status(400).json({ error: 'Message content is required.' })
+    }
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} character limit.` })
+    }
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    const progress = get('SELECT id, state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!progress || progress.state !== 'remediating') {
+      return res.status(400).json({ error: 'Lesson must be in remediating state to use remediation chat.' })
+    }
+
+    let gaps = []
+    try {
+      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
+    } catch {
+      gaps = []
+    }
+
+    // Persist user message
+    run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
+
+    // Build conversation history
+    const history = all(
+      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
+      topicId, lessonId
+    )
+
+    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
+    if (!settings || !settings.api_key) {
+      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    let outcomes = []
+    try {
+      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
+    } catch {
+      outcomes = []
+    }
+
+    const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
+
+    const system = `You are an expert tutor. The learner is struggling with the lesson "${lesson.title}" and specifically these gaps:
+${gaps.map((g) => `- ${g}`).join('\n')}
+
+Learning outcomes: ${outcomes.join('; ')}.
+This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT explanation strategy from the original lesson (new analogy, new example, different framing). Keep the message under ~500 characters or 3 short paragraphs. Be encouraging, not punitive.`
+
+    const streamResult = await streamText({
+      provider: settings.provider,
+      apiKey: settings.api_key,
+      model: settings.model,
+      system,
+      messages: history.map((m) => ({ role: m.role, content: m.content })),
+    })
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    })
+
+    let assistantText = ''
+    try {
+      for await (const chunk of streamResult.textStream) {
+        const text = typeof chunk === 'string' ? chunk : ''
+        assistantText += text
+        res.write(`data: ${JSON.stringify(text)}\n\n`)
+      }
+      res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
+      res.end()
+    } catch (err) {
+      if (err instanceof LlmClientError) {
+        res.write(`event: error\n`)
+        res.write(`data: ${JSON.stringify({ message: err.message, code: err.code, retryable: err.retryable })}\n\n`)
+      } else {
+        res.write(`event: error\n`)
+        res.write(`data: ${JSON.stringify({ message: err.message || 'Streaming failed.', code: 'STREAM_ERROR', retryable: true })}\n\n`)
+      }
+      res.end()
+      return
+    }
+
+    if (assistantText.trim()) {
+      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', assistantText.trim())
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/remediate/chat error:', err.message)
+    if (!res.headersSent) {
+      if (err instanceof LlmClientError) {
+        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+      }
+      return res.status(500).json({ error: 'Failed to process remediation chat message.' })
+    }
+    try {
+      res.write(`event: error\n`)
+      res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
+      res.end()
+    } catch {}
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/remediate/retest
+ * Generate retest questions targeting gaps, transition remediating -> quiz_pending.
+ */
+router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    const progress = get('SELECT id, state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!progress || progress.state !== 'remediating') {
+      return res.status(400).json({ error: 'Lesson must be in remediating state to start a retest.' })
+    }
+
+    let gaps = []
+    try {
+      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
+    } catch {
+      gaps = []
+    }
+
+    if (gaps.length === 0) {
+      return res.status(400).json({ error: 'No gaps identified for retest. Cannot generate retest without diagnostic gaps.' })
+    }
+
+    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
+    if (!settings || !settings.api_key) {
+      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    // Transition via state machine
+    try {
+      startRetest({ topicId, lessonId })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+
+    let outcomes = []
+    try {
+      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
+    } catch {
+      outcomes = []
+    }
+
+    const messages = all(
+      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
+      topicId, lessonId
+    )
+
+    const system = buildRetestPrompt({
+      lessonTitle: lesson.title,
+      lessonOutcomes: outcomes,
+      gaps,
+      messages,
+    })
+
+    const result = await generateText({
+      provider: settings.provider,
+      apiKey: settings.api_key,
+      model: settings.model,
+      system,
+      messages: [{ role: 'user', content: 'Generate the retest questions as JSON.' }],
+    })
+
+    let parsed
+    try {
+      const text = result.text || '{}'
+      parsed = JSON.parse(text)
+    } catch {
+      return res.status(500).json({ error: 'Failed to parse retest questions from LLM. Please try again.' })
+    }
+
+    const questions = Array.isArray(parsed.questions) ? parsed.questions : []
+    if (questions.length === 0) {
+      return res.status(500).json({ error: 'LLM returned no retest questions. Please try again.' })
+    }
+
+    const validQuestions = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
+    if (validQuestions.length === 0) {
+      return res.status(500).json({ error: 'LLM returned malformed retest questions. Please try again.' })
+    }
+
+    const questionsJson = JSON.stringify(validQuestions)
+    run(
+      'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
+      topicId, lessonId, questionsJson
+    )
+
+    return res.json({ questions: validQuestions })
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/remediate/retest error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to generate retest.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/remediate/defer
+ * Save progress and defer the lesson (remediating -> skipped).
+ */
+router.post('/topics/:id/lessons/:lid/remediate/defer', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    try {
+      const result = skipLesson({ topicId, lessonId })
+      return res.json({ success: true, ...result })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/remediate/defer error:', err.message)
+    return res.status(500).json({ error: 'Failed to defer lesson.' })
   }
 })
 

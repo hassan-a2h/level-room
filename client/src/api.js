@@ -284,3 +284,49 @@ export async function submitQuiz(topicId, lessonId, answers) {
   }
   return body
 }
+
+export async function getRemediationState(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function sendRemediateChat(topicId, lessonId, content) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ content }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function startRetest(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/retest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function deferLesson(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/defer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
