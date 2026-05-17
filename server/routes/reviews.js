@@ -8,6 +8,7 @@ import {
   isLessonSkipped,
   scheduleCumulativeReviews,
 } from '../utils/srs-scheduler.js'
+import { recordMasteryEvent } from '../utils/streak-tracker.js'
 
 const router = Router()
 
@@ -510,6 +511,16 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
         feedback: entry.questionFeedback,
         ...srsUpdate,
       })
+    }
+
+    // Record streak on review pass (≥80%)
+    if (passed) {
+      try {
+        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+        recordMasteryEvent(localDate)
+      } catch (streakErr) {
+        console.error('Streak record error on review pass:', streakErr.message)
+      }
     }
 
     // Clean up session

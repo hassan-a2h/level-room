@@ -10,9 +10,10 @@ vi.mock('../api.js', () => ({
   selectTopic: vi.fn(),
   getDefaultTopic: vi.fn(),
   getReviewCount: vi.fn(),
+  getStreak: vi.fn(),
 }))
 
-import { getTopics, getDashboard, getDefaultTopic, selectTopic, getReviewCount } from '../api.js'
+import { getTopics, getDashboard, getDefaultTopic, selectTopic, getReviewCount, getStreak } from '../api.js'
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -22,6 +23,7 @@ describe('Dashboard', () => {
   it('shows empty state when no topics exist', async () => {
     getTopics.mockResolvedValue({ topics: [] })
     getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
 
     render(
       <MemoryRouter>
@@ -44,6 +46,7 @@ describe('Dashboard', () => {
       ],
     })
     getReviewCount.mockResolvedValue({ totalDue: 3 })
+    getStreak.mockResolvedValue({ currentStreak: 2, maxStreak: 5, backlog: false, streakBroken: false, message: '2-day streak — keep it going!' })
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
     getDashboard.mockResolvedValue({
       topic: { id: 1, title: 'React' },
@@ -82,6 +85,7 @@ describe('Dashboard', () => {
       ],
     })
     getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 1, maxStreak: 1, backlog: false, streakBroken: false, message: '1-day streak — keep it going!' })
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
     getDashboard
       .mockResolvedValueOnce({
@@ -131,6 +135,7 @@ describe('Dashboard', () => {
       ],
     })
     getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
     getDefaultTopic.mockResolvedValue({ topic: { id: 2, title: 'Recent' } })
     getDashboard.mockResolvedValue({
       topic: { id: 2, title: 'Recent' },
@@ -159,6 +164,7 @@ describe('Dashboard', () => {
       ],
     })
     getReviewCount.mockResolvedValue({ totalDue: 3, dueToday: 2, overdue: 1 })
+    getStreak.mockResolvedValue({ currentStreak: 3, maxStreak: 3, backlog: false, streakBroken: false, message: '3-day streak — great work today!' })
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
     getDashboard.mockResolvedValue({
       topic: { id: 1, title: 'React' },
@@ -184,5 +190,97 @@ describe('Dashboard', () => {
     })
 
     expect(screen.getByRole('button', { name: /reviews/i })).toBeInTheDocument()
+  })
+
+  it('displays active streak banner on dashboard', async () => {
+    getTopics.mockResolvedValue({
+      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 5, maxStreak: 5, backlog: false, streakBroken: false, message: '5-day streak — great work today!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 1, title: 'React' },
+      modules: [{
+        id: 1, title: 'Basics',
+        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
+      }],
+    })
+
+    render(<MemoryRouter><Dashboard /></MemoryRouter>)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('streak-active')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/5-day streak/i)).toBeInTheDocument()
+  })
+
+  it('displays streak-broken banner after a gap', async () => {
+    getTopics.mockResolvedValue({
+      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 3, maxStreak: 10, backlog: false, streakBroken: true, message: 'Your 3-day streak was broken. No pressure — pick up where you left off!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 1, title: 'React' },
+      modules: [{
+        id: 1, title: 'Basics',
+        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
+      }],
+    })
+
+    render(<MemoryRouter><Dashboard /></MemoryRouter>)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('streak-broken')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/streak was broken/i)).toBeInTheDocument()
+  })
+
+  it('displays backlog banner after 7+ days inactive', async () => {
+    getTopics.mockResolvedValue({
+      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 2, maxStreak: 8, backlog: true, streakBroken: true, daysSince: 8, message: 'Your 2-day streak was broken. No pressure — pick up where you left off!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 1, title: 'React' },
+      modules: [{
+        id: 1, title: 'Basics',
+        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
+      }],
+    })
+
+    render(<MemoryRouter><Dashboard /></MemoryRouter>)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('streak-backlog')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/8 days since last activity/i)).toBeInTheDocument()
+  })
+
+  it('displays start-streak banner for new user', async () => {
+    getTopics.mockResolvedValue({
+      topics: [{ id: 1, title: 'React', progress: 0, totalLessons: 4, passedLessons: 0, status: 'active' }],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 1, title: 'React' },
+      modules: [{
+        id: 1, title: 'Basics',
+        lessons: [{ id: 1, title: 'JSX', state: 'not_started', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
+      }],
+    })
+
+    render(<MemoryRouter><Dashboard /></MemoryRouter>)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('streak-start')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/start your learning streak/i)).toBeInTheDocument()
   })
 })

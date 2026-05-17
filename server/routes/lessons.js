@@ -13,6 +13,7 @@ import {
   StateMachineError,
   recordArtifactResult,
 } from '../utils/lesson-state-machine.js'
+import { recordMasteryEvent } from '../utils/streak-tracker.js'
 
 const router = Router()
 
@@ -807,6 +808,16 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
       throw smErr
     }
 
+    // Record streak on quiz pass
+    if (passed) {
+      try {
+        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+        recordMasteryEvent(localDate)
+      } catch (streakErr) {
+        console.error('Streak record error on quiz pass:', streakErr.message)
+      }
+    }
+
     return res.json(evaluation)
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/quiz/submit error:', err.message)
@@ -929,6 +940,16 @@ router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
         evaluation,
         attemptId,
       })
+
+      if (passed) {
+        try {
+          const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+          recordMasteryEvent(localDate)
+        } catch (streakErr) {
+          console.error('Streak record error on test-out pass:', streakErr.message)
+        }
+      }
+
       return res.json(result)
     } catch (smErr) {
       if (smErr instanceof StateMachineError) {
@@ -1423,6 +1444,16 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       JSON.stringify(feedback),
       attemptNumber,
     )
+
+    // Record streak when artifact completes the lesson
+    if (stateMachineResult.toState === 'passed' || stateMachineResult.toState === 'tested_out') {
+      try {
+        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+        recordMasteryEvent(localDate)
+      } catch (streakErr) {
+        console.error('Streak record error on artifact pass:', streakErr.message)
+      }
+    }
 
     return res.json({
       evaluation,

@@ -3,6 +3,7 @@ import { get, run, all, transaction } from '../db.js'
 import { generateText, LlmClientError } from '../llm/client.js'
 import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
+import { recordMasteryEvent } from '../utils/streak-tracker.js'
 
 const router = Router()
 
@@ -537,6 +538,16 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
       }
     }
 
+    // Record streak on exam pass
+    if (passed) {
+      try {
+        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+        recordMasteryEvent(localDate)
+      } catch (streakErr) {
+        console.error('Streak record error on exam pass:', streakErr.message)
+      }
+    }
+
     return res.json({
       ...evaluation,
       nextModuleUnlocked,
@@ -910,6 +921,16 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
       )
       if (nextModule) {
         nextModuleUnlocked = true
+      }
+    }
+
+    // Record streak on module completion via partial retest
+    if (modulePassed) {
+      try {
+        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
+        recordMasteryEvent(localDate)
+      } catch (streakErr) {
+        console.error('Streak record error on partial retest module pass:', streakErr.message)
       }
     }
 

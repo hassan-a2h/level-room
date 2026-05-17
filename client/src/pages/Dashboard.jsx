@@ -7,6 +7,7 @@ import {
   selectTopic,
   getDefaultTopic,
   getReviewCount,
+  getStreak,
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
 import ExamPanel from '../components/ExamPanel.jsx'
@@ -128,6 +129,7 @@ export default function Dashboard() {
   const [error, setError] = useState('')
   const [examModuleId, setExamModuleId] = useState(null)
   const [reviewCounts, setReviewCounts] = useState(null)
+  const [streak, setStreak] = useState(null)
   const navigate = useNavigate()
 
   const loadTopics = useCallback(async () => {
@@ -160,11 +162,21 @@ export default function Dashboard() {
     }
   }, [])
 
+  const loadStreak = useCallback(async () => {
+    try {
+      const data = await getStreak()
+      setStreak(data)
+    } catch {
+      setStreak(null)
+    }
+  }, [])
+
   const init = useCallback(async () => {
     setLoading(true)
     setError('')
     const topicList = await loadTopics()
     await loadReviewCounts()
+    await loadStreak()
     if (topicList.length === 0) {
       setLoading(false)
       return
@@ -181,7 +193,7 @@ export default function Dashboard() {
       }
     }
     setLoading(false)
-  }, [loadTopics, loadDashboard, loadReviewCounts])
+  }, [loadTopics, loadDashboard, loadReviewCounts, loadStreak])
 
   useEffect(() => {
     init()
@@ -295,6 +307,58 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      {/* Streak banner */}
+      {streak && (
+        <div className="max-w-7xl mx-auto px-4 mt-4">
+          {streak.backlog ? (
+            <div
+              className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 flex items-center justify-between"
+              role="status"
+              data-testid="streak-backlog"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📚</span>
+                <span>{streak.message}</span>
+              </div>
+              <span className="text-xs font-medium text-amber-700">{streak.daysSince} days since last activity</span>
+            </div>
+          ) : streak.streakBroken ? (
+            <div
+              className="rounded-lg bg-orange-50 border border-orange-200 p-3 text-sm text-orange-800 flex items-center gap-2"
+              role="status"
+              data-testid="streak-broken"
+            >
+              <span className="text-lg">💔</span>
+              <span>{streak.message}</span>
+            </div>
+          ) : streak.currentStreak > 0 ? (
+            <div
+              className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800 flex items-center justify-between"
+              role="status"
+              data-testid="streak-active"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔥</span>
+                <span className="font-semibold">{streak.currentStreak}-day streak</span>
+                <span className="text-green-700">{streak.message.replace(/\d+-day streak — /, '')}</span>
+              </div>
+              {streak.maxStreak > streak.currentStreak && (
+                <span className="text-xs text-green-700">Best: {streak.maxStreak} days</span>
+              )}
+            </div>
+          ) : (
+            <div
+              className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm text-gray-700 flex items-center gap-2"
+              role="status"
+              data-testid="streak-start"
+            >
+              <span className="text-lg">✨</span>
+              <span>{streak.message}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (

@@ -440,6 +440,30 @@ export async function getArtifact(topicId, lessonId) {
   return body
 }
 
+// Streak API
+export async function getStreak(today) {
+  const url = today ? `${API_BASE}/api/streak?today=${encodeURIComponent(today)}` : `${API_BASE}/api/streak`
+  const res = await fetch(url)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function recordStreakEvent(localDate) {
+  const res = await fetch(`${API_BASE}/api/streak/record`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ localDate }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
 // SRS / Review Queue API
 export async function getReviews() {
   const res = await fetch(`${API_BASE}/api/reviews`)
