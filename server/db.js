@@ -186,6 +186,27 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration003)
     })()
   }
+
+  const migration004 = '004_add_quiz_attempts_table'
+  const check004 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration004)
+  if (!check004) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quiz_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL,
+          lesson_id INTEGER NOT NULL,
+          questions TEXT,
+          answers TEXT,
+          evaluation TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+          FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+        )
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration004)
+    })()
+  }
 }
 
 /**

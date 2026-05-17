@@ -7,6 +7,7 @@ vi.mock('../api.js', () => ({
   getLesson: vi.fn(),
   sendChatMessage: vi.fn(),
   continueLesson: vi.fn(),
+  getQuiz: vi.fn(),
 }))
 
 import { getLesson, sendChatMessage, continueLesson } from '../api.js'
@@ -226,6 +227,69 @@ describe('LessonChat', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/check your understanding/i)).toBeInTheDocument()
+    })
+  })
+
+  it('enters quiz mode when Start Quiz is clicked', async () => {
+    getLesson.mockResolvedValue({
+      lesson: { id: 1, title: 'JSX', depth: 'Beginner', estimated_time: 10, module_title: 'Basics' },
+      progress: { state: 'practicing', current_chunk: 3, total_chunks: 3 },
+      messages: [
+        { id: 1, role: 'assistant', content: 'Now you know the basics of JSX!' },
+      ],
+      interactionMode: 'code',
+      locked: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/topic/1/lesson/1']}>
+        <Routes>
+          <Route path="/topic/:topicId/lesson/:lessonId" element={<LessonChat />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/check your understanding/i)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /start quiz/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/check your understanding/i)).toBeInTheDocument()
+    })
+  })
+
+  it('enters quiz mode automatically if lesson state is quiz_pending', async () => {
+    getLesson.mockResolvedValue({
+      lesson: { id: 1, title: 'JSX', depth: 'Beginner', estimated_time: 10, module_title: 'Basics' },
+      progress: { state: 'quiz_pending', current_chunk: 3, total_chunks: 3 },
+      messages: [
+        { id: 1, role: 'assistant', content: 'Now you know the basics of JSX!' },
+      ],
+      interactionMode: 'code',
+      locked: false,
+    })
+
+    const { getQuiz } = await import('../api.js')
+    getQuiz.mockResolvedValue({
+      questions: [
+        { id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 },
+      ],
+      answers: {},
+      evaluation: null,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/topic/1/lesson/1']}>
+        <Routes>
+          <Route path="/topic/:topicId/lesson/:lessonId" element={<LessonChat />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('What is JSX?')).toBeInTheDocument()
     })
   })
 

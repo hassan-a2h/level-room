@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getLesson, sendChatMessage, continueLesson } from '../api.js'
+import { getLesson, sendChatMessage, continueLesson, getQuiz } from '../api.js'
+import QuizPanel from './QuizPanel.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
@@ -33,6 +34,21 @@ function LessonHeader({ lesson, progress, interactionMode }) {
         {progress?.state === 'practicing' && (
           <span className="text-xs text-amber-600 font-medium">
             In progress
+          </span>
+        )}
+        {progress?.state === 'quiz_pending' && (
+          <span className="text-xs text-indigo-600 font-medium">
+            Quiz pending
+          </span>
+        )}
+        {progress?.state === 'remediating' && (
+          <span className="text-xs text-red-600 font-medium">
+            Remediating
+          </span>
+        )}
+        {progress?.state === 'passed' && (
+          <span className="text-xs text-green-600 font-medium">
+            Passed
           </span>
         )}
       </div>
@@ -151,6 +167,7 @@ export default function LessonChat() {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
+  const [quizMode, setQuizMode] = useState(false)
   const chatEndRef = useRef(null)
   const abortRef = useRef(null)
 
@@ -163,6 +180,7 @@ export default function LessonChat() {
   const loadLesson = useCallback(async () => {
     setLoading(true)
     setError('')
+    setQuizMode(false)
     try {
       const data = await getLesson(topicId, lessonId)
       if (data.locked) {
@@ -177,6 +195,18 @@ export default function LessonChat() {
       setMessages(data.messages || [])
       setInteractionMode(data.interactionMode || 'socratic')
       setLocked(false)
+
+      // If lesson is already in quiz_pending, passed, or remediating, check for existing quiz
+      if (['quiz_pending', 'passed', 'remediating'].includes(data.progress?.state)) {
+        try {
+          const quizData = await getQuiz(topicId, lessonId)
+          if (quizData.questions && quizData.questions.length > 0) {
+            setQuizMode(true)
+          }
+        } catch {
+          // No quiz yet
+        }
+      }
     } catch (err) {
       setError(err.message || 'Failed to load lesson.')
     }
@@ -316,6 +346,10 @@ export default function LessonChat() {
   const showContinue = !isStreaming && !isFinalChunk && lastMessageIsAssistant && progress?.state === 'practicing'
   const showQuizPrompt = !isStreaming && isFinalChunk && lastMessageIsAssistant && progress?.state === 'practicing'
 
+  const handleStartQuiz = useCallback(() => {
+    setQuizMode(true)
+  }, [])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -380,62 +414,68 @@ export default function LessonChat() {
         </div>
       )}
 
-      {/* Chat area */}
-      <div className="flex-1 overflow-y-auto px-4 py-4" role="log" aria-live="polite" aria-label="Lesson chat">
-        <div className="max-w-3xl mx-auto">
-          {messages.map((msg, idx) => (
-            <ChatMessage
-              key={msg.id || idx}
-              message={msg}
-              isStreaming={false}
-            />
-          ))}
-          {isStreaming && streamText && (
-            <ChatMessage
-              message={{ role: 'assistant', content: streamText }}
-              isStreaming={true}
-            />
-          )}
-          {isStreaming && !streamText && <TypingIndicator />}
-          {showContinue && (
-            <ContinueButton onClick={handleContinue} disabled={isStreaming} />
-          )}
-          {showQuizPrompt && (
-            <CheckUnderstandingPrompt onStartQuiz={() => {}} />
-          )}
-          <div ref={chatEndRef} />
-        </div>
-      </div>
-
-      {/* Input area */}
-      <div className="border-t border-gray-200 bg-white px-4 py-3 shrink-0">
-        <div className="max-w-3xl mx-auto flex items-end gap-2">
-          <div className="flex-1 relative">
-            <textarea
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              rows={1}
-              maxLength={MAX_MESSAGE_LENGTH}
-              disabled={isStreaming || locked}
-              className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-              style={{ minHeight: '44px', maxHeight: '120px' }}
-            />
-            <div className="absolute right-2 bottom-2 text-[10px] text-gray-400 pointer-events-none">
-              {input.length}/{MAX_MESSAGE_LENGTH}
+      {quizMode ? (
+        <QuizPanel topicId={topicId} lessonId={lessonId} onBack={() => navigate('/')} />
+      ) : (
+        <>
+          {/* Chat area */}
+          <div className="flex-1 overflow-y-auto px-4 py-4" role="log" aria-live="polite" aria-label="Lesson chat">
+            <div className="max-w-3xl mx-auto">
+              {messages.map((msg, idx) => (
+                <ChatMessage
+                  key={msg.id || idx}
+                  message={msg}
+                  isStreaming={false}
+                />
+              ))}
+              {isStreaming && streamText && (
+                <ChatMessage
+                  message={{ role: 'assistant', content: streamText }}
+                  isStreaming={true}
+                />
+              )}
+              {isStreaming && !streamText && <TypingIndicator />}
+              {showContinue && (
+                <ContinueButton onClick={handleContinue} disabled={isStreaming} />
+              )}
+              {showQuizPrompt && (
+                <CheckUnderstandingPrompt onStartQuiz={handleStartQuiz} />
+              )}
+              <div ref={chatEndRef} />
             </div>
           </div>
-          <button
-            onClick={handleSend}
-            disabled={isStreaming || !input.trim() || locked}
-            className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-            aria-label="Send message"
-          >
-            Send
-          </button>
-        </div>
-      </div>
+
+          {/* Input area */}
+          <div className="border-t border-gray-200 bg-white px-4 py-3 shrink-0">
+            <div className="max-w-3xl mx-auto flex items-end gap-2">
+              <div className="flex-1 relative">
+                <textarea
+                  value={input}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a message..."
+                  rows={1}
+                  maxLength={MAX_MESSAGE_LENGTH}
+                  disabled={isStreaming || locked}
+                  className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  style={{ minHeight: '44px', maxHeight: '120px' }}
+                />
+                <div className="absolute right-2 bottom-2 text-[10px] text-gray-400 pointer-events-none">
+                  {input.length}/{MAX_MESSAGE_LENGTH}
+                </div>
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={isStreaming || !input.trim() || locked}
+                className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                aria-label="Send message"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

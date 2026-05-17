@@ -249,3 +249,38 @@ export async function continueLesson(topicId, lessonId) {
   }
   return res
 }
+
+// Quiz API
+export async function startQuiz(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function getQuiz(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function submitQuiz(topicId, lessonId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}

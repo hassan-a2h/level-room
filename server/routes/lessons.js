@@ -1,11 +1,24 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
-import { streamText, LlmClientError } from '../llm/client.js'
+import { streamText, generateText, LlmClientError } from '../llm/client.js'
 
 const router = Router()
 
 const MAX_MESSAGE_LENGTH = 2000
 const DEFAULT_TOTAL_CHUNKS = 3
+const QUIZ_PASS_THRESHOLD = 80
+const SRS_INTERVALS = [1, 3, 7, 14, 30]
+
+/**
+ * Quiz question type weights per spec.
+ */
+const QUESTION_TYPE_WEIGHTS = {
+  Recall: 1,
+  Explain: 2,
+  Apply: 2,
+  Diagnose: 2,
+  Transfer: 3,
+}
 
 /**
  * Technical topic keywords for mode inference.
@@ -461,6 +474,356 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
       res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
       res.end()
     } catch {}
+  }
+})
+
+/**
+ * Build quiz generation prompt from lesson context.
+ */
+function buildQuizPrompt({ lessonTitle, lessonOutcomes, messages }) {
+  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  return `You are an expert tutor. Based on the following lesson context, generate 3-8 free-text quiz questions that test the learner's understanding of what was taught.
+
+Lesson: ${lessonTitle}
+Outcomes: ${lessonOutcomes.join('; ')}
+
+Conversation context:
+${context}
+
+Generate a JSON object with a "questions" array. Each question must have:
+- id (string)
+- text (string, the question prompt)
+- type (one of: Recall, Explain, Apply, Diagnose, Transfer)
+- weight (integer: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3)
+
+All questions must be free-text (no multiple choice). Make them context-aware and related to the lesson content. Return ONLY valid JSON.`
+}
+
+/**
+ * Build quiz evaluation prompt from lesson context.
+ */
+function buildEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, answers, messages }) {
+  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  const qaPairs = questions.map((q) => {
+    const ans = answers[q.id] || ''
+    return `Q: ${q.text}\nType: ${q.type} (weight ${q.weight})\nA: ${ans}`
+  }).join('\n\n')
+
+  return `You are an expert tutor. Evaluate the following quiz answers against the lesson content.
+
+Lesson: ${lessonTitle}
+Outcomes: ${lessonOutcomes.join('; ')}
+
+Conversation context:
+${context}
+
+Questions and answers:
+${qaPairs}
+
+Return a JSON object with exactly this structure:
+{
+  "overallScore": number (0-100),
+  "passed": boolean,
+  "criticalGap": boolean,
+  "feedback": [
+    {
+      "questionId": string,
+      "correctness": "correct" | "partial" | "incorrect",
+      "score": number,
+      "explanation": string
+    }
+  ],
+  "gaps": [string]
+}
+
+Scoring rules:
+- Weighted: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3
+- Pass threshold: overallScore >= 80 AND no critical gaps
+- criticalGap = true if any "Recall" or "Explain" question is fully incorrect, or if a learner shows a fundamental misunderstanding
+Return ONLY valid JSON.`
+}
+
+/**
+ * POST /api/topics/:id/lessons/:lid/quiz
+ * Generate quiz questions via LLM, transition state to quiz_pending.
+ */
+router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    // Check prerequisites
+    const prereqCheck = checkPrerequisites(topicId, lesson)
+    if (prereqCheck.locked) {
+      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
+    }
+
+    const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!progress || progress.state !== 'practicing') {
+      return res.status(400).json({ error: 'Lesson must be in practicing state to start a quiz.' })
+    }
+
+    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
+    if (!settings || !settings.api_key) {
+      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    let outcomes = []
+    try {
+      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
+    } catch {
+      outcomes = []
+    }
+
+    const messages = all(
+      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
+      topicId, lessonId
+    )
+
+    const system = buildQuizPrompt({
+      lessonTitle: lesson.title,
+      lessonOutcomes: outcomes,
+      messages,
+    })
+
+    const result = await generateText({
+      provider: settings.provider,
+      apiKey: settings.api_key,
+      model: settings.model,
+      system,
+      messages: [{ role: 'user', content: 'Generate the quiz questions as JSON.' }],
+    })
+
+    let parsed
+    try {
+      const text = result.text || '{}'
+      parsed = JSON.parse(text)
+    } catch {
+      return res.status(500).json({ error: 'Failed to parse quiz questions from LLM. Please try again.' })
+    }
+
+    const questions = Array.isArray(parsed.questions) ? parsed.questions : []
+    if (questions.length === 0) {
+      return res.status(500).json({ error: 'LLM returned no quiz questions. Please try again.' })
+    }
+
+    // Validate question structure
+    const validQuestions = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
+    if (validQuestions.length === 0) {
+      return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
+    }
+
+    // Transition state to quiz_pending
+    run('UPDATE progress SET state = ? WHERE id = ?', 'quiz_pending', progress.id)
+
+    // Persist quiz questions
+    const questionsJson = JSON.stringify(validQuestions)
+    run(
+      'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
+      topicId, lessonId, questionsJson
+    )
+
+    return res.json({ questions: validQuestions })
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/quiz error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to generate quiz.' })
+  }
+})
+
+/**
+ * GET /api/topics/:id/lessons/:lid/quiz
+ * Return the latest quiz for this lesson.
+ */
+router.get('/topics/:id/lessons/:lid/quiz', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    const attempt = get(
+      'SELECT questions, answers, evaluation FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
+      topicId, lessonId
+    )
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'No quiz found for this lesson.' })
+    }
+
+    let questions = []
+    let answers = {}
+    let evaluation = null
+    try {
+      questions = attempt.questions ? JSON.parse(attempt.questions) : []
+    } catch {}
+    try {
+      answers = attempt.answers ? JSON.parse(attempt.answers) : {}
+    } catch {}
+    try {
+      evaluation = attempt.evaluation ? JSON.parse(attempt.evaluation) : null
+    } catch {}
+
+    return res.json({ questions, answers, evaluation })
+  } catch (err) {
+    console.error('GET /api/topics/:id/lessons/:lid/quiz error:', err.message)
+    return res.status(500).json({ error: 'Failed to load quiz.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/quiz/submit
+ * Evaluate answers, update lesson state, schedule SRS.
+ */
+router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+    const { answers } = req.body
+
+    if (!answers || typeof answers !== 'object' || Object.keys(answers).length === 0) {
+      return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
+    }
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    const progress = get('SELECT id, state, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!progress || progress.state !== 'quiz_pending') {
+      return res.status(400).json({ error: 'Lesson must be in quiz_pending state to submit answers.' })
+    }
+
+    const attempt = get(
+      'SELECT id, questions FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
+      topicId, lessonId
+    )
+    if (!attempt) {
+      return res.status(404).json({ error: 'No quiz found for this lesson.' })
+    }
+
+    let questions = []
+    try {
+      questions = attempt.questions ? JSON.parse(attempt.questions) : []
+    } catch {
+      questions = []
+    }
+
+    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
+    if (!settings || !settings.api_key) {
+      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    let outcomes = []
+    try {
+      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
+    } catch {
+      outcomes = []
+    }
+
+    const messages = all(
+      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
+      topicId, lessonId
+    )
+
+    const system = buildEvaluationPrompt({
+      lessonTitle: lesson.title,
+      lessonOutcomes: outcomes,
+      questions,
+      answers,
+      messages,
+    })
+
+    const result = await generateText({
+      provider: settings.provider,
+      apiKey: settings.api_key,
+      model: settings.model,
+      system,
+      messages: [{ role: 'user', content: 'Evaluate the quiz answers and return JSON.' }],
+    })
+
+    let parsed
+    try {
+      const text = result.text || '{}'
+      parsed = JSON.parse(text)
+    } catch {
+      return res.status(500).json({ error: 'Failed to parse evaluation from LLM. Please try again.' })
+    }
+
+    const overallScore = typeof parsed.overallScore === 'number' ? parsed.overallScore : 0
+    const criticalGap = !!parsed.criticalGap
+    const passed = overallScore >= QUIZ_PASS_THRESHOLD && !criticalGap
+
+    const evaluation = {
+      overallScore,
+      passed,
+      criticalGap,
+      feedback: Array.isArray(parsed.feedback) ? parsed.feedback : [],
+      gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
+    }
+
+    const newState = passed ? 'passed' : 'remediating'
+    const completedAt = passed ? new Date().toISOString() : null
+
+    run(
+      'UPDATE progress SET state = ?, quiz_score = ?, quiz_attempts = ?, completed_at = ? WHERE id = ?',
+      newState, overallScore, (progress.quiz_attempts || 0) + 1, completedAt, progress.id
+    )
+
+    // Persist answers and evaluation
+    run(
+      'UPDATE quiz_attempts SET answers = ?, evaluation = ? WHERE id = ?',
+      JSON.stringify(answers), JSON.stringify(evaluation), attempt.id
+    )
+
+    // Schedule SRS on pass
+    if (passed) {
+      const existingSrs = get('SELECT id FROM srs_queue WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      if (!existingSrs) {
+        const dueDate = new Date()
+        dueDate.setDate(dueDate.getDate() + SRS_INTERVALS[0])
+        run(
+          'INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date) VALUES (?, ?, ?, ?)',
+          topicId, lessonId, 0, dueDate.toISOString().split('T')[0]
+        )
+      }
+    }
+
+    return res.json(evaluation)
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/quiz/submit error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to evaluate quiz.' })
   }
 })
 
