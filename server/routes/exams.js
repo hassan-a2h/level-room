@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
 import { generateText, LlmClientError } from '../llm/client.js'
 import { scheduleSrs } from '../utils/lesson-state-machine.js'
+import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
 
 const router = Router()
 
@@ -523,6 +524,9 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
         scheduleSrs(topicId, lesson.id)
       }
 
+      // Schedule cumulative module reviews at 7d and 30d
+      scheduleCumulativeReviews(topicId, moduleId)
+
       // Unlock next module (if any) by unlocking its first foundation lesson
       const nextModule = get(
         'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',
@@ -896,6 +900,9 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
       for (const lesson of moduleLessons) {
         scheduleSrs(topicId, lesson.id)
       }
+
+      // Schedule cumulative module reviews at 7d and 30d
+      scheduleCumulativeReviews(topicId, moduleId)
 
       const nextModule = get(
         'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',

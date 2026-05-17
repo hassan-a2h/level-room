@@ -439,3 +439,60 @@ export async function getArtifact(topicId, lessonId) {
   }
   return body
 }
+
+// SRS / Review Queue API
+export async function getReviews() {
+  const res = await fetch(`${API_BASE}/api/reviews`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function getReviewCount() {
+  const res = await fetch(`${API_BASE}/api/reviews/count`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function startReviewSession() {
+  const res = await fetch(`${API_BASE}/api/reviews/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function submitReview(sessionId, answers) {
+  const res = await fetch(`${API_BASE}/api/reviews/${sessionId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function cancelReview(sessionId) {
+  const res = await fetch(`${API_BASE}/api/reviews/${sessionId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}

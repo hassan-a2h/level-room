@@ -243,6 +243,50 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration006)
     })()
   }
+
+  const migration007 = '007_add_srs_review_type_and_module_id'
+  const check007 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration007)
+  if (!check007) {
+    db.transaction(() => {
+      try { db.exec('ALTER TABLE srs_queue ADD COLUMN review_type TEXT DEFAULT \'lesson\'') } catch {}
+      try { db.exec('ALTER TABLE srs_queue ADD COLUMN module_id INTEGER') } catch {}
+      try { db.exec('ALTER TABLE srs_queue ADD COLUMN review_history TEXT') } catch {}
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration007)
+    })()
+  }
+
+  const migration008 = '008_make_srs_lesson_id_nullable'
+  const check008 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration008)
+  if (!check008) {
+    db.transaction(() => {
+      // SQLite doesn't support ALTER COLUMN, so recreate the table
+      db.exec(`
+        CREATE TABLE srs_queue_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL,
+          lesson_id INTEGER,
+          module_id INTEGER,
+          interval_index INTEGER DEFAULT 0,
+          due_date DATE,
+          status TEXT DEFAULT 'pending',
+          last_reviewed DATETIME,
+          score INTEGER,
+          review_type TEXT DEFAULT 'lesson',
+          review_history TEXT,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+          FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+        )
+      `)
+      db.exec(`
+        INSERT INTO srs_queue_new (id, topic_id, lesson_id, module_id, interval_index, due_date, status, last_reviewed, score, review_type, review_history)
+        SELECT id, topic_id, lesson_id, module_id, interval_index, due_date, status, last_reviewed, score, review_type, review_history
+        FROM srs_queue
+      `)
+      db.exec('DROP TABLE srs_queue')
+      db.exec('ALTER TABLE srs_queue_new RENAME TO srs_queue')
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration008)
+    })()
+  }
 }
 
 /**

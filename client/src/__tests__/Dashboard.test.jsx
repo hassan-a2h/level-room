@@ -9,9 +9,10 @@ vi.mock('../api.js', () => ({
   deleteTopic: vi.fn(),
   selectTopic: vi.fn(),
   getDefaultTopic: vi.fn(),
+  getReviewCount: vi.fn(),
 }))
 
-import { getTopics, getDashboard, getDefaultTopic, selectTopic } from '../api.js'
+import { getTopics, getDashboard, getDefaultTopic, selectTopic, getReviewCount } from '../api.js'
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -20,6 +21,7 @@ describe('Dashboard', () => {
 
   it('shows empty state when no topics exist', async () => {
     getTopics.mockResolvedValue({ topics: [] })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
 
     render(
       <MemoryRouter>
@@ -41,6 +43,7 @@ describe('Dashboard', () => {
         { id: 2, title: 'Calculus', progress: 25, totalLessons: 4, passedLessons: 1, status: 'active' },
       ],
     })
+    getReviewCount.mockResolvedValue({ totalDue: 3 })
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
     getDashboard.mockResolvedValue({
       topic: { id: 1, title: 'React' },
@@ -78,6 +81,7 @@ describe('Dashboard', () => {
         { id: 2, title: 'Calculus', progress: 0, totalLessons: 2, passedLessons: 0, status: 'active' },
       ],
     })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
     getDashboard
       .mockResolvedValueOnce({
@@ -126,6 +130,7 @@ describe('Dashboard', () => {
         { id: 2, title: 'Recent', progress: 0, totalLessons: 2, passedLessons: 0, status: 'active', last_active_at: '2024-06-01' },
       ],
     })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
     getDefaultTopic.mockResolvedValue({ topic: { id: 2, title: 'Recent' } })
     getDashboard.mockResolvedValue({
       topic: { id: 2, title: 'Recent' },
@@ -145,5 +150,39 @@ describe('Dashboard', () => {
     // The "Recent" topic card should have active styling (selected)
     const recentCards = screen.getAllByText('Recent')
     expect(recentCards.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows review badge when reviews are due', async () => {
+    getTopics.mockResolvedValue({
+      topics: [
+        { id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' },
+      ],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 3, dueToday: 2, overdue: 1 })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 1, title: 'React' },
+      modules: [
+        {
+          id: 1,
+          title: 'Basics',
+          lessons: [
+            { id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] },
+          ],
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: /competence graph/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: /reviews/i })).toBeInTheDocument()
   })
 })

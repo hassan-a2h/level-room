@@ -6,6 +6,7 @@ import {
   deleteTopic,
   selectTopic,
   getDefaultTopic,
+  getReviewCount,
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
 import ExamPanel from '../components/ExamPanel.jsx'
@@ -126,6 +127,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [examModuleId, setExamModuleId] = useState(null)
+  const [reviewCounts, setReviewCounts] = useState(null)
   const navigate = useNavigate()
 
   const loadTopics = useCallback(async () => {
@@ -149,10 +151,20 @@ export default function Dashboard() {
     }
   }, [])
 
+  const loadReviewCounts = useCallback(async () => {
+    try {
+      const data = await getReviewCount()
+      setReviewCounts(data)
+    } catch {
+      setReviewCounts(null)
+    }
+  }, [])
+
   const init = useCallback(async () => {
     setLoading(true)
     setError('')
     const topicList = await loadTopics()
+    await loadReviewCounts()
     if (topicList.length === 0) {
       setLoading(false)
       return
@@ -169,7 +181,7 @@ export default function Dashboard() {
       }
     }
     setLoading(false)
-  }, [loadTopics, loadDashboard])
+  }, [loadTopics, loadDashboard, loadReviewCounts])
 
   useEffect(() => {
     init()
@@ -253,12 +265,26 @@ export default function Dashboard() {
           <h1 className="text-xl font-bold text-gray-900">Mastery Roadmap</h1>
           <div className="flex items-center gap-3">
             {hasTopics && (
-              <button
-                onClick={() => navigate('/onboarding')}
-                className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-              >
-                + New Topic
-              </button>
+              <>
+                <button
+                  onClick={() => navigate('/reviews')}
+                  className="relative rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                  aria-label="Reviews"
+                >
+                  Reviews
+                  {reviewCounts && reviewCounts.totalDue > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold">
+                      {reviewCounts.totalDue}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => navigate('/onboarding')}
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                >
+                  + New Topic
+                </button>
+              </>
             )}
             <button
               onClick={() => navigate('/settings')}

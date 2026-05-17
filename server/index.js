@@ -7,6 +7,7 @@ import dashboardRouter from './routes/dashboard.js'
 import curriculumRouter from './routes/curriculum.js'
 import lessonsRouter from './routes/lessons.js'
 import examsRouter from './routes/exams.js'
+import reviewsRouter from './routes/reviews.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -33,6 +34,7 @@ app.use('/api', dashboardRouter)
 app.use('/api', curriculumRouter)
 app.use('/api', lessonsRouter)
 app.use('/api', examsRouter)
+app.use('/api', reviewsRouter)
 
 const PORT = process.env.PORT || 3200
 app.listen(PORT, () => {
