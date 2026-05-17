@@ -225,13 +225,16 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
     }
 
     // Transition state via state machine (not_started -> practicing)
-    try {
-      startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
+    const currentProgress = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!currentProgress || currentProgress.state === 'not_started') {
+      try {
+        startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
+      } catch (smErr) {
+        if (smErr instanceof StateMachineError) {
+          return res.status(400).json({ error: smErr.message, code: smErr.code })
+        }
+        throw smErr
       }
-      throw smErr
     }
 
     // Re-fetch progress for chunk info

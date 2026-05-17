@@ -239,6 +239,31 @@ describe('Lessons API', () => {
 
       expect(res.status).toBe(403)
     })
+
+    it('allows sending a second chat message without state machine error', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
+
+      // First message
+      const res1 = await request(app)
+        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
+        .set('Accept', 'text/event-stream')
+        .send({ content: 'First message' })
+
+      expect(res1.status).toBe(200)
+
+      // Second message should also succeed
+      const res2 = await request(app)
+        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
+        .set('Accept', 'text/event-stream')
+        .send({ content: 'Second message' })
+
+      expect(res2.status).toBe(200)
+
+      const prog = dbModule.get("SELECT state, current_chunk FROM progress WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
+      expect(prog.state).toBe('practicing')
+      expect(prog.current_chunk).toBe(1)
+    })
   })
 
   describe('POST /api/topics/:id/lessons/:lid/continue', () => {
