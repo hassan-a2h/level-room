@@ -1,4 +1,6 @@
 import { get, run, transaction } from '../db.js'
+import { updateMistakesAfterResult } from './mistakes-log.js'
+import { recordResultAndComputeDifficulty } from './adaptive-difficulty.js'
 
 const SRS_INTERVALS = [1, 3, 7, 14, 30]
 
@@ -360,31 +362,12 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
       progress.id,
     )
 
-    if (!canComplete && gaps.length > 0) {
-      // Log or update mistakes_log entries for each gap
-      for (const gap of gaps) {
-        const existing = get(
-          'SELECT id, recurring FROM mistakes_log WHERE topic_id = ? AND lesson_id = ? AND description = ?',
-          _topicId,
-          _lessonId,
-          gap,
-        )
-        if (existing) {
-          run(
-            'UPDATE mistakes_log SET recurring = 1, cleared_after = 0 WHERE id = ?',
-            existing.id,
-          )
-        } else {
-          run(
-            'INSERT INTO mistakes_log (topic_id, lesson_id, description, recurring, cleared_after) VALUES (?, ?, ?, ?, ?)',
-            _topicId,
-            _lessonId,
-            gap,
-            0,
-            0,
-          )
-        }
-      }
+    // Update mistakes log and adaptive difficulty
+    updateMistakesAfterResult(_topicId, _lessonId, canComplete, gaps)
+    try {
+      recordResultAndComputeDifficulty(_topicId, canComplete)
+    } catch (diffErr) {
+      console.error('Adaptive difficulty error:', diffErr.message)
     }
 
     if (canComplete) {
@@ -618,6 +601,15 @@ export function finishTestOut({ topicId, lessonId, passed, quizScore, answers, e
           1,
         )
       }
+    }
+
+    // Update mistakes log and adaptive difficulty for test-out too
+    const gaps = Array.isArray(_evaluation?.gaps) ? _evaluation.gaps : []
+    updateMistakesAfterResult(_topicId, _lessonId, _passed, gaps)
+    try {
+      recordResultAndComputeDifficulty(_topicId, _passed)
+    } catch (diffErr) {
+      console.error('Adaptive difficulty error (test-out):', diffErr.message)
     }
 
     if (_attemptId) {

@@ -287,6 +287,17 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration008)
     })()
   }
+
+  const migration009 = '009_add_adaptive_difficulty_columns'
+  const check009 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration009)
+  if (!check009) {
+    db.transaction(() => {
+      try { db.exec("ALTER TABLE topics ADD COLUMN difficulty TEXT DEFAULT 'normal'") } catch {}
+      try { db.exec('ALTER TABLE topics ADD COLUMN consecutive_passes INTEGER DEFAULT 0') } catch {}
+      try { db.exec('ALTER TABLE topics ADD COLUMN consecutive_fails INTEGER DEFAULT 0') } catch {}
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration009)
+    })()
+  }
 }
 
 /**

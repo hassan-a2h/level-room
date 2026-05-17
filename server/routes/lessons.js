@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
 import { streamText, generateText, LlmClientError } from '../llm/client.js'
+import { buildDifficultyInstruction, DIFFICULTY_LEVELS } from '../utils/adaptive-difficulty.js'
+import { getActiveMistakes } from '../utils/mistakes-log.js'
 import {
   startPracticing,
   startQuiz,
@@ -68,26 +70,31 @@ function inferInteractionMode(title) {
 /**
  * Build the system prompt for a lesson chunk.
  */
-function buildSystemPrompt({ mode, lessonTitle, lessonOutcomes, chunkNum, totalChunks, isFinal }) {
+function buildSystemPrompt({ mode, lessonTitle, lessonOutcomes, chunkNum, totalChunks, isFinal, difficultyInstruction = '' }) {
   const base = `You are an expert tutor teaching the lesson "${lessonTitle}".
 Learning outcomes: ${lessonOutcomes.join('; ')}.
 This is chunk ${chunkNum} of ${totalChunks}.`
 
+  let prompt = base
+  if (difficultyInstruction) {
+    prompt += '\n\n' + difficultyInstruction
+  }
+
   if (isFinal) {
-    return `${base}
+    return `${prompt}
 This is the FINAL chunk. Summarize the key concepts and then ask the learner if they're ready to check their understanding with a short quiz. Be encouraging. Keep your response to 1-2 short paragraphs.`
   }
 
   switch (mode) {
     case 'code':
-      return `${base}
+      return `${prompt}
 You are teaching a technical topic. Provide concise, practical explanations with code examples where helpful. Use markdown code blocks for code. Focus on ONE concept per message. Keep each message under ~500 characters or 3 short paragraphs.`
     case 'scenario':
-      return `${base}
+      return `${prompt}
 You are coaching a soft skill. Present a realistic scenario and ask the learner how they would respond. Or if continuing a scenario, give constructive feedback on their previous response and present the next part. Focus on ONE scenario element per message. Keep each message under ~500 characters or 3 short paragraphs.`
     case 'socratic':
     default:
-      return `${base}
+      return `${prompt}
 You are a Socratic tutor. Ask clarifying questions BEFORE giving direct answers. Help the learner discover concepts through guided inquiry. Focus on ONE concept per message. Keep each message under ~500 characters or 3 short paragraphs.`
   }
 }
@@ -266,6 +273,8 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
     const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
     const isFinalChunk = progress.current_chunk >= progress.total_chunks
 
+    const difficultyInstruction = buildDifficultyInstruction(topicId)
+
     const system = buildSystemPrompt({
       mode: interactionMode,
       lessonTitle: lesson.title,
@@ -273,6 +282,7 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
       chunkNum: progress.current_chunk,
       totalChunks: progress.total_chunks,
       isFinal: isFinalChunk,
+      difficultyInstruction,
     })
 
     const streamResult = await streamText({
@@ -394,6 +404,8 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
     const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
     const isFinalChunk = nextChunk >= (progress.total_chunks || DEFAULT_TOTAL_CHUNKS)
 
+    const difficultyInstruction = buildDifficultyInstruction(topicId)
+
     const system = buildSystemPrompt({
       mode: interactionMode,
       lessonTitle: lesson.title,
@@ -401,6 +413,7 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
       chunkNum: nextChunk,
       totalChunks: progress.total_chunks || DEFAULT_TOTAL_CHUNKS,
       isFinal: isFinalChunk,
+      difficultyInstruction,
     })
 
     const streamResult = await streamText({
@@ -462,12 +475,13 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
 /**
  * Build quiz generation prompt from lesson context.
  */
-function buildQuizPrompt({ lessonTitle, lessonOutcomes, messages }) {
+function buildQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficultyInstruction = '' }) {
   const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
   return `You are an expert tutor. Based on the following lesson context, generate 3-8 free-text quiz questions that test the learner's understanding of what was taught.
 
 Lesson: ${lessonTitle}
-Outcomes: ${lessonOutcomes.join('; ')}
+Outcomes: ${lessonOutcomes.join('; ')}${adaptive}
 
 Conversation context:
 ${context}
@@ -484,12 +498,13 @@ All questions must be free-text (no multiple choice). Make them context-aware an
 /**
  * Build retest quiz prompt focused only on missed gaps.
  */
-function buildRetestPrompt({ lessonTitle, lessonOutcomes, gaps, messages }) {
+function buildRetestPrompt({ lessonTitle, lessonOutcomes, gaps, messages, difficultyInstruction = '' }) {
   const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
   return `You are an expert tutor. The learner previously failed a quiz on "${lessonTitle}" and specifically struggled with these gaps:
 ${gaps.map((g) => `- ${g}`).join('\n')}
 
-Lesson outcomes: ${lessonOutcomes.join('; ')}
+Lesson outcomes: ${lessonOutcomes.join('; ')}${adaptive}
 
 Conversation context:
 ${context}
@@ -604,10 +619,13 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
       topicId, lessonId
     )
 
+    const difficultyInstruction = buildDifficultyInstruction(topicId)
+
     const system = buildQuizPrompt({
       lessonTitle: lesson.title,
       lessonOutcomes: outcomes,
       messages,
+      difficultyInstruction,
     })
 
     const result = await generateText({
@@ -1066,12 +1084,15 @@ router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
     }
 
     const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
+    const difficultyInstruction = buildDifficultyInstruction(topicId)
 
     const system = `You are an expert tutor. The learner is struggling with the lesson "${lesson.title}" and specifically these gaps:
 ${gaps.map((g) => `- ${g}`).join('\n')}
 
 Learning outcomes: ${outcomes.join('; ')}.
-This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT explanation strategy from the original lesson (new analogy, new example, different framing). Keep the message under ~500 characters or 3 short paragraphs. Be encouraging, not punitive.`
+This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT explanation strategy from the original lesson (new analogy, new example, different framing). Keep the message under ~500 characters or 3 short paragraphs. Be encouraging, not punitive.
+
+${difficultyInstruction}`
 
     const streamResult = await streamText({
       provider: settings.provider,
@@ -1195,11 +1216,14 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
       topicId, lessonId
     )
 
+    const difficultyInstruction = buildDifficultyInstruction(topicId)
+
     const system = buildRetestPrompt({
       lessonTitle: lesson.title,
       lessonOutcomes: outcomes,
       gaps,
       messages,
+      difficultyInstruction,
     })
 
     const result = await generateText({

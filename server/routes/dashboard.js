@@ -32,6 +32,16 @@ function getTopicProgress(topicId) {
 }
 
 /**
+ * Get active mistakes for a topic.
+ */
+function getTopicMistakes(topicId) {
+  return all(
+    'SELECT id, lesson_id, description, recurring, cleared_after, created_at FROM mistakes_log WHERE topic_id = ? AND cleared_after < 2 ORDER BY recurring DESC, created_at DESC',
+    topicId,
+  )
+}
+
+/**
  * GET /api/topics
  * List all topics with basic progress info.
  */
@@ -46,6 +56,9 @@ router.get('/topics', (_req, res) => {
         status: topic.status,
         last_active_at: topic.last_active_at,
         created_at: topic.created_at,
+        difficulty: topic.difficulty || 'normal',
+        consecutivePasses: topic.consecutive_passes || 0,
+        consecutiveFails: topic.consecutive_fails || 0,
         ...stats,
       }
     })
@@ -161,6 +174,10 @@ router.get('/topics/:id/dashboard', (req, res) => {
     })
 
     const stats = getTopicProgress(topicId)
+    const mistakes = getTopicMistakes(topicId)
+    const difficulty = topic.difficulty || 'normal'
+    const consecutivePasses = topic.consecutive_passes || 0
+    const consecutiveFails = topic.consecutive_fails || 0
 
     return res.json({
       topic: {
@@ -169,9 +186,13 @@ router.get('/topics/:id/dashboard', (req, res) => {
         status: topic.status,
         last_active_at: topic.last_active_at,
         created_at: topic.created_at,
+        difficulty,
+        consecutivePasses,
+        consecutiveFails,
         ...stats,
       },
       modules: modulesWithLessons,
+      mistakes,
     })
   } catch (err) {
     console.error('GET /api/topics/:id/dashboard error:', err.message)
