@@ -8,6 +8,7 @@ import {
   getDefaultTopic,
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
+import ExamPanel from '../components/ExamPanel.jsx'
 
 function EmptyState({ onStart }) {
   return (
@@ -79,12 +80,52 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
   )
 }
 
+function ModuleCard({ mod, topicId, onStartExam }) {
+  const allPassed = mod.examReady
+  const isCompleted = mod.status === 'completed'
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-semibold text-gray-900">{mod.title}</h3>
+        {isCompleted && (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+            ✅ Completed
+          </span>
+        )}
+        {allPassed && !isCompleted && (
+          <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-800">
+            📝 Exam Ready
+          </span>
+        )}
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-500">
+          {mod.lessons.filter((l) => ['passed', 'tested_out'].includes(l.state)).length} / {mod.lessons.length} lessons passed
+        </span>
+        {allPassed && !isCompleted && (
+          <button
+            onClick={() => onStartExam(mod.id)}
+            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
+          >
+            Take Exam
+          </button>
+        )}
+        {!allPassed && !isCompleted && mod.lessonsRemaining > 0 && (
+          <span className="text-xs text-gray-400">{mod.lessonsRemaining} lessons remaining</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const [topics, setTopics] = useState(null)
   const [activeTopicId, setActiveTopicId] = useState(null)
   const [dashboard, setDashboard] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [examModuleId, setExamModuleId] = useState(null)
   const navigate = useNavigate()
 
   const loadTopics = useCallback(async () => {
@@ -183,6 +224,17 @@ export default function Dashboard() {
     })
   }
 
+  const handleStartExam = (moduleId) => {
+    setExamModuleId(moduleId)
+  }
+
+  const handleExamBack = useCallback(() => {
+    setExamModuleId(null)
+    if (activeTopicId) {
+      loadDashboard(activeTopicId)
+    }
+  }, [activeTopicId, loadDashboard])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -251,9 +303,33 @@ export default function Dashboard() {
               ))}
             </aside>
 
-            {/* Main: competence graph */}
+            {/* Main: competence graph or exam panel */}
             <section className="lg:col-span-3">
-              {dashboard && (
+              {examModuleId && dashboard && (
+                <div className="bg-white rounded-xl border border-gray-200 p-6 min-h-[500px]">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Module Exam: {dashboard.modules.find((m) => m.id === examModuleId)?.title}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleExamBack}
+                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      Back to Dashboard
+                    </button>
+                  </div>
+                  <ExamPanel
+                    topicId={activeTopicId}
+                    moduleId={examModuleId}
+                    moduleLessons={dashboard.modules.find((m) => m.id === examModuleId)?.lessons || []}
+                    onBack={handleExamBack}
+                  />
+                </div>
+              )}
+              {!examModuleId && dashboard && (
                 <div className="bg-white rounded-xl border border-gray-200 p-6 min-h-[500px]">
                   <div className="mb-4">
                     <h2 className="text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
@@ -261,6 +337,20 @@ export default function Dashboard() {
                       {dashboard.topic.passedLessons ?? 0} / {dashboard.topic.totalLessons ?? 0} lessons completed
                       {' '}({dashboard.topic.progress ?? 0}%)
                     </p>
+                  </div>
+                  {/* Module cards */}
+                  <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Modules</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {dashboard.modules.map((mod) => (
+                        <ModuleCard
+                          key={mod.id}
+                          mod={mod}
+                          topicId={activeTopicId}
+                          onStartExam={handleStartExam}
+                        />
+                      ))}
+                    </div>
                   </div>
                   <CompetenceGraph
                     modules={dashboard.modules}

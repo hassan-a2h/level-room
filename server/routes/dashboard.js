@@ -138,11 +138,24 @@ router.get('/topics/:id/dashboard', (req, res) => {
         }
       })
 
+      // Compute exam readiness for this module
+      const totalLessons = lessons.length
+      const passedLessons = lessons.filter((l) => {
+        const prog = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, l.id)
+        return ['passed', 'tested_out'].includes(prog?.state)
+      }).length
+      const examReady = totalLessons > 0 && passedLessons === totalLessons
+      const examStatus = get('SELECT status, completed_at FROM modules WHERE id = ?', mod.id)
+
       return {
         id: mod.id,
         title: mod.title,
         summary: mod.summary,
         skill_outcomes: mod.skill_outcomes,
+        status: examStatus?.status || 'active',
+        completedAt: examStatus?.completed_at || null,
+        examReady,
+        lessonsRemaining: totalLessons - passedLessons,
         lessons: lessonsWithProgress,
       }
     })

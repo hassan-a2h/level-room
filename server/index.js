@@ -6,6 +6,7 @@ import settingsRouter from './routes/settings.js'
 import dashboardRouter from './routes/dashboard.js'
 import curriculumRouter from './routes/curriculum.js'
 import lessonsRouter from './routes/lessons.js'
+import examsRouter from './routes/exams.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -31,6 +32,7 @@ app.use('/api/settings', settingsRouter)
 app.use('/api', dashboardRouter)
 app.use('/api', curriculumRouter)
 app.use('/api', lessonsRouter)
+app.use('/api', examsRouter)
 
 const PORT = process.env.PORT || 3200
 app.listen(PORT, () => {

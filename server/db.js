@@ -217,6 +217,32 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration005)
     })()
   }
+
+  const migration006 = '006_add_module_exams'
+  const check006 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration006)
+  if (!check006) {
+    db.transaction(() => {
+      try { db.exec('ALTER TABLE modules ADD COLUMN status TEXT DEFAULT \'active\'') } catch {}
+      try { db.exec('ALTER TABLE modules ADD COLUMN completed_at DATETIME') } catch {}
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS exam_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL,
+          module_id INTEGER NOT NULL,
+          questions TEXT,
+          answers TEXT,
+          evaluation TEXT,
+          status TEXT DEFAULT 'pending',
+          type TEXT DEFAULT 'full',
+          parent_exam_id INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+          FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE
+        )
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration006)
+    })()
+  }
 }
 
 /**

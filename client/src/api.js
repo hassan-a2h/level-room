@@ -331,6 +331,92 @@ export async function deferLesson(topicId, lessonId) {
   return body
 }
 
+// Exam API
+export async function getExam(topicId, moduleId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function startExam(topicId, moduleId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function saveExamProgress(topicId, moduleId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/save-progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function submitExam(topicId, moduleId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function retakeExam(topicId, moduleId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/retake`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function startPartialRetest(topicId, moduleId, weakLessons) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ weakLessons }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function submitPartialRetest(topicId, moduleId, retestId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest/${retestId}/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
 // Artifact API
 export async function submitArtifact(topicId, lessonId, content) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/artifact`, {
