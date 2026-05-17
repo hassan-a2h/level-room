@@ -110,3 +110,107 @@ export async function updateLessonState(topicId, lessonId, state) {
   }
   return body
 }
+
+// Curriculum / Onboarding API
+export async function getSetupQuestions(topicId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/setup-questions`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function saveProfile(topicId, { level, timeCommitment }) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, timeCommitment }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function getCurriculum(topicId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function confirmCurriculum(topicId, curriculum) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ curriculum }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function tweakCurriculum(topicId, request) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/tweak`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function regenerateCurriculum(topicId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/regenerate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function generateCurriculum(topicId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function getTestOutQuestions(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function submitTestOut(topicId, lessonId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}

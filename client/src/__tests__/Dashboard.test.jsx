@@ -6,13 +6,12 @@ import Dashboard from '../pages/Dashboard'
 vi.mock('../api.js', () => ({
   getTopics: vi.fn(),
   getDashboard: vi.fn(),
-  createTopic: vi.fn(),
   deleteTopic: vi.fn(),
   selectTopic: vi.fn(),
   getDefaultTopic: vi.fn(),
 }))
 
-import { getTopics, getDashboard, createTopic, getDefaultTopic, selectTopic } from '../api.js'
+import { getTopics, getDashboard, getDefaultTopic, selectTopic } from '../api.js'
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -33,28 +32,6 @@ describe('Dashboard', () => {
     })
     expect(screen.getByRole('button', { name: /start learning/i })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: /competence graph/i })).not.toBeInTheDocument()
-  })
-
-  it('shows onboarding form after clicking start learning', async () => {
-    getTopics.mockResolvedValue({ topics: [] })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText(/you have not started learning/i)).toBeInTheDocument()
-    })
-
-    const startBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(startBtn)
-
-    await waitFor(() => {
-      expect(screen.getByText(/what do you want to learn/i)).toBeInTheDocument()
-    })
-    expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
   })
 
   it('shows dashboard with topic cards when topics exist', async () => {
@@ -92,73 +69,6 @@ describe('Dashboard', () => {
     expect(screen.getAllByText('React').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Calculus')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
-  })
-
-  it('shows validation error for empty topic name', async () => {
-    getTopics.mockResolvedValue({ topics: [] })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText(/you have not started learning/i)).toBeInTheDocument()
-    })
-
-    const startBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(startBtn)
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    })
-
-    const submitBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(submitBtn)
-
-    await waitFor(() => {
-      expect(screen.getByText(/please enter a topic/i)).toBeInTheDocument()
-    })
-  })
-
-  it('creates a topic and shows dashboard', async () => {
-    getTopics.mockResolvedValueOnce({ topics: [] }).mockResolvedValueOnce({
-      topics: [{ id: 1, title: 'React', progress: 0, totalLessons: 0, passedLessons: 0, status: 'active' }],
-    })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [],
-    })
-    createTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText(/you have not started learning/i)).toBeInTheDocument()
-    })
-
-    const startBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(startBtn)
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    })
-
-    const input = screen.getByPlaceholderText(/enter a topic/i)
-    fireEvent.change(input, { target: { value: 'React' } })
-
-    const submitBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(submitBtn)
-
-    await waitFor(() => {
-      expect(createTopic).toHaveBeenCalledWith('React')
-    })
   })
 
   it('switches topic and refreshes graph', async () => {

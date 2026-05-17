@@ -1,80 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getTopics,
   getDashboard,
-  createTopic,
   deleteTopic,
   selectTopic,
   getDefaultTopic,
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
-
-function Onboarding({ onTopicCreated }) {
-  const [topicName, setTopicName] = useState('')
-  const [error, setError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const inputRef = useRef(null)
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setError('')
-    const trimmed = topicName.trim()
-    if (!trimmed) {
-      setError('Please enter a topic.')
-      return
-    }
-    if (trimmed.length > 100) {
-      setError('Topic name is too long (max 100 characters).')
-      return
-    }
-    setSubmitting(true)
-    try {
-      await onTopicCreated(trimmed)
-      setTopicName('')
-    } catch (err) {
-      setError(err.message || 'Failed to create topic.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
-      <h2 className="text-3xl font-bold text-gray-900 mb-2">What do you want to learn?</h2>
-      <p className="text-gray-600 mb-8 text-center max-w-md">
-        Enter any topic — React, Calculus, Negotiation, Japanese — and we will build a personalized learning path.
-      </p>
-      <form onSubmit={handleSubmit} className="w-full max-w-md">
-        <div className="flex flex-col gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={topicName}
-            onChange={(e) => setTopicName(e.target.value)}
-            placeholder="Enter a topic (e.g., React, Calculus)"
-            maxLength={100}
-            className="w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
-            disabled={submitting}
-            autoFocus
-          />
-          {error && (
-            <p className="text-sm text-red-600" role="alert">
-              {error}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="mt-2 w-full rounded-lg bg-indigo-600 px-4 py-3 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {submitting ? 'Creating...' : 'Start Learning'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
 
 function EmptyState({ onStart }) {
   return (
@@ -152,7 +85,6 @@ export default function Dashboard() {
   const [dashboard, setDashboard] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [creating, setCreating] = useState(false)
   const navigate = useNavigate()
 
   const loadTopics = useCallback(async () => {
@@ -201,14 +133,6 @@ export default function Dashboard() {
   useEffect(() => {
     init()
   }, [init])
-
-  const handleTopicCreated = async (title) => {
-    const result = await createTopic(title)
-    await loadTopics()
-    await loadDashboard(result.topic.id)
-    setCreating(false)
-    return result
-  }
 
   const handleTopicClick = async (topicId) => {
     if (topicId === activeTopicId) return
@@ -277,9 +201,9 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900">Mastery Roadmap</h1>
           <div className="flex items-center gap-3">
-            {hasTopics && !creating && (
+            {hasTopics && (
               <button
-                onClick={() => setCreating(true)}
+                onClick={() => navigate('/onboarding')}
                 className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
               >
                 + New Topic
@@ -306,24 +230,8 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {!hasTopics && creating && (
-          <Onboarding onTopicCreated={handleTopicCreated} />
-        )}
-
-        {!hasTopics && !creating && (
-          <EmptyState onStart={() => setCreating(true)} />
-        )}
-
-        {hasTopics && creating && (
-          <div className="mb-8">
-            <Onboarding onTopicCreated={handleTopicCreated} />
-            <button
-              onClick={() => setCreating(false)}
-              className="mt-4 mx-auto block text-sm text-gray-500 hover:text-gray-700 underline"
-            >
-              Cancel
-            </button>
-          </div>
+        {!hasTopics && (
+          <EmptyState onStart={() => navigate('/onboarding')} />
         )}
 
         {hasTopics && (

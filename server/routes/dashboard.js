@@ -183,6 +183,9 @@ router.post('/topics', (req, res) => {
       return res.status(400).json({ error: 'Topic name is too long (max 100 characters).' })
     }
 
+    // Basic XSS sanitization: strip HTML tags
+    const sanitized = trimmed.replace(/<[^>]+>/g, '')
+
     // Check active topic limit
     const activeCount = get("SELECT COUNT(*) as count FROM topics WHERE status = 'active'")
     if (activeCount.count >= MAX_ACTIVE_TOPICS) {
@@ -191,7 +194,7 @@ router.post('/topics', (req, res) => {
       })
     }
 
-    const result = run('INSERT INTO topics (title, status, last_active_at) VALUES (?, ?, ?)', trimmed, 'active', new Date().toISOString())
+    const result = run('INSERT INTO topics (title, status, last_active_at) VALUES (?, ?, ?)', sanitized, 'active', new Date().toISOString())
     const topic = get('SELECT * FROM topics WHERE id = ?', result.lastInsertRowid)
 
     return res.status(201).json({ topic })
