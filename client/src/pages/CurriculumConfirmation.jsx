@@ -21,6 +21,11 @@ function LessonCard({ lesson, onTestOut }) {
             {lesson.depth}
           </span>
           <span className="text-xs text-gray-500">~{lesson.estimated_time} min</span>
+          {lesson.artifact_required && (
+            <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-700" title="This lesson requires an artifact submission">
+              📝 Artifact
+            </span>
+          )}
           {onTestOut && (
             <button
               onClick={() => onTestOut(lesson)}

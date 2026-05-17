@@ -11,6 +11,7 @@ import {
   finishTestOut,
   checkPrerequisites,
   StateMachineError,
+  recordArtifactResult,
 } from '../utils/lesson-state-machine.js'
 
 const router = Router()
@@ -124,9 +125,9 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
     }
 
     const progress = get(
-      'SELECT state, current_chunk, total_chunks, quiz_score, quiz_attempts, started_at, completed_at, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT state, current_chunk, total_chunks, quiz_score, quiz_attempts, artifact_passed, started_at, completed_at, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
       topicId, lessonId
-    ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0, remediation_attempts: 0, last_gaps: null }
+    ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0, artifact_passed: 0, remediation_attempts: 0, last_gaps: null }
 
     const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
@@ -1243,6 +1244,246 @@ router.post('/topics/:id/lessons/:lid/remediate/defer', (req, res) => {
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/remediate/defer error:', err.message)
     return res.status(500).json({ error: 'Failed to defer lesson.' })
+  }
+})
+
+/**
+ * Build artifact evaluation prompt.
+ */
+function buildArtifactEvaluationPrompt({ lessonTitle, lessonOutcomes, artifactContent, artifactType }) {
+  return `You are an expert reviewer evaluating a learner's artifact for the lesson "${lessonTitle}".
+
+Lesson outcomes: ${lessonOutcomes.join('; ')}
+
+Artifact type: ${artifactType || 'code/text'}
+Artifact content:
+${artifactContent}
+
+Evaluate the artifact against a 4-point rubric. Score each dimension 0–2:
+- Correctness: Does it work / is it factually correct?
+- Completeness: Are all required parts included?
+- Clarity: Is it easy to understand / well structured?
+- Edge Cases: Does it handle boundary conditions or unusual inputs?
+
+Passing criteria: no zeros in any dimension AND total score >= 70% of maximum (i.e., >= 6 out of 8 total points).
+
+Return ONLY valid JSON with this exact structure:
+{
+  "overallScore": number (0-100),
+  "passed": boolean,
+  "scores": {
+    "Correctness": 0|1|2,
+    "Completeness": 0|1|2,
+    "Clarity": 0|1|2,
+    "Edge Cases": 0|1|2
+  },
+  "feedback": {
+    "Correctness": "string",
+    "Completeness": "string",
+    "Clarity": "string",
+    "Edge Cases": "string"
+  }
+}`
+}
+
+const MAX_FILE_SIZE_MB = 5
+
+/**
+ * POST /api/topics/:id/lessons/:lid/artifact
+ * Submit an artifact for LLM evaluation.
+ */
+router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+    const { content, fileData } = req.body
+
+    // Validate content presence
+    const artifactText = content || fileData || ''
+    if (!artifactText || typeof artifactText !== 'string' || artifactText.trim().length === 0) {
+      return res.status(400).json({ error: 'Artifact content is empty. Please enter or upload your solution before submitting.' })
+    }
+
+    // File size validation
+    if (fileData && Buffer.byteLength(fileData, 'utf8') > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      return res.status(400).json({ error: `File too large (max ${MAX_FILE_SIZE_MB}MB). Please upload a smaller file.` })
+    }
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    const prereqCheck = buildPrereqCheck(topicId, lesson)
+    if (prereqCheck.locked) {
+      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
+    }
+
+    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
+    if (!settings || !settings.api_key) {
+      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    let outcomes = []
+    try {
+      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
+    } catch {
+      outcomes = []
+    }
+
+    const system = buildArtifactEvaluationPrompt({
+      lessonTitle: lesson.title,
+      lessonOutcomes: outcomes,
+      artifactContent: artifactText.trim(),
+      artifactType: lesson.artifact_type,
+    })
+
+    const result = await generateText({
+      provider: settings.provider,
+      apiKey: settings.api_key,
+      model: settings.model,
+      system,
+      messages: [{ role: 'user', content: 'Evaluate the artifact and return JSON.' }],
+    })
+
+    let parsed
+    try {
+      const text = result.text || '{}'
+      parsed = JSON.parse(text)
+    } catch {
+      return res.status(500).json({ error: 'Failed to parse artifact evaluation from LLM. Please try again.', retryable: true })
+    }
+
+    const scores = parsed.scores || {}
+    const feedback = parsed.feedback || {}
+
+    // Validate rubric dimensions
+    const RUBRIC_DIMENSIONS = ['Correctness', 'Completeness', 'Clarity', 'Edge Cases']
+    for (const dim of RUBRIC_DIMENSIONS) {
+      if (typeof scores[dim] !== 'number' || scores[dim] < 0 || scores[dim] > 2) {
+        return res.status(500).json({
+          error: `Invalid rubric evaluation: ${dim} score is missing or out of range (0-2). Please retry.`,
+          retryable: true,
+        })
+      }
+    }
+
+    const totalScore = RUBRIC_DIMENSIONS.reduce((sum, dim) => sum + (scores[dim] || 0), 0)
+    const maxPoints = RUBRIC_DIMENSIONS.length * 2
+    const percentage = Math.round((totalScore / maxPoints) * 100)
+    const hasZero = RUBRIC_DIMENSIONS.some((dim) => (scores[dim] || 0) === 0)
+    const passed = !hasZero && totalScore >= Math.ceil(maxPoints * 0.7)
+
+    const evaluation = {
+      overallScore: typeof parsed.overallScore === 'number' ? parsed.overallScore : percentage,
+      passed,
+      scores,
+      feedback,
+    }
+
+    // Get current progress to know quiz score
+    const progress = get('SELECT id, quiz_score FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    const quizScore = progress ? progress.quiz_score : null
+
+    // Record artifact result via state machine
+    let stateMachineResult
+    try {
+      stateMachineResult = recordArtifactResult({ topicId, lessonId, artifactPassed: passed, quizScore })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+
+    // Persist artifact submission
+    let attemptNumber = 1
+    if (progress) {
+      const countRow = get('SELECT COUNT(*) as count FROM artifacts WHERE progress_id = ?', progress.id)
+      attemptNumber = (countRow?.count || 0) + 1
+    }
+    const progressId = progress ? progress.id : (stateMachineResult.progressId || 0)
+    const artifactResult = run(
+      'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
+      progressId,
+      artifactText.trim(),
+      JSON.stringify(scores),
+      passed ? 1 : 0,
+      JSON.stringify(feedback),
+      attemptNumber,
+    )
+
+    return res.json({
+      evaluation,
+      state: stateMachineResult.toState || get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)?.state || 'practicing',
+      artifactId: artifactResult.lastInsertRowid,
+    })
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/artifact error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to evaluate artifact.' })
+  }
+})
+
+/**
+ * GET /api/topics/:id/lessons/:lid/artifact
+ * Return the latest artifact submission for this lesson.
+ */
+router.get('/topics/:id/lessons/:lid/artifact', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    const progress = get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (!progress) {
+      return res.status(404).json({ error: 'No artifact found for this lesson.' })
+    }
+
+    const artifact = get(
+      'SELECT id, content, rubric_scores, passed, feedback, attempt_number, created_at FROM artifacts WHERE progress_id = ? ORDER BY id DESC',
+      progress.id,
+    )
+
+    if (!artifact) {
+      return res.status(404).json({ error: 'No artifact found for this lesson.' })
+    }
+
+    let scores = {}
+    let fb = {}
+    try {
+      scores = artifact.rubric_scores ? JSON.parse(artifact.rubric_scores) : {}
+    } catch {}
+    try {
+      fb = artifact.feedback ? JSON.parse(artifact.feedback) : {}
+    } catch {}
+
+    return res.json({
+      id: artifact.id,
+      content: artifact.content,
+      passed: !!artifact.passed,
+      attemptNumber: artifact.attempt_number,
+      createdAt: artifact.created_at,
+      evaluation: {
+        scores,
+        feedback: fb,
+      },
+    })
+  } catch (err) {
+    console.error('GET /api/topics/:id/lessons/:lid/artifact error:', err.message)
+    return res.status(500).json({ error: 'Failed to load artifact.' })
   }
 })
 

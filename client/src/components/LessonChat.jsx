@@ -2,15 +2,19 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getLesson, sendChatMessage, continueLesson, getQuiz } from '../api.js'
 import QuizPanel from './QuizPanel.jsx'
+import ArtifactPanel from './ArtifactPanel.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
-function LessonHeader({ lesson, progress, interactionMode }) {
+function LessonHeader({ lesson, progress, interactionMode, onSubmitArtifact }) {
   const modeLabels = {
     code: 'Code',
     scenario: 'Scenario',
     socratic: 'Socratic',
   }
+
+  const quizPassed = progress?.quiz_score !== null && progress?.quiz_score >= 80
+  const artifactDone = !!progress?.artifact_passed
 
   return (
     <div className="border-b border-gray-200 bg-white px-4 py-3 shrink-0">
@@ -50,6 +54,34 @@ function LessonHeader({ lesson, progress, interactionMode }) {
           <span className="text-xs text-green-600 font-medium">
             Passed
           </span>
+        )}
+        {lesson?.artifact_required && (
+          <>
+            <span className="text-xs text-gray-300">|</span>
+            {artifactDone ? (
+              <span className="text-xs text-green-600 font-medium">Artifact: Passed</span>
+            ) : (
+              <span className="text-xs text-amber-600 font-medium">Artifact: Pending</span>
+            )}
+          </>
+        )}
+        {quizPassed !== undefined && (
+          <>
+            <span className="text-xs text-gray-300">|</span>
+            {quizPassed ? (
+              <span className="text-xs text-green-600 font-medium">Quiz: Passed</span>
+            ) : (
+              <span className="text-xs text-amber-600 font-medium">Quiz: Pending</span>
+            )}
+          </>
+        )}
+        {lesson?.artifact_required && !artifactDone && onSubmitArtifact && (
+          <button
+            onClick={onSubmitArtifact}
+            className="rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+          >
+            Submit Artifact
+          </button>
         )}
       </div>
     </div>
@@ -168,6 +200,7 @@ export default function LessonChat() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [quizMode, setQuizMode] = useState(false)
+  const [artifactMode, setArtifactMode] = useState(false)
   const chatEndRef = useRef(null)
   const abortRef = useRef(null)
 
@@ -350,6 +383,16 @@ export default function LessonChat() {
     setQuizMode(true)
   }, [])
 
+  const handleStartArtifact = useCallback(() => {
+    setArtifactMode(true)
+  }, [])
+
+  const handleArtifactBack = useCallback(() => {
+    setArtifactMode(false)
+    // Refresh lesson state
+    loadLesson()
+  }, [loadLesson])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -396,7 +439,7 @@ export default function LessonChat() {
 
       {/* Lesson metadata */}
       {lesson && (
-        <LessonHeader lesson={lesson} progress={progress} interactionMode={interactionMode} />
+        <LessonHeader lesson={lesson} progress={progress} interactionMode={interactionMode} onSubmitArtifact={lesson?.artifact_required ? handleStartArtifact : undefined} />
       )}
 
       {/* Error banner */}
@@ -416,6 +459,8 @@ export default function LessonChat() {
 
       {quizMode ? (
         <QuizPanel topicId={topicId} lessonId={lessonId} onBack={() => navigate('/')} />
+      ) : artifactMode ? (
+        <ArtifactPanel topicId={topicId} lessonId={lessonId} lesson={lesson} onBack={handleArtifactBack} />
       ) : (
         <>
           {/* Chat area */}

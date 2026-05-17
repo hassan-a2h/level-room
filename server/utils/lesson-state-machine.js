@@ -308,13 +308,28 @@ export function startQuiz({ topicId, lessonId }) {
 }
 
 /**
+ * Check if a lesson requires an artifact.
+ * @param {number} lessonId
+ * @returns {{ required: boolean, type: string|null }}
+ */
+export function getArtifactRequirement(lessonId) {
+  const lesson = get('SELECT artifact_required, artifact_type FROM lessons WHERE id = ?', lessonId)
+  return {
+    required: !!lesson?.artifact_required,
+    type: lesson?.artifact_type || null,
+  }
+}
+
+/**
  * Record a quiz result and transition state atomically.
+ * For lessons requiring an artifact, the lesson only transitions to passed
+ * when BOTH quiz and artifact are passed.
  * @returns {{ fromState: string, toState: string, progressId: number }}
  */
 export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers, evaluation, attemptId }) {
   const tx = transaction((_topicId, _lessonId, _passed, _quizScore, _answers, _evaluation, _attemptId) => {
     const progress = get(
-      'SELECT id, state, quiz_attempts, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT id, state, quiz_attempts, remediation_attempts, last_gaps, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?',
       _topicId,
       _lessonId,
     )
@@ -325,11 +340,15 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
       )
     }
 
-    const newState = _passed ? STATES.PASSED : STATES.REMEDIATING
-    const completedAt = _passed ? new Date().toISOString() : null
+    const artifactReq = getArtifactRequirement(_lessonId)
+    const artifactPassed = !!progress.artifact_passed
+    const canComplete = _passed && (!artifactReq.required || artifactPassed)
+
+    const newState = canComplete ? STATES.PASSED : STATES.REMEDIATING
+    const completedAt = canComplete ? new Date().toISOString() : null
     const gaps = Array.isArray(_evaluation?.gaps) ? _evaluation.gaps : []
     const gapsJson = JSON.stringify(gaps)
-    const newRemediationAttempts = _passed ? (progress.remediation_attempts || 0) : (progress.remediation_attempts || 0) + 1
+    const newRemediationAttempts = canComplete ? (progress.remediation_attempts || 0) : (progress.remediation_attempts || 0) + 1
 
     run(
       `UPDATE progress SET state = ?, quiz_score = ?, quiz_attempts = quiz_attempts + 1, completed_at = ?, remediation_attempts = ?, last_gaps = ? WHERE id = ?`,
@@ -341,7 +360,7 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
       progress.id,
     )
 
-    if (!_passed && gaps.length > 0) {
+    if (!canComplete && gaps.length > 0) {
       // Log or update mistakes_log entries for each gap
       for (const gap of gaps) {
         const existing = get(
@@ -368,7 +387,7 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
       }
     }
 
-    if (_passed) {
+    if (canComplete) {
       scheduleSrs(_topicId, _lessonId)
     }
 
@@ -385,6 +404,77 @@ export function recordQuizResult({ topicId, lessonId, passed, quizScore, answers
   })
 
   return tx(topicId, lessonId, passed, quizScore, answers, evaluation, attemptId)
+}
+
+/**
+ * Record an artifact evaluation result.
+ * If the artifact passes and the quiz was already passed, transition to passed.
+ * Otherwise, just mark artifact_passed on the progress row.
+ * @returns {{ passed: boolean, stateChanged: boolean, fromState?: string, toState?: string }}
+ */
+export function recordArtifactResult({ topicId, lessonId, artifactPassed, quizScore }) {
+  const tx = transaction((_topicId, _lessonId, _artifactPassed, _quizScore) => {
+    const progress = get(
+      'SELECT id, state, quiz_score, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      _topicId,
+      _lessonId,
+    )
+
+    const fromState = progress ? progress.state : STATES.NOT_STARTED
+
+    if (_artifactPassed) {
+      const canComplete = _quizScore !== null && _quizScore >= 80
+      if (canComplete) {
+        // Transition to passed (from any active state)
+        if (!progress) {
+          const now = new Date().toISOString()
+          const result = run(
+            'INSERT INTO progress (topic_id, lesson_id, state, quiz_score, artifact_passed, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            _topicId,
+            _lessonId,
+            STATES.PASSED,
+            _quizScore,
+            1,
+            now,
+            now,
+          )
+          scheduleSrs(_topicId, _lessonId)
+          return { passed: true, stateChanged: true, fromState: STATES.NOT_STARTED, toState: STATES.PASSED, progressId: result.lastInsertRowid }
+        }
+
+        run(
+          'UPDATE progress SET state = ?, artifact_passed = 1, completed_at = ? WHERE id = ?',
+          STATES.PASSED,
+          new Date().toISOString(),
+          progress.id,
+        )
+        scheduleSrs(_topicId, _lessonId)
+        return { passed: true, stateChanged: true, fromState: progress.state, toState: STATES.PASSED, progressId: progress.id }
+      }
+    }
+
+    // Just record artifact_passed; do not change state
+    if (!progress) {
+      run(
+        'INSERT INTO progress (topic_id, lesson_id, state, artifact_passed, started_at) VALUES (?, ?, ?, ?, ?)',
+        _topicId,
+        _lessonId,
+        fromState,
+        _artifactPassed ? 1 : 0,
+        new Date().toISOString(),
+      )
+    } else {
+      run(
+        'UPDATE progress SET artifact_passed = ? WHERE id = ?',
+        _artifactPassed ? 1 : 0,
+        progress.id,
+      )
+    }
+
+    return { passed: _artifactPassed, stateChanged: false }
+  })
+
+  return tx(topicId, lessonId, artifactPassed, quizScore)
 }
 
 /**

@@ -330,3 +330,26 @@ export async function deferLesson(topicId, lessonId) {
   }
   return body
 }
+
+// Artifact API
+export async function submitArtifact(topicId, lessonId, content) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/artifact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function getArtifact(topicId, lessonId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/artifact`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
