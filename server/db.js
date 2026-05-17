@@ -158,6 +158,17 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migrationName)
     })()
   }
+
+  const migration002 = '002_add_last_active_at'
+  const check002 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration002)
+  if (!check002) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE topics ADD COLUMN last_active_at DATETIME;
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration002)
+    })()
+  }
 }
 
 /**

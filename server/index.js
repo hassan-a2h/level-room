@@ -3,6 +3,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import db, { initSchema } from './db.js'
 import settingsRouter from './routes/settings.js'
+import dashboardRouter from './routes/dashboard.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -25,6 +26,7 @@ app.get('/health', (_req, res) => {
 })
 
 app.use('/api/settings', settingsRouter)
+app.use('/api', dashboardRouter)
 
 const PORT = process.env.PORT || 3200
 app.listen(PORT, () => {
