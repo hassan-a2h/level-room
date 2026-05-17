@@ -1,24 +1,22 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
 import { streamText, generateText, LlmClientError } from '../llm/client.js'
+import {
+  startPracticing,
+  startQuiz,
+  startRetest,
+  recordQuizResult,
+  skipLesson,
+  startTestOut,
+  finishTestOut,
+  checkPrerequisites,
+  StateMachineError,
+} from '../utils/lesson-state-machine.js'
 
 const router = Router()
 
 const MAX_MESSAGE_LENGTH = 2000
 const DEFAULT_TOTAL_CHUNKS = 3
-const QUIZ_PASS_THRESHOLD = 80
-const SRS_INTERVALS = [1, 3, 7, 14, 30]
-
-/**
- * Quiz question type weights per spec.
- */
-const QUESTION_TYPE_WEIGHTS = {
-  Recall: 1,
-  Explain: 2,
-  Apply: 2,
-  Diagnose: 2,
-  Transfer: 3,
-}
 
 /**
  * Technical topic keywords for mode inference.
@@ -93,26 +91,10 @@ You are a Socratic tutor. Ask clarifying questions BEFORE giving direct answers.
 }
 
 /**
- * Check if a lesson's prerequisites are met.
+ * Prerequisite helper that uses the canonical state-machine function.
  */
-function checkPrerequisites(topicId, lesson) {
-  let prerequisites = []
-  try {
-    prerequisites = lesson.prerequisites ? JSON.parse(lesson.prerequisites) : []
-  } catch {
-    prerequisites = []
-  }
-
-  for (const pr of prerequisites) {
-    const prereqProg = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, pr.lessonId)
-    if (!prereqProg || !['passed', 'tested_out'].includes(prereqProg.state)) {
-      return { locked: true, unmet: prerequisites.filter((p) => {
-        const pp = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, p.lessonId)
-        return !pp || !['passed', 'tested_out'].includes(pp.state)
-      }) }
-    }
-  }
-  return { locked: false, unmet: [] }
+function buildPrereqCheck(topicId, lesson) {
+  return checkPrerequisites(topicId, lesson.id)
 }
 
 /**
@@ -146,7 +128,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
       topicId, lessonId
     ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0 }
 
-    const prereqCheck = checkPrerequisites(topicId, lesson)
+    const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       let prereqList = []
       try {
@@ -237,27 +219,23 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    // Check prerequisites
-    const prereqCheck = checkPrerequisites(topicId, lesson)
+    const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
     }
 
-    // Upsert progress and transition state if needed
-    let progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress) {
-      const result = run(
-        'INSERT INTO progress (topic_id, lesson_id, state, started_at, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?, ?)',
-        topicId, lessonId, 'practicing', new Date().toISOString(), 1, DEFAULT_TOTAL_CHUNKS
-      )
-      progress = { id: result.lastInsertRowid, state: 'practicing', current_chunk: 1, total_chunks: DEFAULT_TOTAL_CHUNKS }
-    } else if (progress.state === 'not_started') {
-      run(
-        'UPDATE progress SET state = ?, started_at = ?, current_chunk = ?, total_chunks = ? WHERE id = ?',
-        'practicing', new Date().toISOString(), 1, DEFAULT_TOTAL_CHUNKS, progress.id
-      )
-      progress = { ...progress, state: 'practicing', current_chunk: 1, total_chunks: DEFAULT_TOTAL_CHUNKS }
+    // Transition state via state machine (not_started -> practicing)
+    try {
+      startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
     }
+
+    // Re-fetch progress for chunk info
+    const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
 
     // Persist user message
     run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
@@ -374,8 +352,7 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    // Check prerequisites
-    const prereqCheck = checkPrerequisites(topicId, lesson)
+    const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
     }
@@ -568,20 +545,24 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    // Check prerequisites
-    const prereqCheck = checkPrerequisites(topicId, lesson)
+    const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
-    }
-
-    const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress || progress.state !== 'practicing') {
-      return res.status(400).json({ error: 'Lesson must be in practicing state to start a quiz.' })
     }
 
     const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
     if (!settings || !settings.api_key) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
+    }
+
+    // Transition via state machine (practicing -> quiz_pending)
+    try {
+      startQuiz({ topicId, lessonId })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
     }
 
     let outcomes = []
@@ -628,9 +609,6 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     if (validQuestions.length === 0) {
       return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
     }
-
-    // Transition state to quiz_pending
-    run('UPDATE progress SET state = ? WHERE id = ?', 'quiz_pending', progress.id)
 
     // Persist quiz questions
     const questionsJson = JSON.stringify(validQuestions)
@@ -717,11 +695,6 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    const progress = get('SELECT id, state, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress || progress.state !== 'quiz_pending') {
-      return res.status(400).json({ error: 'Lesson must be in quiz_pending state to submit answers.' })
-    }
-
     const attempt = get(
       'SELECT id, questions FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
       topicId, lessonId
@@ -780,7 +753,7 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
 
     const overallScore = typeof parsed.overallScore === 'number' ? parsed.overallScore : 0
     const criticalGap = !!parsed.criticalGap
-    const passed = overallScore >= QUIZ_PASS_THRESHOLD && !criticalGap
+    const passed = overallScore >= 80 && !criticalGap
 
     const evaluation = {
       overallScore,
@@ -790,31 +763,22 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
       gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
     }
 
-    const newState = passed ? 'passed' : 'remediating'
-    const completedAt = passed ? new Date().toISOString() : null
-
-    run(
-      'UPDATE progress SET state = ?, quiz_score = ?, quiz_attempts = ?, completed_at = ? WHERE id = ?',
-      newState, overallScore, (progress.quiz_attempts || 0) + 1, completedAt, progress.id
-    )
-
-    // Persist answers and evaluation
-    run(
-      'UPDATE quiz_attempts SET answers = ?, evaluation = ? WHERE id = ?',
-      JSON.stringify(answers), JSON.stringify(evaluation), attempt.id
-    )
-
-    // Schedule SRS on pass
-    if (passed) {
-      const existingSrs = get('SELECT id FROM srs_queue WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      if (!existingSrs) {
-        const dueDate = new Date()
-        dueDate.setDate(dueDate.getDate() + SRS_INTERVALS[0])
-        run(
-          'INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date) VALUES (?, ?, ?, ?)',
-          topicId, lessonId, 0, dueDate.toISOString().split('T')[0]
-        )
+    // Atomic state transition via state machine
+    try {
+      recordQuizResult({
+        topicId,
+        lessonId,
+        passed,
+        quizScore: overallScore,
+        answers,
+        evaluation,
+        attemptId: attempt.id,
+      })
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
       }
+      throw smErr
     }
 
     return res.json(evaluation)
@@ -824,6 +788,131 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
     return res.status(500).json({ error: 'Failed to evaluate quiz.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/retest
+ * Start a retest (remediating -> quiz_pending).
+ */
+router.post('/topics/:id/lessons/:lid/retest', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    try {
+      const result = startRetest({ topicId, lessonId })
+      return res.json(result)
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/retest error:', err.message)
+    return res.status(500).json({ error: 'Failed to start retest.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/skip
+ * Skip a lesson.
+ */
+router.post('/topics/:id/lessons/:lid/skip', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    try {
+      const result = skipLesson({ topicId, lessonId })
+      return res.json(result)
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/skip error:', err.message)
+    return res.status(500).json({ error: 'Failed to skip lesson.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/test-out/start
+ * Start a test-out diagnostic (no state change yet).
+ */
+router.post('/topics/:id/lessons/:lid/test-out/start', (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+
+    try {
+      const result = startTestOut({ topicId, lessonId })
+      return res.json(result)
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/test-out/start error:', err.message)
+    return res.status(500).json({ error: 'Failed to start test-out.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/lessons/:lid/test-out/finish
+ * Finish a test-out diagnostic.
+ */
+router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const lessonId = Number(req.params.lid)
+    const { answers, passed, quizScore, evaluation, attemptId } = req.body
+
+    if (!answers || typeof answers !== 'object' || Object.keys(answers).length === 0) {
+      return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
+    }
+
+    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
+    if (!topic) {
+      return res.status(404).json({ error: 'Topic not found.' })
+    }
+
+    const lesson = get(
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+       FROM lessons l
+       JOIN modules m ON l.module_id = m.id
+       WHERE l.id = ? AND m.topic_id = ?`,
+      lessonId, topicId
+    )
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found.' })
+    }
+
+    try {
+      const result = finishTestOut({
+        topicId,
+        lessonId,
+        passed,
+        quizScore,
+        answers,
+        evaluation,
+        attemptId,
+      })
+      return res.json(result)
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
+  } catch (err) {
+    console.error('POST /api/topics/:id/lessons/:lid/test-out/finish error:', err.message)
+    return res.status(500).json({ error: 'Failed to finish test-out.' })
   }
 })
 
