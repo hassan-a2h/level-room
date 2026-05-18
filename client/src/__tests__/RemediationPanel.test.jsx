@@ -9,6 +9,7 @@ vi.mock('../api.js', () => ({
   startRetest: vi.fn(),
   getRemediationState: vi.fn(),
   deferLesson: vi.fn(),
+  getLocalDate: vi.fn(() => '2024-06-01'),
 }))
 
 import { sendRemediateChat, getQuiz, submitQuiz, startRetest, getRemediationState, deferLesson } from '../api.js'

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { getRemediationState, sendRemediateChat, startRetest, submitQuiz, deferLesson } from '../api.js'
+import { getRemediationState, sendRemediateChat, startRetest, submitQuiz, deferLesson, getLocalDate } from '../api.js'
 
 const MAX_MESSAGE_LENGTH = 2000
 
@@ -370,7 +370,7 @@ export default function RemediationPanel({
     setLoading(true)
     setError('')
     try {
-      const result = await submitQuiz(topicId, lessonId, answers)
+      const result = await submitQuiz(topicId, lessonId, answers, getLocalDate())
       setEvaluation({ ...result, _questions: questions, _answers: answers })
       if (!result.passed) {
         setAttemptNumber((prev) => prev + 1)

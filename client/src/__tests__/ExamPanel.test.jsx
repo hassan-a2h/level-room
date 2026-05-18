@@ -15,6 +15,7 @@ vi.mock('../api.js', () => ({
   retakeExam: vi.fn(),
   startPartialRetest: vi.fn(),
   submitPartialRetest: vi.fn(),
+  getLocalDate: vi.fn(() => '2024-06-01'),
 }))
 
 import {

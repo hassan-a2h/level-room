@@ -8,6 +8,7 @@ vi.mock('../api.js', () => ({
   getReviews: vi.fn(),
   getReviewCount: vi.fn(),
   startReviewSession: vi.fn(),
+  getLocalDate: vi.fn(() => '2024-06-01'),
 }))
 
 import { getReviews, getReviewCount, startReviewSession } from '../api.js'

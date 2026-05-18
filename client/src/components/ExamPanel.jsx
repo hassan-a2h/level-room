@@ -8,6 +8,7 @@ import {
   retakeExam,
   startPartialRetest,
   submitPartialRetest,
+  getLocalDate,
 } from '../api.js'
 
 const TYPE_LABELS = {
@@ -315,9 +316,9 @@ export default function ExamPanel({ topicId, moduleId, moduleLessons, onBack }) 
     try {
       let result
       if (isPartialRetest && retestId) {
-        result = await submitPartialRetest(topicId, moduleId, retestId, answers)
+        result = await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate())
       } else {
-        result = await submitExam(topicId, moduleId, answers)
+        result = await submitExam(topicId, moduleId, answers, getLocalDate())
       }
       setEvaluation({ ...result, _questions: questions, _answers: answers, _topicId: topicId })
       if (result.passed) {

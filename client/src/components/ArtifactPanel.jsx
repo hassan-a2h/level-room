@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { submitArtifact, getArtifact } from '../api.js'
+import { submitArtifact, getArtifact, getLocalDate } from '../api.js'
 
 const RUBRIC_DIMENSIONS = ['Correctness', 'Completeness', 'Clarity', 'Edge Cases']
 
@@ -181,7 +181,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
     setLoading(true)
     setError('')
     try {
-      const result = await submitArtifact(topicId, lessonId, trimmed)
+      const result = await submitArtifact(topicId, lessonId, trimmed, getLocalDate())
       if (result.evaluation) {
         setEvaluation(result.evaluation)
         setPrevContent(trimmed)

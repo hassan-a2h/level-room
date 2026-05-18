@@ -8,6 +8,7 @@ import {
   getDefaultTopic,
   getReviewCount,
   getStreak,
+  getLocalDate,
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
 import ExamPanel from '../components/ExamPanel.jsx'
@@ -195,7 +196,7 @@ export default function Dashboard() {
 
   const loadStreak = useCallback(async () => {
     try {
-      const data = await getStreak()
+      const data = await getStreak(getLocalDate())
       setStreak(data)
     } catch {
       setStreak(null)

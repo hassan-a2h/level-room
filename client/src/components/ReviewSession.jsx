@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { submitReview, cancelReview } from '../api.js'
+import { submitReview, cancelReview, getLocalDate } from '../api.js'
 
 function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit, disabled }) {
   return (
@@ -158,7 +158,7 @@ export default function ReviewSession() {
 
     try {
       const allAnswers = { ...answers }
-      const res = await submitReview(sessionId, allAnswers)
+      const res = await submitReview(sessionId, allAnswers, getLocalDate())
 
       // Map feedback by question id
       const fbMap = {}

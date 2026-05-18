@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { startQuiz, getQuiz, submitQuiz } from '../api.js'
+import { startQuiz, getQuiz, submitQuiz, getLocalDate } from '../api.js'
 import RemediationPanel from './RemediationPanel.jsx'
 import { SkeletonQuiz } from '../components/Skeleton.jsx'
 
@@ -210,7 +210,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
     setLoading(true)
     setError('')
     try {
-      const result = await submitQuiz(topicId, lessonId, answers)
+      const result = await submitQuiz(topicId, lessonId, answers, getLocalDate())
       setEvaluation({ ...result, _questions: questions, _answers: answers })
       if (!result.passed) {
         setRemediationMode(true)

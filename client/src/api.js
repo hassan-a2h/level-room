@@ -1,5 +1,9 @@
 const API_BASE = 'http://localhost:3200'
 
+export function getLocalDate() {
+  return new Date().toLocaleDateString('en-CA')
+}
+
 export async function getSettings() {
   const res = await fetch(`${API_BASE}/api/settings`)
   if (!res.ok) {
@@ -191,11 +195,11 @@ export async function getTestOutQuestions(topicId, lessonId) {
   return res.json()
 }
 
-export async function submitTestOut(topicId, lessonId, answers) {
+export async function submitTestOut(topicId, lessonId, answers, localDate) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -261,11 +265,11 @@ export async function getQuiz(topicId, lessonId) {
   return body
 }
 
-export async function submitQuiz(topicId, lessonId, answers) {
+export async function submitQuiz(topicId, lessonId, answers, localDate) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -355,11 +359,11 @@ export async function saveExamProgress(topicId, moduleId, answers) {
   return body
 }
 
-export async function submitExam(topicId, moduleId, answers) {
+export async function submitExam(topicId, moduleId, answers, localDate) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -393,11 +397,11 @@ export async function startPartialRetest(topicId, moduleId, weakLessons) {
   return body
 }
 
-export async function submitPartialRetest(topicId, moduleId, retestId, answers) {
+export async function submitPartialRetest(topicId, moduleId, retestId, answers, localDate) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest/${retestId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -407,11 +411,11 @@ export async function submitPartialRetest(topicId, moduleId, retestId, answers) 
 }
 
 // Artifact API
-export async function submitArtifact(topicId, lessonId, content) {
+export async function submitArtifact(topicId, lessonId, content, localDate) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/artifact`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -508,11 +512,11 @@ export async function startReviewSession() {
   return body
 }
 
-export async function submitReview(sessionId, answers) {
+export async function submitReview(sessionId, answers, localDate) {
   const res = await fetch(`${API_BASE}/api/reviews/${sessionId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, localDate }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {

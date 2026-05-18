@@ -5,6 +5,7 @@ import ArtifactPanel from '../components/ArtifactPanel.jsx'
 vi.mock('../api.js', () => ({
   submitArtifact: vi.fn(),
   getArtifact: vi.fn(),
+  getLocalDate: vi.fn(() => '2024-06-01'),
 }))
 
 import { submitArtifact, getArtifact } from '../api.js'

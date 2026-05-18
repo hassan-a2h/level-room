@@ -11,6 +11,7 @@ vi.mock('../api.js', () => ({
   getDefaultTopic: vi.fn(),
   getReviewCount: vi.fn(),
   getStreak: vi.fn(),
+  getLocalDate: vi.fn(() => '2024-06-01'),
 }))
 
 import { getTopics, getDashboard, getDefaultTopic, selectTopic, getReviewCount, getStreak } from '../api.js'

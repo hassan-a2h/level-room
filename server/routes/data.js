@@ -48,6 +48,7 @@ router.post('/import', (req, res) => {
     const requiredTables = [
       'topics', 'modules', 'lessons', 'progress', 'messages',
       'srs_queue', 'artifacts', 'llm_settings', 'mistakes_log', 'streaks',
+      'quiz_attempts', 'exam_attempts',
     ]
 
     for (const table of requiredTables) {
