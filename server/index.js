@@ -9,6 +9,7 @@ import lessonsRouter from './routes/lessons.js'
 import examsRouter from './routes/exams.js'
 import reviewsRouter from './routes/reviews.js'
 import streakRouter from './routes/streak.js'
+import dataRouter from './routes/data.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -26,6 +27,14 @@ app.use((_req, res, next) => {
   next()
 })
 
+// Global error handler for malformed JSON and other errors
+app.use((err, _req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON.' })
+  }
+  next(err)
+})
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() })
 })
@@ -37,6 +46,7 @@ app.use('/api', lessonsRouter)
 app.use('/api', examsRouter)
 app.use('/api', reviewsRouter)
 app.use('/api', streakRouter)
+app.use('/api/data', dataRouter)
 
 const PORT = process.env.PORT || 3200
 app.listen(PORT, () => {

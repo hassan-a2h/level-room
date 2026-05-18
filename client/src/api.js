@@ -440,6 +440,29 @@ export async function getArtifact(topicId, lessonId) {
   return body
 }
 
+// Data Export / Import API
+export async function exportData() {
+  const res = await fetch(`${API_BASE}/api/data/export`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function importData(backup) {
+  const res = await fetch(`${API_BASE}/api/data/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(backup),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return body
+}
+
 // Streak API
 export async function getStreak(today) {
   const url = today ? `${API_BASE}/api/streak?today=${encodeURIComponent(today)}` : `${API_BASE}/api/streak`
