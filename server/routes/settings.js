@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { get, run, all } from '../db.js'
-import { generateText, LlmClientError } from '../llm/client.js'
+import { get, run } from '../db.js'
+import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
 
 const router = Router()
 
@@ -18,9 +18,16 @@ const PROVIDER_MODELS = {
     'claude-3-haiku-20240307',
   ],
   fireworks: [
+    'accounts/fireworks/routers/kimi-k2p6-turbo',
     'accounts/fireworks/models/llama-v3p1-70b-instruct',
     'accounts/fireworks/models/llama-v3p1-8b-instruct',
   ],
+}
+
+const ENV_KEY_MAP = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  fireworks: 'FIREWORKS_API_KEY',
 }
 
 function isValidProvider(provider) {
@@ -33,60 +40,25 @@ function isValidModel(provider, model) {
   return models.includes(model)
 }
 
-function isMalformedKey(apiKey) {
-  if (!apiKey || typeof apiKey !== 'string') return true
-  if (apiKey.length < 5) return true
-  const lower = apiKey.toLowerCase()
-  if (lower.startsWith('invalid-') || lower.startsWith('bad-')) return true
-  return false
-}
-
 /**
- * Get the single settings row (or undefined).
+ * Get env configuration status for all providers.
  */
-function getSettingsRow() {
-  return get('SELECT * FROM llm_settings LIMIT 1')
-}
-
-/**
- * Test an API key with a lightweight LLM call.
- */
-async function testApiKey(provider, apiKey, model) {
-  try {
-    await generateText({
-      provider,
-      apiKey,
-      model,
-      messages: [{ role: 'user', content: 'Say hello.' }],
-    })
-    return { ok: true }
-  } catch (err) {
-    if (err instanceof LlmClientError) {
-      if (err.code === 'AUTH_ERROR' || err.code === 'MISSING_API_KEY') {
-        return { ok: false, error: 'Invalid API key. Please check your key and try again.', code: err.code }
-      }
-      if (err.code === 'RATE_LIMIT') {
-        return { ok: false, error: 'Rate limit hit — try again in 60s', code: err.code }
-      }
-      if (err.code === 'PROVIDER_UNAVAILABLE') {
-        return { ok: false, error: `${provider} is currently unreachable. Check your connection or try another provider in Settings.`, code: err.code }
-      }
-      return { ok: false, error: err.message, code: err.code }
-    }
-    return { ok: false, error: 'Unexpected error during validation.', code: 'UNKNOWN' }
-  }
+function getEnvStatus() {
+  return VALID_PROVIDERS.map((p) => ({
+    provider: p,
+    configured: Boolean(process.env[ENV_KEY_MAP[p]] && process.env[ENV_KEY_MAP[p]].length > 0),
+    envVar: ENV_KEY_MAP[p],
+  }))
 }
 
 router.get('/', (_req, res) => {
   try {
-    const row = getSettingsRow()
-    if (!row) {
-      return res.json({ provider: null, model: null, apiKeySet: false })
-    }
+    const config = resolveLlmConfig()
     return res.json({
-      provider: row.provider,
-      model: row.model,
-      apiKeySet: Boolean(row.api_key && row.api_key.length > 0),
+      provider: config.provider,
+      model: config.model,
+      apiKeySet: config.apiKeySet,
+      envStatus: getEnvStatus(),
     })
   } catch (err) {
     console.error('GET /api/settings error:', err.message)
@@ -96,7 +68,7 @@ router.get('/', (_req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { provider, apiKey, model, clearKey } = req.body
+    const { provider, model } = req.body
 
     if (!provider || typeof provider !== 'string') {
       return res.status(400).json({ error: 'Provider is required.' })
@@ -112,37 +84,30 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: `Invalid model "${model}" for provider ${provider}.` })
     }
 
-    const existing = getSettingsRow()
-    let finalApiKey = apiKey
-
-    if (clearKey) {
-      finalApiKey = ''
-    } else if (!apiKey && existing && existing.api_key) {
-      finalApiKey = existing.api_key
-    } else if (!apiKey || (typeof apiKey === 'string' && apiKey.trim() === '')) {
-      return res.status(400).json({ error: 'API key is required.' })
+    // Reject if an apiKey field is sent (old clients)
+    if ('apiKey' in req.body) {
+      return res.status(400).json({
+        error: 'API keys are no longer stored in the app. Please set them in your .env file and restart the server.',
+      })
     }
 
-    if (!clearKey && isMalformedKey(finalApiKey)) {
-      return res.status(400).json({ error: 'Invalid API key format.' })
-    }
-
-    // Test the key with a real LLM call before persisting (skip if clearing)
-    if (!clearKey) {
-      const testResult = await testApiKey(provider, finalApiKey, model)
-      if (!testResult.ok) {
-        return res.status(400).json({ error: testResult.error, code: testResult.code })
-      }
+    // Validate that the selected provider has a configured env key
+    const envVar = ENV_KEY_MAP[provider]
+    if (!process.env[envVar] || process.env[envVar].length === 0) {
+      return res.status(400).json({
+        error: `${provider} API key not configured. Please set ${envVar} in your .env file and restart the server.`,
+      })
     }
 
     // Upsert: delete existing, insert new (only ever one row)
     run('DELETE FROM llm_settings')
-    run('INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)', provider, finalApiKey, model)
+    run('INSERT INTO llm_settings (provider, model) VALUES (?, ?)', provider, model)
 
     return res.json({
       provider,
       model,
-      apiKeySet: Boolean(finalApiKey && finalApiKey.length > 0),
+      apiKeySet: true,
+      envStatus: getEnvStatus(),
     })
   } catch (err) {
     console.error('POST /api/settings error:', err.message)
@@ -150,38 +115,20 @@ router.post('/', async (req, res) => {
   }
 })
 
-router.post('/validate', async (req, res) => {
+router.post('/validate', async (_req, res) => {
   try {
-    const row = getSettingsRow()
-    if (!row) {
-      return res.status(400).json({ error: 'No settings configured. Please save settings first.' })
-    }
-    if (!row.api_key || row.api_key.length === 0) {
-      return res.status(400).json({ error: 'API key missing. Please configure your API key in Settings.' })
-    }
-
-    const testResult = await testApiKey(row.provider, row.api_key, row.model)
-    if (!testResult.ok) {
-      return res.status(400).json({ error: testResult.error, code: testResult.code })
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
+      const envVar = ENV_KEY_MAP[config.provider]
+      return res.status(400).json({
+        error: `${config.provider} API key not configured. Please set ${envVar} in your .env file and restart the server.`,
+      })
     }
 
-    return res.json({ ok: true, provider: row.provider, model: row.model })
+    return res.json({ ok: true, provider: config.provider, model: config.model })
   } catch (err) {
     console.error('POST /api/settings/validate error:', err.message)
     return res.status(500).json({ error: 'Failed to validate settings.' })
-  }
-})
-
-router.delete('/key', (_req, res) => {
-  try {
-    const row = getSettingsRow()
-    if (row) {
-      run('UPDATE llm_settings SET api_key = ? WHERE id = ?', '', row.id)
-    }
-    return res.json({ ok: true })
-  } catch (err) {
-    console.error('DELETE /api/settings/key error:', err.message)
-    return res.status(500).json({ error: 'Failed to clear API key.' })
   }
 })
 

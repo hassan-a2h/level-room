@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
 import { streamText, generateText, streamToSSE, LlmClientError } from '../llm/client.js'
+import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
 
 const router = Router()
 
@@ -8,18 +9,11 @@ const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced']
 const VALID_TIME_COMMITMENTS = ['15 min/day', '30 min/day', '1 hour/day', '2+ hours/day']
 
 /**
- * Get the configured LLM settings row.
- */
-function getSettingsRow() {
-  return get('SELECT * FROM llm_settings LIMIT 1')
-}
-
-/**
  * Generate setup questions for a topic via LLM.
  */
 async function generateSetupQuestions(topicTitle) {
-  const settings = getSettingsRow()
-  if (!settings || !settings.api_key) {
+  const config = resolveLlmConfig()
+  if (!config.apiKeySet) {
     throw new LlmClientError('No LLM settings configured.', { code: 'MISSING_SETTINGS' })
   }
 
@@ -35,9 +29,9 @@ The first question should assess current experience level. The second should ass
 Keep each option to 1-4 words. Do not include markdown formatting.`
 
   const result = await generateText({
-    provider: settings.provider,
-    apiKey: settings.api_key,
-    model: settings.model,
+    provider: config.provider,
+    apiKey: config.apiKey,
+    model: config.model,
     system,
     messages: [{ role: 'user', content: `Topic: ${topicTitle}` }],
   })
@@ -55,8 +49,8 @@ Keep each option to 1-4 words. Do not include markdown formatting.`
  * Generate a full curriculum for a topic via LLM.
  */
 async function generateCurriculum(topicTitle, level, timeCommitment) {
-  const settings = getSettingsRow()
-  if (!settings || !settings.api_key) {
+  const config = resolveLlmConfig()
+  if (!config.apiKeySet) {
     throw new LlmClientError('No LLM settings configured.', { code: 'MISSING_SETTINGS' })
   }
 
@@ -92,9 +86,9 @@ Rules:
   const userContent = `Topic: ${topicTitle}\nLearner level: ${level}\nTime commitment: ${timeCommitment}\nGenerate the curriculum now.`
 
   return streamText({
-    provider: settings.provider,
-    apiKey: settings.api_key,
-    model: settings.model,
+    provider: config.provider,
+    apiKey: config.apiKey,
+    model: config.model,
     system,
     messages: [{ role: 'user', content: userContent }],
   })
@@ -337,8 +331,8 @@ router.get('/topics/:id/setup-questions', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -369,8 +363,8 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -527,8 +521,8 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
       return res.status(400).json({ error: 'Tweak request is required.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -574,9 +568,9 @@ Rules:
     const userContent = `Topic: ${topic.title}\nLearner level: ${topic.level || 'Beginner'}\nTime commitment: ${topic.time_per_week || '30 min/day'}\n\nExisting curriculum:\n${JSON.stringify(existingLessons, null, 2)}\n\nUser request: ${tweakRequest.trim()}\n\nReturn the updated full curriculum.`
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: userContent }],
     })
@@ -615,8 +609,8 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -663,8 +657,8 @@ router.get('/topics/:id/lessons/:lid/test-out', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -685,9 +679,9 @@ Respond in strict JSON:
 Questions should cover the lesson's learning outcomes directly. Do not include markdown formatting.`
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}` }],
     })
@@ -732,8 +726,8 @@ router.post('/topics/:id/lessons/:lid/test-out', async (req, res) => {
       return res.status(400).json({ error: 'Answers are required.' })
     }
 
-    const settings = getSettingsRow()
-    if (!settings || !settings.api_key) {
+    const config = resolveLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -757,9 +751,9 @@ Pass requires score >= 80 AND no critical gaps. Be strict but fair. Do not inclu
     const userContent = `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}\n\nUser answers:\n${answers.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: userContent }],
     })

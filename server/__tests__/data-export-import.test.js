@@ -17,6 +17,7 @@ describe('Data Export and Import API', () => {
   beforeEach(async () => {
     dbPath = tempDbPath()
     process.env.DB_PATH = dbPath
+    process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
     dbModule = await import('../db.js')
     dbModule.initSchema()
@@ -33,6 +34,11 @@ describe('Data Export and Import API', () => {
     }
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
+    delete process.env.OPENAI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.FIREWORKS_API_KEY
+    delete process.env.LLM_PROVIDER
+    delete process.env.LLM_MODEL
   })
 
   function seedDatabase() {
@@ -70,8 +76,8 @@ describe('Data Export and Import API', () => {
     )
 
     dbModule.run(
-      'INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)',
-      'openai', 'sk-test', 'gpt-4o'
+      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
+      'openai', 'gpt-4o'
     )
 
     dbModule.run(
@@ -130,6 +136,13 @@ describe('Data Export and Import API', () => {
       expect(res.body.llm_settings).toHaveLength(1)
       expect(res.body.llm_settings[0].api_key).toBeUndefined()
       expect(res.body.llm_settings[0].provider).toBe('openai')
+    })
+
+    it('llm_settings export contains no api_key column', async () => {
+      seedDatabase()
+      const res = await request(app).get('/api/data/export')
+      expect(res.status).toBe(200)
+      expect(res.body.llm_settings[0]).not.toHaveProperty('api_key')
     })
 
     it('handles empty database gracefully', async () => {
@@ -245,7 +258,8 @@ describe('Data Export and Import API', () => {
       expect(importRes.status).toBe(200)
       const settings = dbModule.get('SELECT * FROM llm_settings')
       expect(settings.provider).toBe('openai')
-      expect(settings.api_key).toBe('') // empty, not restored
+      // api_key column no longer exists
+      expect(settings.api_key).toBeUndefined()
     })
   })
 })

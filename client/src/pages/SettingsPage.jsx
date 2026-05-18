@@ -14,6 +14,7 @@ const PROVIDER_MODELS = {
     { value: 'claude-3-haiku-20240307', label: 'claude-3-haiku-20240307' },
   ],
   fireworks: [
+    { value: 'accounts/fireworks/routers/kimi-k2p6-turbo', label: 'kimi-k2p6-turbo' },
     { value: 'accounts/fireworks/models/llama-v3p1-70b-instruct', label: 'llama-v3p1-70b-instruct' },
     { value: 'accounts/fireworks/models/llama-v3p1-8b-instruct', label: 'llama-v3p1-8b-instruct' },
   ],
@@ -22,15 +23,14 @@ const PROVIDER_MODELS = {
 const DEFAULT_MODEL = {
   openai: 'gpt-4o',
   anthropic: 'claude-3-5-sonnet-20241022',
-  fireworks: 'accounts/fireworks/models/llama-v3p1-70b-instruct',
+  fireworks: 'accounts/fireworks/routers/kimi-k2p6-turbo',
 }
 
 function SettingsPage() {
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [apiKeyVisible, setApiKeyVisible] = useState(false)
   const [apiKeySet, setApiKeySet] = useState(false)
+  const [envStatus, setEnvStatus] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -50,6 +50,7 @@ function SettingsPage() {
         setProvider(p)
         setModel(data.model || (p ? DEFAULT_MODEL[p] : ''))
         setApiKeySet(data.apiKeySet || false)
+        setEnvStatus(data.envStatus || [])
       } catch (err) {
         setError('Failed to load settings.')
       } finally {
@@ -90,13 +91,9 @@ function SettingsPage() {
 
     setSaving(true)
     try {
-      const payload = { provider, model }
-      if (apiKey.trim().length > 0) {
-        payload.apiKey = apiKey.trim()
-      }
-      const result = await saveSettings(payload)
+      const result = await saveSettings({ provider, model })
       setApiKeySet(result.apiKeySet || false)
-      setApiKey('')
+      setEnvStatus(result.envStatus || [])
       setSuccess(true)
     } catch (err) {
       setError(err.message || 'Failed to save settings.')
@@ -234,34 +231,36 @@ function SettingsPage() {
             </div>
 
             <div>
-              <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                API Key
-              </label>
-              <div className="relative flex items-center">
-                <input
-                  id="apiKey"
-                  type={apiKeyVisible ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={(e) => {
-                    setApiKey(e.target.value)
-                    setError(null)
-                    setSuccess(false)
-                  }}
-                  placeholder={apiKeySet ? 'Key saved — enter new key to replace' : 'Enter your API key'}
-                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setApiKeyVisible((v) => !v)}
-                  className="absolute right-2 text-gray-500 hover:text-gray-700 p-1"
-                  aria-label={apiKeyVisible ? 'Hide key' : 'Show key'}
-                  title={apiKeyVisible ? 'Hide' : 'Show'}
-                >
-                  {apiKeyVisible ? '🙈' : '👁️'}
-                </button>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Environment Configuration</h3>
+              <p className="text-xs text-gray-500 mb-3">
+                API keys are read from your <code>.env</code> file at server startup. Restart the server after editing <code>.env</code>.
+              </p>
+              <div className="space-y-2">
+                {envStatus.map((status) => (
+                  <div
+                    key={status.provider}
+                    className="flex items-center justify-between rounded-md border px-3 py-2"
+                  >
+                    <span className="text-sm capitalize text-gray-700">{status.provider}</span>
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs bg-gray-100 px-1 rounded">{status.envVar}</code>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          status.configured
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {status.configured ? 'Configured' : 'Not configured'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-              {apiKeySet && !apiKey && (
-                <p className="mt-1 text-xs text-green-600">A key is already saved. Leave blank to keep it.</p>
+              {!apiKeySet && (
+                <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded p-2">
+                  No API key is configured for the selected provider. Set it in <code>.env</code> and restart the server.
+                </p>
               )}
             </div>
 

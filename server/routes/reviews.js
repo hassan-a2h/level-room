@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
+import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
 import { generateText, LlmClientError } from '../llm/client.js'
 import {
   getDueItems,
@@ -95,7 +96,7 @@ Return ONLY valid JSON with this exact structure:
 /**
  * Generate review questions for a single lesson.
  */
-async function generateLessonReviewQuestions({ settings, lessonId, topicId, numQuestions }) {
+async function generateLessonReviewQuestions({ settings: config, lessonId, topicId, numQuestions }) {
   const lesson = get(
     'SELECT l.id, l.title, l.outcomes FROM lessons l JOIN modules m ON l.module_id = m.id WHERE l.id = ? AND m.topic_id = ?',
     lessonId, topicId,
@@ -123,9 +124,9 @@ async function generateLessonReviewQuestions({ settings, lessonId, topicId, numQ
   })
 
   const result = await generateText({
-    provider: settings.provider,
-    apiKey: settings.api_key,
-    model: settings.model,
+    provider: config.provider,
+    apiKey: config.apiKey,
+    model: config.model,
     system,
     messages: [{ role: 'user', content: 'Generate review questions as JSON.' }],
   })
@@ -145,7 +146,7 @@ async function generateLessonReviewQuestions({ settings, lessonId, topicId, numQ
 /**
  * Generate cumulative review questions for a module.
  */
-async function generateCumulativeReviewQuestions({ settings, moduleId, topicId, numQuestions }) {
+async function generateCumulativeReviewQuestions({ settings: config, moduleId, topicId, numQuestions }) {
   const moduleRow = get('SELECT id, title FROM modules WHERE id = ? AND topic_id = ?', moduleId, topicId)
   if (!moduleRow) return []
 
@@ -171,9 +172,9 @@ async function generateCumulativeReviewQuestions({ settings, moduleId, topicId, 
   })
 
   const result = await generateText({
-    provider: settings.provider,
-    apiKey: settings.api_key,
-    model: settings.model,
+    provider: config.provider,
+    apiKey: config.apiKey,
+    model: config.model,
     system,
     messages: [{ role: 'user', content: 'Generate cumulative review questions as JSON.' }],
   })
@@ -261,8 +262,8 @@ router.get('/reviews/count', (_req, res) => {
  */
 router.post('/reviews/start', async (req, res) => {
   try {
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -297,14 +298,14 @@ router.post('/reviews/start', async (req, res) => {
       let questions = []
       if (item.review_type === 'cumulative' && item.module_id) {
         questions = await generateCumulativeReviewQuestions({
-          settings,
+          settings: config,
           moduleId: item.module_id,
           topicId: item.topic_id,
           numQuestions: actualQuestionsPerItem,
         })
       } else if (item.lesson_id) {
         questions = await generateLessonReviewQuestions({
-          settings,
+          settings: config,
           lessonId: item.lesson_id,
           topicId: item.topic_id,
           numQuestions: actualQuestionsPerItem,
@@ -392,8 +393,8 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
       return res.status(404).json({ error: 'Review session not found or expired.' })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -410,9 +411,9 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
 
     const system = buildReviewEvaluationPrompt({ questions, answers })
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Evaluate the review answers and return JSON.' }],
     })

@@ -15,6 +15,7 @@ describe('Lesson State Machine', () => {
   beforeEach(async () => {
     dbPath = tempDbPath()
     process.env.DB_PATH = dbPath
+    process.env.OPENAI_API_KEY = 'sk-test'
     const { initSchema, get, run } = await import('../db.js')
     const { all } = await import('../db.js')
     dbModule = { initSchema, get, run, all }
@@ -22,18 +23,24 @@ describe('Lesson State Machine', () => {
 
     // Seed LLM settings for any downstream callers
     dbModule.run(
-      'INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)',
-      'openai',
-      'sk-test',
-      'gpt-4o',
+      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
+      'openai', 'gpt-4o'
     )
 
     sm = await import('../utils/lesson-state-machine.js')
   })
 
   afterEach(() => {
+    if (dbModule && dbModule.default) {
+      try { dbModule.default.close() } catch {}
+    }
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
+    delete process.env.OPENAI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.FIREWORKS_API_KEY
+    delete process.env.LLM_PROVIDER
+    delete process.env.LLM_MODEL
   })
 
   function seedTopicAndLesson(topicTitle = 'React', lessonTitle = 'JSX', prerequisites = '[]') {

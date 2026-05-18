@@ -84,14 +84,15 @@ describe('Quiz API', () => {
   beforeEach(async () => {
     dbPath = tempDbPath()
     process.env.DB_PATH = dbPath
+    process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
     dbModule = await import('../db.js')
     dbModule.initSchema()
 
     // Seed LLM settings
     dbModule.run(
-      'INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)',
-      'openai', 'sk-test', 'gpt-4o'
+      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
+      'openai', 'gpt-4o'
     )
 
     const { default: lessonsRouter } = await import('../routes/lessons.js')
@@ -108,6 +109,11 @@ describe('Quiz API', () => {
     }
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
+    delete process.env.OPENAI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.FIREWORKS_API_KEY
+    delete process.env.LLM_PROVIDER
+    delete process.env.LLM_MODEL
   })
 
   function seedTopicAndLesson(topicTitle = 'React', lessonTitle = 'JSX', prerequisites = '[]') {

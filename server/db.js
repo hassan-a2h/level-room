@@ -130,7 +130,6 @@ export function initSchema() {
         CREATE TABLE IF NOT EXISTS llm_settings (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           provider TEXT NOT NULL,
-          api_key TEXT NOT NULL,
           model TEXT NOT NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -296,6 +295,30 @@ export function initSchema() {
       try { db.exec('ALTER TABLE topics ADD COLUMN consecutive_passes INTEGER DEFAULT 0') } catch {}
       try { db.exec('ALTER TABLE topics ADD COLUMN consecutive_fails INTEGER DEFAULT 0') } catch {}
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration009)
+    })()
+  }
+
+  const migration010 = '010_remove_api_key_from_llm_settings'
+  const check010 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration010)
+  if (!check010) {
+    db.transaction(() => {
+      // SQLite doesn't support DROP COLUMN, so recreate the table
+      db.exec(`
+        CREATE TABLE llm_settings_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      db.exec(`
+        INSERT INTO llm_settings_new (id, provider, model, created_at)
+        SELECT id, provider, model, created_at
+        FROM llm_settings
+      `)
+      db.exec('DROP TABLE llm_settings')
+      db.exec('ALTER TABLE llm_settings_new RENAME TO llm_settings')
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration010)
     })()
   }
 }

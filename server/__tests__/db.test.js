@@ -131,7 +131,7 @@ describe('database schema', () => {
 
   it('inserts llm_settings row', () => {
     const db = dbModule.default
-    const info = db.prepare('INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)').run('openai', 'sk-123', 'gpt-4')
+    const info = db.prepare('INSERT INTO llm_settings (provider, model) VALUES (?, ?)').run('openai', 'gpt-4')
     expect(info.lastInsertRowid).toBeGreaterThan(0)
   })
 

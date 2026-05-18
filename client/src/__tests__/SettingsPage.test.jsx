@@ -17,13 +17,19 @@ function mockFetch(data, status = 200) {
   )
 }
 
+const MOCK_ENV_STATUS = [
+  { provider: 'openai', configured: false, envVar: 'OPENAI_API_KEY' },
+  { provider: 'anthropic', configured: false, envVar: 'ANTHROPIC_API_KEY' },
+  { provider: 'fireworks', configured: true, envVar: 'FIREWORKS_API_KEY' },
+]
+
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('renders provider selector with three options', async () => {
-    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
     render(
       <MemoryRouter>
         <SettingsPage />
@@ -36,7 +42,7 @@ describe('SettingsPage', () => {
   })
 
   it('shows model selector that updates when provider changes', async () => {
-    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
     render(
       <MemoryRouter>
         <SettingsPage />
@@ -52,52 +58,36 @@ describe('SettingsPage', () => {
     })
   })
 
-  it('masks API key input by default', async () => {
-    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+  it('does not render an API key input field', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>
     )
-    await waitFor(() => expect(screen.getByLabelText(/api key/i)).toBeInTheDocument())
-    const apiKeyInput = screen.getByLabelText(/api key/i)
-    expect(apiKeyInput).toHaveAttribute('type', 'password')
+    await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
+    expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument()
   })
 
-  it('toggles API key visibility when clicking the eye icon', async () => {
-    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+  it('shows env configuration status indicators', async () => {
+    fetch.mockImplementation(mockFetch({ provider: 'fireworks', model: 'accounts/fireworks/routers/kimi-k2p6-turbo', apiKeySet: true, envStatus: MOCK_ENV_STATUS }))
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>
     )
-    await waitFor(() => expect(screen.getByLabelText(/api key/i)).toBeInTheDocument())
-    const apiKeyInput = screen.getByLabelText(/api key/i)
-    const toggleBtn = screen.getByRole('button', { name: /show/i })
-
-    fireEvent.click(toggleBtn)
-    expect(apiKeyInput).toHaveAttribute('type', 'text')
-
-    fireEvent.click(toggleBtn)
-    expect(apiKeyInput).toHaveAttribute('type', 'password')
+    await waitFor(() => expect(screen.getByText(/environment configuration/i)).toBeInTheDocument())
+    expect(screen.getByText('OPENAI_API_KEY')).toBeInTheDocument()
+    expect(screen.getByText('ANTHROPIC_API_KEY')).toBeInTheDocument()
+    expect(screen.getByText('FIREWORKS_API_KEY')).toBeInTheDocument()
+    expect(screen.getByText('Configured')).toBeInTheDocument()
+    expect(screen.getAllByText('Not configured').length).toBe(2)
   })
 
-  it('shows placeholder when key is already saved', async () => {
-    fetch.mockImplementation(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: true }))
-    render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    )
-    await waitFor(() => expect(screen.getByLabelText(/api key/i)).toBeInTheDocument())
-    const apiKeyInput = screen.getByLabelText(/api key/i)
-    expect(apiKeyInput).toHaveAttribute('placeholder', expect.stringMatching(/saved/i))
-  })
-
-  it('submits settings on save', async () => {
+  it('submits only provider and model on save', async () => {
     fetch
-      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false }))
-      .mockImplementationOnce(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: true }, 200))
+      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
+      .mockImplementationOnce(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: true, envStatus: MOCK_ENV_STATUS }, 200))
 
     render(
       <MemoryRouter>
@@ -110,7 +100,6 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText(/model/i), { target: { value: 'gpt-4o' } })
-    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: 'sk-test12345678' } })
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
@@ -120,7 +109,7 @@ describe('SettingsPage', () => {
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: expect.stringContaining('sk-test12345678'),
+          body: JSON.stringify({ provider: 'openai', model: 'gpt-4o' }),
         })
       )
     })
@@ -130,7 +119,7 @@ describe('SettingsPage', () => {
     let resolveSave
     const savePromise = new Promise((resolve) => { resolveSave = resolve })
     fetch
-      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false }))
+      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
       .mockImplementationOnce(() => savePromise)
 
     render(
@@ -143,21 +132,20 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
     await waitFor(() => expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText(/model/i), { target: { value: 'gpt-4o' } })
-    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: 'sk-test12345678' } })
 
     const saveBtn = screen.getByRole('button', { name: /save/i })
     fireEvent.click(saveBtn)
     expect(saveBtn).toBeDisabled()
 
     await act(async () => {
-      resolveSave({ ok: true, status: 200, json: () => Promise.resolve({ provider: 'openai', model: 'gpt-4o', apiKeySet: true }) })
+      resolveSave({ ok: true, status: 200, json: () => Promise.resolve({ provider: 'openai', model: 'gpt-4o', apiKeySet: true, envStatus: MOCK_ENV_STATUS }) })
     })
   })
 
-  it('shows error message on invalid key', async () => {
+  it('shows error when env key is not configured', async () => {
     fetch
-      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false }))
-      .mockImplementationOnce(mockFetch({ error: 'Invalid API key format.' }, 400))
+      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
+      .mockImplementationOnce(mockFetch({ error: 'openai API key not configured. Please set OPENAI_API_KEY in your .env file and restart the server.' }, 400))
 
     render(
       <MemoryRouter>
@@ -169,27 +157,23 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
     await waitFor(() => expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText(/model/i), { target: { value: 'gpt-4o' } })
-    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: 'bad-key' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
-    await waitFor(() => expect(screen.getByText(/invalid/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/OPENAI_API_KEY/i)).toBeInTheDocument())
   })
 
-  it('shows error on rate limit response', async () => {
-    fetch
-      .mockImplementationOnce(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: true }))
-      .mockImplementationOnce(mockFetch({ error: 'Rate limit hit — try again in 60s', code: 'RATE_LIMIT' }, 400))
-
+  it('shows warning banner when no api key is configured', async () => {
+    fetch.mockImplementation(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: false, envStatus: [
+      { provider: 'openai', configured: false, envVar: 'OPENAI_API_KEY' },
+      { provider: 'anthropic', configured: false, envVar: 'ANTHROPIC_API_KEY' },
+      { provider: 'fireworks', configured: false, envVar: 'FIREWORKS_API_KEY' },
+    ] }))
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>
     )
-    await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
-
-    fireEvent.change(screen.getByLabelText(/model/i), { target: { value: 'gpt-4o-mini' } })
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
-
-    await waitFor(() => expect(screen.getByText(/rate limit/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/environment configuration/i)).toBeInTheDocument())
+    expect(screen.getByText(/No API key is configured/i)).toBeInTheDocument()
   })
 })

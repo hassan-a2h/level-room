@@ -84,14 +84,15 @@ describe('Curriculum API', () => {
   beforeEach(async () => {
     dbPath = tempDbPath()
     process.env.DB_PATH = dbPath
+    process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
     dbModule = await import('../db.js')
     dbModule.initSchema()
 
     // Seed LLM settings so curriculum routes don't return 400 for missing settings
     dbModule.run(
-      'INSERT INTO llm_settings (provider, api_key, model) VALUES (?, ?, ?)',
-      'openai', 'sk-test', 'gpt-4o'
+      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
+      'openai', 'gpt-4o'
     )
 
     const { default: curriculumRouter } = await import('../routes/curriculum.js')
@@ -108,6 +109,11 @@ describe('Curriculum API', () => {
     }
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
+    delete process.env.OPENAI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.FIREWORKS_API_KEY
+    delete process.env.LLM_PROVIDER
+    delete process.env.LLM_MODEL
   })
 
   describe('POST /api/topics/:id/profile', () => {

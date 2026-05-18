@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
+import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
 import { generateText, LlmClientError } from '../llm/client.js'
 import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
@@ -284,8 +285,8 @@ router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
       })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -298,9 +299,9 @@ router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Generate the module exam questions as JSON.' }],
     })
@@ -432,8 +433,8 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
       })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -448,9 +449,9 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Evaluate the exam answers and return JSON.' }],
     })
@@ -587,8 +588,8 @@ router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
       })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -601,9 +602,9 @@ router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Generate the module exam questions as JSON.' }],
     })
@@ -681,8 +682,8 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
       return res.status(400).json({ error: 'weakLessons array is required.' })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -712,9 +713,9 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
     })
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Generate the partial retest questions as JSON.' }],
     })
@@ -814,8 +815,8 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
       })
     }
 
-    const settings = get('SELECT provider, api_key, model FROM llm_settings LIMIT 1')
-    if (!settings || !settings.api_key) {
+    const config = requireLlmConfig()
+    if (!config.apiKeySet) {
       return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
     }
 
@@ -830,9 +831,9 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
     })
 
     const result = await generateText({
-      provider: settings.provider,
-      apiKey: settings.api_key,
-      model: settings.model,
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
       system,
       messages: [{ role: 'user', content: 'Evaluate the partial retest answers and return JSON.' }],
     })

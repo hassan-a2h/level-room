@@ -27,11 +27,6 @@ router.get('/export', (_req, res) => {
 
     for (const table of TABLES) {
       const rows = all(`SELECT * FROM ${table}`)
-      if (table === 'llm_settings') {
-        for (const row of rows) {
-          delete row.api_key
-        }
-      }
       result[table] = rows
     }
 
@@ -88,24 +83,14 @@ router.post('/import', (req, res) => {
           continue
         }
 
-        let columns = Object.keys(rows[0])
-
-        // Ensure llm_settings includes api_key if missing (export strips it for security)
-        if (table === 'llm_settings' && !columns.includes('api_key')) {
-          columns = [...columns, 'api_key']
-        }
+        const columns = Object.keys(rows[0]).filter((col) => col !== 'api_key')
 
         const placeholders = columns.map(() => '?').join(', ')
         const insertSql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
         const stmt = db.prepare(insertSql)
 
         for (const row of rows) {
-          const values = columns.map((col) => {
-            if (col === 'api_key' && table === 'llm_settings' && !(col in row)) {
-              return ''
-            }
-            return row[col] ?? null
-          })
+          const values = columns.map((col) => row[col] ?? null)
           stmt.run(...values)
         }
 
