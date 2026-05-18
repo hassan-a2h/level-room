@@ -1,7 +1,6 @@
 import { streamText as aiStreamText, generateText as aiGenerateText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
-import { createFireworks } from '@ai-sdk/fireworks'
 
 /**
  * Custom error class for LLM client errors with retry suggestions.
@@ -75,7 +74,7 @@ export async function createProviderAdapter({ provider, apiKey, model }) {
       providerInstance = createAnthropic({ apiKey })
       break
     case 'fireworks':
-      providerInstance = createFireworks({ apiKey })
+      providerInstance = createOpenAI({ apiKey, baseURL: 'https://api.fireworks.ai/inference/v1' })
       break
   }
 

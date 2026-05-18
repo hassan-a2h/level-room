@@ -41,7 +41,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 |-------|------------|
 | Frontend | React 19 + Vite + React Router + Tailwind CSS |
 | Backend | Express 4 + better-sqlite3 |
-| LLM | Vercel AI SDK (`ai` + `@ai-sdk/openai` + `@ai-sdk/anthropic` + `@ai-sdk/fireworks`) |
+| LLM | Vercel AI SDK (`ai` + `@ai-sdk/openai` + `@ai-sdk/anthropic`) — Fireworks via OpenAI-compatible endpoint |
 | Testing | Vitest + Supertest + React Testing Library |
 | Styling | Tailwind CSS v4 |
 

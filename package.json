@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
-    "@ai-sdk/fireworks": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
     "ai": "^4.0.0",
     "better-sqlite3": "^12.0.0",

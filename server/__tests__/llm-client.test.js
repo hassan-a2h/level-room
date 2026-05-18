@@ -16,10 +16,10 @@ vi.mock('ai', async () => {
 
 // Mock the provider SDKs
 vi.mock('@ai-sdk/openai', () => ({
-  createOpenAI: vi.fn(() => ({
+  createOpenAI: vi.fn((opts) => ({
     languageModel: vi.fn((modelId) => ({
       modelId,
-      provider: 'openai',
+      provider: opts?.baseURL?.includes('fireworks') ? 'fireworks' : 'openai',
     })),
   })),
 }))
@@ -29,15 +29,6 @@ vi.mock('@ai-sdk/anthropic', () => ({
     languageModel: vi.fn((modelId) => ({
       modelId,
       provider: 'anthropic',
-    })),
-  })),
-}))
-
-vi.mock('@ai-sdk/fireworks', () => ({
-  createFireworks: vi.fn(() => ({
-    languageModel: vi.fn((modelId) => ({
-      modelId,
-      provider: 'fireworks',
     })),
   })),
 }))
@@ -67,10 +58,10 @@ describe('LLM Client', () => {
       expect(adapter.provider).toBe('anthropic')
     })
 
-    it('returns a fireworks provider instance', async () => {
-      const { createFireworks } = await import('@ai-sdk/fireworks')
+    it('returns a fireworks provider instance via OpenAI-compatible endpoint', async () => {
+      const { createOpenAI } = await import('@ai-sdk/openai')
       const adapter = await llmModule.createProviderAdapter({ provider: 'fireworks', apiKey: 'fw-test', model: 'accounts/fireworks/models/llama-v3p1-70b-instruct' })
-      expect(createFireworks).toHaveBeenCalledWith({ apiKey: 'fw-test' })
+      expect(createOpenAI).toHaveBeenCalledWith({ apiKey: 'fw-test', baseURL: 'https://api.fireworks.ai/inference/v1' })
       expect(adapter).toBeDefined()
       expect(adapter.provider).toBe('fireworks')
     })
