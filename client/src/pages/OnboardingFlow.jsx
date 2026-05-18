@@ -9,6 +9,7 @@ import {
   getSettings,
 } from '../api.js'
 import CurriculumConfirmation from './CurriculumConfirmation.jsx'
+import { SkeletonOnboarding } from '../components/Skeleton.jsx'
 
 function sanitizeTopic(name) {
   // Basic XSS sanitization: strip script tags and dangerous attributes
@@ -398,7 +399,7 @@ export default function OnboardingFlow() {
           <div className="flex flex-col items-center justify-center min-h-[50vh]">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4" />
             <h2 className="text-xl font-bold text-gray-900 mb-2">Designing your learning path...</h2>
-            <p className="text-gray-600 text-center max-w-md">
+            <p className="text-gray-600 text-center max-w-md text-sm sm:text-base">
               Our AI tutor is building a personalized curriculum with modules, lessons, and skill checks.
               This takes about 30–60 seconds.
             </p>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { getSettings, saveSettings, exportData, importData } from '../api.js'
+import { SkeletonSettings } from '../components/Skeleton.jsx'
 
 const PROVIDER_MODELS = {
   openai: [
@@ -171,11 +172,7 @@ function SettingsPage() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Loading settings…</p>
-      </div>
-    )
+    return <SkeletonSettings />
   }
 
   const currentModels = PROVIDER_MODELS[provider] || []

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { getLesson, sendChatMessage, continueLesson, getQuiz } from '../api.js'
 import QuizPanel from './QuizPanel.jsx'
 import ArtifactPanel from './ArtifactPanel.jsx'
+import { SkeletonLesson } from '../components/Skeleton.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
@@ -394,11 +395,7 @@ export default function LessonChat() {
   }, [loadLesson])
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading lesson...</div>
-      </div>
-    )
+    return <SkeletonLesson />
   }
 
   if (locked && lesson) {
@@ -429,17 +426,32 @@ export default function LessonChat() {
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center">
           <button
             onClick={() => navigate('/')}
-            className="text-sm text-gray-600 hover:text-gray-900 mr-4"
+            className="text-sm text-gray-600 hover:text-gray-900 mr-4 shrink-0"
           >
             ← Dashboard
           </button>
-          <h1 className="text-lg font-bold text-gray-900">Lesson</h1>
+          <h1 className="text-base sm:text-lg font-bold text-gray-900 truncate">Lesson</h1>
         </div>
       </header>
 
       {/* Lesson metadata */}
       {lesson && (
         <LessonHeader lesson={lesson} progress={progress} interactionMode={interactionMode} onSubmitArtifact={lesson?.artifact_required ? handleStartArtifact : undefined} />
+      )}
+
+      {/* No LLM key configured warning */}
+      {error && error.toLowerCase().includes('api key') && (
+        <div className="max-w-3xl mx-auto px-4 mt-3 w-full">
+          <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-700" role="alert">
+            <span>{error}</span>
+            <button
+              onClick={() => navigate('/settings')}
+              className="ml-2 underline font-medium"
+            >
+              Go to Settings → LLM
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Error banner */}

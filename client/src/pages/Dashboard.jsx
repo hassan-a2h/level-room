@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getTopics,
@@ -11,18 +11,47 @@ import {
 } from '../api.js'
 import CompetenceGraph from '../components/CompetenceGraph.jsx'
 import ExamPanel from '../components/ExamPanel.jsx'
+import { SkeletonGraph, SkeletonCard } from '../components/Skeleton.jsx'
+
+function GlobalStats({ topics }) {
+  if (!topics || topics.length === 0) return null
+  const totalPassed = topics.reduce((sum, t) => sum + (t.passedLessons || 0), 0)
+  const totalLessons = topics.reduce((sum, t) => sum + (t.totalLessons || 0), 0)
+  const masteredTopics = topics.filter((t) => (t.progress || 0) >= 100).length
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      <div className="rounded-lg bg-white border border-gray-200 p-3 text-center">
+        <div className="text-xl font-bold text-indigo-600">{topics.length}</div>
+        <div className="text-xs text-gray-500">Active Topics</div>
+      </div>
+      <div className="rounded-lg bg-white border border-gray-200 p-3 text-center">
+        <div className="text-xl font-bold text-green-600">{totalPassed}</div>
+        <div className="text-xs text-gray-500">Lessons Mastered</div>
+      </div>
+      <div className="rounded-lg bg-white border border-gray-200 p-3 text-center">
+        <div className="text-xl font-bold text-amber-600">{totalLessons > 0 ? Math.floor((totalPassed / totalLessons) * 100) : 0}%</div>
+        <div className="text-xs text-gray-500">Overall Progress</div>
+      </div>
+      <div className="rounded-lg bg-white border border-gray-200 p-3 text-center">
+        <div className="text-xl font-bold text-indigo-600">{masteredTopics}</div>
+        <div className="text-xs text-gray-500">Topics Completed</div>
+      </div>
+    </div>
+  )
+}
 
 function EmptyState({ onStart }) {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
       <div className="text-6xl mb-4">🌱</div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">You have not started learning anything yet</h2>
-      <p className="text-gray-600 mb-6 text-center max-w-md">
+      <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">You have not started learning anything yet</h2>
+      <p className="text-gray-600 mb-6 text-center max-w-md text-sm sm:text-base">
         Pick a topic and we will design a personalized competence graph just for you.
       </p>
       <button
         onClick={onStart}
-        className="rounded-lg bg-indigo-600 px-6 py-3 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+        className="rounded-lg bg-indigo-600 px-6 py-3 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors touch-manipulation"
       >
         Start Learning
       </button>
@@ -51,9 +80,9 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
       }}
       aria-label={`${topic.title}, ${progress}% complete`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-gray-900 truncate">{topic.title}</h3>
-        <span className="text-sm font-medium text-gray-600">{progress}%</span>
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <h3 className="font-semibold text-gray-900 truncate min-w-0 flex-1">{topic.title}</h3>
+        <span className="text-sm font-medium text-gray-600 shrink-0">{progress}%</span>
       </div>
       <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
         <div
@@ -62,7 +91,7 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
         />
       </div>
       <div className="flex items-center justify-between text-xs text-gray-500">
-        <span>
+        <span className="truncate">
           {topic.passedLessons ?? 0} / {topic.totalLessons ?? 0} lessons
         </span>
         {onDelete && (
@@ -71,7 +100,7 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
               e.stopPropagation()
               onDelete(topic.id)
             }}
-            className="text-red-500 hover:text-red-700 focus:outline-none focus:ring-1 focus:ring-red-500 rounded px-1"
+            className="text-red-500 hover:text-red-700 focus:outline-none focus:ring-1 focus:ring-red-500 rounded px-1 shrink-0"
             aria-label={`Delete topic ${topic.title}`}
           >
             Delete
@@ -130,7 +159,9 @@ export default function Dashboard() {
   const [examModuleId, setExamModuleId] = useState(null)
   const [reviewCounts, setReviewCounts] = useState(null)
   const [streak, setStreak] = useState(null)
+  const [switchingTopic, setSwitchingTopic] = useState(false)
   const navigate = useNavigate()
+  const topicSwitchTimerRef = useRef(null)
 
   const loadTopics = useCallback(async () => {
     try {
@@ -201,12 +232,16 @@ export default function Dashboard() {
 
   const handleTopicClick = async (topicId) => {
     if (topicId === activeTopicId) return
+    if (topicSwitchTimerRef.current) clearTimeout(topicSwitchTimerRef.current)
+    setSwitchingTopic(true)
     setError('')
     try {
       await selectTopic(topicId)
       await loadDashboard(topicId)
     } catch (err) {
       setError(err.message || 'Failed to switch topic.')
+    } finally {
+      topicSwitchTimerRef.current = setTimeout(() => setSwitchingTopic(false), 300)
     }
   }
 
@@ -261,8 +296,22 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
+      <div className="min-h-screen bg-gray-50">
+        <header className="bg-white border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <h1 className="text-xl font-bold text-gray-900">Mastery Roadmap</h1>
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-20 bg-gray-200 rounded-md animate-pulse" />
+              <div className="h-9 w-24 bg-gray-200 rounded-md animate-pulse" />
+            </div>
+          </div>
+        </header>
+        <main className="max-w-7xl mx-auto px-4 py-6">
+          <SkeletonCard count={2} />
+          <div className="mt-6">
+            <SkeletonGraph />
+          </div>
+        </main>
       </div>
     )
   }
@@ -273,14 +322,14 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">Mastery Roadmap</h1>
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <h1 className="text-lg sm:text-xl font-bold text-gray-900">Mastery Roadmap</h1>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {hasTopics && (
               <>
                 <button
                   onClick={() => navigate('/reviews')}
-                  className="relative rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                  className="relative rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors touch-manipulation"
                   aria-label="Reviews"
                 >
                   Reviews
@@ -292,7 +341,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => navigate('/onboarding')}
-                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                  className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors touch-manipulation"
                 >
                   + New Topic
                 </button>
@@ -300,7 +349,7 @@ export default function Dashboard() {
             )}
             <button
               onClick={() => navigate('/settings')}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors touch-manipulation"
             >
               Settings
             </button>
@@ -396,10 +445,10 @@ export default function Dashboard() {
             {/* Main: competence graph or exam panel */}
             <section className="lg:col-span-3">
               {examModuleId && dashboard && (
-                <div className="bg-white rounded-xl border border-gray-200 p-6 min-h-[500px]">
-                  <div className="mb-4 flex items-center justify-between">
+                <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 min-h-[500px]">
+                  <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                     <div>
-                      <h2 className="text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
+                      <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
                       <p className="text-sm text-gray-500 mt-1">
                         Module Exam: {dashboard.modules.find((m) => m.id === examModuleId)?.title}
                       </p>
@@ -420,9 +469,10 @@ export default function Dashboard() {
                 </div>
               )}
               {!examModuleId && dashboard && (
-                <div className="bg-white rounded-xl border border-gray-200 p-6 min-h-[500px]">
+                <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 min-h-[500px]">
+                  <GlobalStats topics={topics} />
                   <div className="mb-4">
-                    <h2 className="text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
+                    <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{dashboard.topic.title}</h2>
                     <p className="text-sm text-gray-500 mt-1">
                       {dashboard.topic.passedLessons ?? 0} / {dashboard.topic.totalLessons ?? 0} lessons completed
                       {' '}({dashboard.topic.progress ?? 0}%)
@@ -442,16 +492,20 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </div>
-                  <CompetenceGraph
-                    modules={dashboard.modules}
-                    onNodeClick={handleGraphNodeClick}
-                    onStateChange={handleStateChange}
-                  />
+                  {switchingTopic ? (
+                    <SkeletonGraph />
+                  ) : (
+                    <CompetenceGraph
+                      modules={dashboard.modules}
+                      onNodeClick={handleGraphNodeClick}
+                      onStateChange={handleStateChange}
+                    />
+                  )}
                 </div>
               )}
               {!dashboard && activeTopicId && (
                 <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
-                  <div className="text-gray-500">Loading dashboard...</div>
+                  <SkeletonGraph />
                 </div>
               )}
             </section>

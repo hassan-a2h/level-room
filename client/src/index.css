@@ -1,1 +1,75 @@
 @import "tailwindcss";
+
+/* Responsive utilities */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
+/* Ensure tap targets meet minimum size on mobile */
+.touch-manipulation {
+  touch-action: manipulation;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Smooth state transition animations for competence graph nodes */
+.node-transition {
+  transition: fill 400ms ease-in-out, stroke 400ms ease-in-out, opacity 400ms ease-in-out, transform 400ms ease-in-out;
+}
+
+/* Pulse animation for practicing nodes */
+@keyframes node-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.practicing-pulse {
+  animation: node-pulse 2s ease-in-out infinite;
+}
+
+/* Skeleton staggered animation delays */
+@keyframes skeleton-shimmer {
+  0% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.4; }
+}
+
+/* Offline banner slide-in */
+@keyframes slide-down {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.slide-down {
+  animation: slide-down 300ms ease-out;
+}
+
+/* Celebration confetti keyframes */
+@keyframes confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+
+/* Toast notification */
+@keyframes toast-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.toast-in {
+  animation: toast-in 300ms ease-out;
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

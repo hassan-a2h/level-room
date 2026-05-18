@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { startQuiz, getQuiz, submitQuiz } from '../api.js'
 import RemediationPanel from './RemediationPanel.jsx'
+import { SkeletonQuiz } from '../components/Skeleton.jsx'
 
 const TYPE_LABELS = {
   Recall: 'Recall',
@@ -270,14 +271,18 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
           <p className="text-sm text-gray-600 mb-4 max-w-sm">
             Ready to test what you have learned? A short quiz with {3}–{8} free-text questions will help confirm your understanding.
           </p>
-          <button
-            onClick={handleStartQuiz}
-            disabled={loading}
-            className="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Generating questions…' : 'Start Quiz'}
-          </button>
-          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          {loading ? (
+            <SkeletonQuiz />
+          ) : (
+            <button
+              onClick={handleStartQuiz}
+              disabled={loading}
+              className="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Quiz
+            </button>
+          )}
+          {error && !loading && <p className="mt-3 text-sm text-red-600">{error}</p>}
         </div>
       </div>
     )
