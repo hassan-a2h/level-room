@@ -321,6 +321,45 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration010)
     })()
   }
+
+  const migration011 = '011_add_llm_reasoning_effort'
+  const check011 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration011)
+  if (!check011) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE llm_settings
+        ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'none'
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration011)
+    })()
+  }
+
+  const migration012 = '012_add_placement_assessments'
+  const check012 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration012)
+  if (!check012) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS placement_assessments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL,
+          requested_level TEXT NOT NULL,
+          questions TEXT NOT NULL,
+          answers TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          score INTEGER,
+          recommended_level TEXT,
+          feedback TEXT,
+          gaps TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          completed_at DATETIME,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_placement_assessments_topic
+          ON placement_assessments(topic_id, created_at DESC);
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration012)
+    })()
+  }
 }
 
 /**
