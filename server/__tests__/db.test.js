@@ -253,4 +253,28 @@ describe('database schema', () => {
       .map(r => r.name)
     expect(tables).toContain('migrations')
   })
+
+  it('adds the neutral reasoning default to an existing settings row', () => {
+    const db = dbModule.default
+    db.exec('DROP TABLE llm_settings')
+    db.exec(`CREATE TABLE llm_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`)
+    const inserted = dbModule.run(
+      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
+      'openai', 'gpt-4o'
+    )
+    dbModule.run('DELETE FROM migrations WHERE name = ?', '011_add_llm_reasoning_effort')
+
+    dbModule.initSchema()
+
+    const row = dbModule.get(
+      'SELECT provider, model, reasoning_effort FROM llm_settings WHERE id = ?',
+      inserted.lastInsertRowid
+    )
+    expect(row).toEqual({ provider: 'openai', model: 'gpt-4o', reasoning_effort: 'none' })
+  })
 })
