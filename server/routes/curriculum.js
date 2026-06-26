@@ -1,59 +1,168 @@
 import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
 import { streamText, generateText, streamToSSE, LlmClientError } from '../llm/client.js'
-import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
+import { requireLlmConfig } from '../utils/llm-config.js'
+import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 
 const router = Router()
 
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced']
 const VALID_TIME_COMMITMENTS = ['15 min/day', '30 min/day', '1 hour/day', '2+ hours/day']
+const LEVEL_RANK = { Beginner: 0, Intermediate: 1, Advanced: 2 }
+const TIME_ALIASES = new Map([
+  ['15 min', '15 min/day'],
+  ['30 min', '30 min/day'],
+  ['1 hour', '1 hour/day'],
+  ['2 hours', '2+ hours/day'],
+  ['2+ hours', '2+ hours/day'],
+])
 
-/**
- * Generate setup questions for a topic via LLM.
- */
-async function generateSetupQuestions(topicTitle) {
-  const config = resolveLlmConfig()
-  if (!config.apiKeySet) {
-    throw new LlmClientError('No LLM settings configured.', { code: 'MISSING_SETTINGS' })
+const SETUP_OPTIONS = Object.freeze({
+  levels: Object.freeze([
+    { value: 'Beginner', label: 'Beginner' },
+    { value: 'Intermediate', label: 'Intermediate' },
+    { value: 'Advanced', label: 'Advanced' },
+  ]),
+  timeCommitments: Object.freeze([
+    { value: '15 min/day', label: '15 min/day' },
+    { value: '30 min/day', label: '30 min/day' },
+    { value: '1 hour/day', label: '1 hour/day' },
+    { value: '2+ hours/day', label: '2+ hours/day' },
+  ]),
+})
+
+const PLACEMENT_QUESTION_LIMITS = { min: 4, max: 6 }
+
+function normalizeLevel(value) {
+  if (typeof value !== 'string') return null
+  const match = VALID_LEVELS.find((level) => level.toLowerCase() === value.trim().toLowerCase())
+  return match || null
+}
+
+function normalizeTimeCommitment(value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  const canonical = VALID_TIME_COMMITMENTS.find((option) => option.toLowerCase() === trimmed.toLowerCase())
+  if (canonical) return canonical
+  return TIME_ALIASES.get(trimmed.toLowerCase()) || null
+}
+
+function setupQuestions(topicTitle) {
+  const title = typeof topicTitle === 'string' && topicTitle.trim() ? topicTitle.trim() : 'this topic'
+  return {
+    questions: [
+      {
+        id: 'level',
+        text: `How familiar are you with ${title}?`,
+        options: SETUP_OPTIONS.levels.map((option) => ({ ...option })),
+      },
+      {
+        id: 'timeCommitment',
+        text: 'How much time can you study most days?',
+        options: SETUP_OPTIONS.timeCommitments.map((option) => ({ ...option })),
+      },
+    ],
+  }
+}
+
+function placementPublicQuestions(questions) {
+  return questions.map(({ id, text, type, options }) => ({
+    id,
+    text,
+    type,
+    ...(type === 'multiple_choice' ? { options } : {}),
+  }))
+}
+
+function normalizePlacementQuestions(parsed) {
+  if (!parsed || !Array.isArray(parsed.questions)) {
+    throw new Error('Invalid placement assessment format')
+  }
+  if (parsed.questions.length < PLACEMENT_QUESTION_LIMITS.min || parsed.questions.length > PLACEMENT_QUESTION_LIMITS.max) {
+    throw new Error('Placement assessment must contain 4-6 questions')
   }
 
-  const system = `You are a curriculum designer. Given a learning topic, generate exactly 2 concise setup questions to profile the learner.
-Respond in strict JSON with this shape:
-{
-  "questions": [
-    { "text": "...", "options": ["...", "..."] },
-    { "text": "...", "options": ["...", "..."] }
-  ]
-}
-The first question should assess current experience level. The second should assess time commitment.
-Keep each option to 1-4 words. Do not include markdown formatting.`
+  const ids = new Set()
+  const questions = parsed.questions.map((question, index) => {
+    const id = typeof question?.id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(question.id)
+      ? question.id
+      : `q${index + 1}`
+    if (ids.has(id)) throw new Error('Placement assessment contains duplicate question ids')
+    ids.add(id)
 
-  const result = await generateText({
-    provider: config.provider,
-    apiKey: config.apiKey,
-    model: config.model,
-    system,
-    messages: [{ role: 'user', content: `Topic: ${topicTitle}` }],
+    const text = typeof question?.text === 'string' ? question.text.trim() : ''
+    if (text.length < 10 || text.length > 500) throw new Error('Placement assessment contains invalid question text')
+
+    const type = question?.type === 'multiple_choice' || question?.type === 'multiple-choice'
+      ? 'multiple_choice'
+      : question?.type === 'objective' || question?.type === 'open'
+        ? 'objective'
+        : null
+    if (!type) throw new Error('Placement assessment contains an invalid question type')
+
+    if (type === 'multiple_choice') {
+      if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 5) {
+        throw new Error('Placement assessment contains invalid multiple-choice options')
+      }
+      const optionValues = new Set()
+      const options = question.options.map((option) => {
+        const value = typeof option === 'string' ? option.trim() : option?.value?.toString().trim()
+        const label = typeof option === 'string' ? option.trim() : option?.label?.toString().trim()
+        if (!value || !label || value.length > 100 || label.length > 200) {
+          throw new Error('Placement assessment contains an invalid option')
+        }
+        if (optionValues.has(value)) throw new Error('Placement assessment contains duplicate options')
+        optionValues.add(value)
+        return { value, label }
+      })
+      const correctAnswer = typeof question.correct_answer === 'string' ? question.correct_answer.trim() : ''
+      if (!correctAnswer || !options.some((option) => option.value === correctAnswer)) {
+        throw new Error('Placement assessment is missing a valid answer key')
+      }
+      return { id, text, type, options, correct_answer: correctAnswer }
+    }
+
+    const rubric = typeof question.rubric === 'string' ? question.rubric.trim() : ''
+    if (!rubric || rubric.length > 1000) throw new Error('Placement assessment is missing an objective rubric')
+    return { id, text, type, rubric }
   })
 
-  const parsed = JSON.parse(result.text)
-  if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) {
-    throw new Error('Invalid setup questions format')
+  const multipleChoiceCount = questions.filter((question) => question.type === 'multiple_choice').length
+  const objectiveCount = questions.filter((question) => question.type === 'objective').length
+  if (multipleChoiceCount < 2 || objectiveCount < 2) {
+    throw new Error('Placement assessment must include multiple-choice and objective questions')
   }
-  // Limit to at most 2 questions
-  parsed.questions = parsed.questions.slice(0, 2)
-  return parsed
+  return questions
+}
+
+function recommendedLevel(requestedLevel, score) {
+  if (requestedLevel === 'Intermediate') return score >= 70 ? 'Intermediate' : 'Beginner'
+  if (score >= 85) return 'Advanced'
+  if (score >= 65) return 'Intermediate'
+  return 'Beginner'
+}
+
+function placementResult(assessment) {
+  const recommended = assessment.recommended_level || 'Beginner'
+  let feedback = []
+  let gaps = []
+  try { feedback = assessment.feedback ? JSON.parse(assessment.feedback) : [] } catch {}
+  try { gaps = assessment.gaps ? JSON.parse(assessment.gaps) : [] } catch {}
+  return {
+    assessmentId: assessment.id,
+    requestedLevel: assessment.requested_level,
+    score: assessment.score,
+    passed: recommended === assessment.requested_level,
+    recommendedLevel: recommended,
+    feedback: Array.isArray(feedback) ? feedback : [],
+    gaps: Array.isArray(gaps) ? gaps : [],
+  }
 }
 
 /**
  * Generate a full curriculum for a topic via LLM.
  */
-async function generateCurriculum(topicTitle, level, timeCommitment) {
-  const config = resolveLlmConfig()
-  if (!config.apiKeySet) {
-    throw new LlmClientError('No LLM settings configured.', { code: 'MISSING_SETTINGS' })
-  }
-
+async function generateCurriculum(topicTitle, level, timeCommitment, config, signal) {
   const system = `You are an expert curriculum designer. Generate an adaptive learning curriculum.
 Respond as a stream of JSON text representing a single object with this exact structure:
 {
@@ -86,9 +195,7 @@ Rules:
   const userContent = `Topic: ${topicTitle}\nLearner level: ${level}\nTime commitment: ${timeCommitment}\nGenerate the curriculum now.`
 
   return streamText({
-    provider: config.provider,
-    apiKey: config.apiKey,
-    model: config.model,
+    ...llmRequestOptions(config, { signal }),
     system,
     messages: [{ role: 'user', content: userContent }],
   })
@@ -291,28 +398,59 @@ function persistCurriculum(topicId, curriculum) {
 router.post('/topics/:id/profile', (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const { level, timeCommitment } = req.body
+    const { level, selfReportedLevel, timeCommitment, placementAssessmentId } = req.body
 
     const topic = get('SELECT id FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
-    if (!level || !VALID_LEVELS.includes(level)) {
+    const effectiveLevel = normalizeLevel(level)
+    const reportedLevel = normalizeLevel(selfReportedLevel || level)
+    if (!effectiveLevel || !reportedLevel) {
       return res.status(400).json({ error: `Invalid level. Must be one of: ${VALID_LEVELS.join(', ')}.` })
     }
-    if (!timeCommitment || typeof timeCommitment !== 'string' || timeCommitment.trim().length === 0) {
-      return res.status(400).json({ error: 'Time commitment is required.' })
+    const canonicalTimeCommitment = normalizeTimeCommitment(timeCommitment)
+    if (!canonicalTimeCommitment) {
+      return res.status(400).json({ error: `Invalid time commitment. Must be one of: ${VALID_TIME_COMMITMENTS.join(', ')}.` })
+    }
+
+    let assessment = null
+    if (LEVEL_RANK[reportedLevel] > LEVEL_RANK.Beginner) {
+      const assessmentId = Number(placementAssessmentId)
+      if (!Number.isInteger(assessmentId) || assessmentId <= 0) {
+        return res.status(400).json({ error: 'A completed placement assessment is required for this level.' })
+      }
+      assessment = get(
+        `SELECT id, requested_level, status, recommended_level
+         FROM placement_assessments
+         WHERE id = ? AND topic_id = ?`,
+        assessmentId, topicId
+      )
+      if (!assessment || assessment.status !== 'completed') {
+        return res.status(400).json({ error: 'Complete the placement assessment before saving this level.' })
+      }
+      if (assessment.requested_level !== reportedLevel || assessment.recommended_level !== effectiveLevel) {
+        return res.status(400).json({ error: 'The placement assessment does not match the selected profile.' })
+      }
+    } else if (effectiveLevel !== 'Beginner') {
+      return res.status(400).json({ error: 'The verified level must be Beginner when no placement assessment is provided.' })
     }
 
     run(
       'UPDATE topics SET level = ?, time_per_week = ? WHERE id = ?',
-      level,
-      timeCommitment.trim(),
+      effectiveLevel,
+      canonicalTimeCommitment,
       topicId
     )
 
-    return res.json({ ok: true, level, timeCommitment: timeCommitment.trim() })
+    return res.json({
+      ok: true,
+      level: effectiveLevel,
+      selfReportedLevel: reportedLevel,
+      timeCommitment: canonicalTimeCommitment,
+      placementAssessmentId: assessment?.id || null,
+    })
   } catch (err) {
     console.error('POST /api/topics/:id/profile error:', err.message)
     return res.status(500).json({ error: 'Failed to save profile.' })
@@ -331,19 +469,164 @@ router.get('/topics/:id/setup-questions', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
-
-    const questions = await generateSetupQuestions(topic.title)
-    return res.json(questions)
+    return res.json(setupQuestions(topic.title))
   } catch (err) {
     console.error('GET /api/topics/:id/setup-questions error:', err.message)
     if (err instanceof LlmClientError) {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
     return res.status(500).json({ error: 'Failed to generate setup questions.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/placement/start
+ * Generate and persist a short placement assessment for Intermediate/Advanced learners.
+ */
+router.post('/topics/:id/placement/start', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const level = normalizeLevel(req.body?.level)
+    const topic = get('SELECT id, title FROM topics WHERE id = ?', topicId)
+    if (!topic) return res.status(404).json({ error: 'Topic not found.' })
+    if (!level || level === 'Beginner') {
+      return res.status(400).json({ error: 'Placement assessment is only required for Intermediate or Advanced.' })
+    }
+
+    const config = requireLlmConfig()
+    const system = `You are designing a placement assessment for the topic "${topic.title}".
+The learner claims ${level} proficiency. Generate exactly 5 concise questions that distinguish that level from the level below.
+Return strict JSON with this shape:
+{
+  "questions": [
+    { "id": "q1", "text": "...", "type": "multiple_choice", "options": [{"value":"A","label":"..."},{"value":"B","label":"..."}], "correct_answer": "A" },
+    { "id": "q2", "text": "...", "type": "objective", "rubric": "What a strong answer must demonstrate" }
+  ]
+}
+Include at least 2 multiple_choice and 2 objective questions. Multiple-choice options must have 2-5 choices and one correct_answer value. Objective questions must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
+    const result = await generateText({
+      ...llmRequestOptions(config),
+      system,
+      messages: [{ role: 'user', content: 'Generate placement assessment questions.' }],
+    })
+    const questions = normalizePlacementQuestions(JSON.parse(result.text || '{}'))
+
+    const assessmentId = transaction(() => {
+      run('UPDATE placement_assessments SET status = ? WHERE topic_id = ? AND status = ?', 'expired', topicId, 'pending')
+      const inserted = run(
+        'INSERT INTO placement_assessments (topic_id, requested_level, questions) VALUES (?, ?, ?)',
+        topicId, level, JSON.stringify(questions)
+      )
+      return Number(inserted.lastInsertRowid)
+    })()
+
+    return res.json({ assessmentId, level, questions: placementPublicQuestions(questions) })
+  } catch (err) {
+    console.error('POST /api/topics/:id/placement/start error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to generate placement assessment.' })
+  }
+})
+
+/**
+ * POST /api/topics/:id/placement/submit
+ * Evaluate a persisted placement assessment and return a verified level recommendation.
+ */
+router.post('/topics/:id/placement/submit', async (req, res) => {
+  try {
+    const topicId = Number(req.params.id)
+    const assessmentId = Number(req.body?.assessmentId)
+    const answers = req.body?.answers
+    if (!Number.isInteger(assessmentId) || assessmentId <= 0) {
+      return res.status(400).json({ error: 'A valid placement assessment is required.' })
+    }
+    const assessment = get(
+      `SELECT id, topic_id, requested_level, questions, answers, status, score, recommended_level, feedback, gaps
+       FROM placement_assessments
+       WHERE id = ? AND topic_id = ?`,
+      assessmentId, topicId
+    )
+    if (!assessment) return res.status(404).json({ error: 'Placement assessment not found.' })
+    if (assessment.status === 'completed') return res.json(placementResult(assessment))
+    if (assessment.status !== 'pending') return res.status(409).json({ error: 'This placement assessment is no longer active.' })
+    if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+      return res.status(400).json({ error: 'Answers must be provided for the placement assessment.' })
+    }
+
+    let questions
+    try { questions = JSON.parse(assessment.questions) } catch { return res.status(500).json({ error: 'Placement assessment data is invalid.' }) }
+    const questionById = new Map(questions.map((question) => [question.id, question]))
+    const answerEntries = Object.entries(answers)
+    if (answerEntries.length !== questions.length || answerEntries.some(([id, answer]) => !questionById.has(id) || typeof answer !== 'string' || !answer.trim() || answer.length > 2000)) {
+      return res.status(400).json({ error: 'Please answer every placement question.' })
+    }
+    for (const [id, answer] of answerEntries) {
+      const question = questionById.get(id)
+      if (question.type === 'multiple_choice' && !question.options.some((option) => option.value === answer)) {
+        return res.status(400).json({ error: 'One or more multiple-choice answers are invalid.' })
+      }
+    }
+
+    const config = requireLlmConfig()
+    const evaluationPrompt = `You are evaluating a placement assessment for "${assessment.requested_level}" proficiency in the topic.
+Score the learner from 0 to 100 based on correctness, reasoning, and transfer. Use the question rubrics and answer keys. Be strict but fair.
+Return strict JSON only: {"score": number, "feedback": ["..."], "gaps": ["..."]}.
+
+Questions and answer keys:
+${JSON.stringify(questions)}
+
+Learner answers:
+${JSON.stringify(answers)}`
+    const result = await generateText({
+      ...llmRequestOptions(config),
+      system: evaluationPrompt,
+      messages: [{ role: 'user', content: 'Evaluate this placement assessment.' }],
+    })
+    const parsed = JSON.parse(result.text || '{}')
+    const score = Number(parsed.score)
+    if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error('Invalid placement assessment score')
+    const feedback = Array.isArray(parsed.feedback)
+      ? parsed.feedback.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 500)).slice(0, 8)
+      : []
+    const gaps = Array.isArray(parsed.gaps)
+      ? parsed.gaps.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 500)).slice(0, 8)
+      : []
+    const verifiedLevel = recommendedLevel(assessment.requested_level, score)
+
+    const update = transaction(() => {
+      run(
+        `UPDATE placement_assessments
+         SET answers = ?, status = 'completed', score = ?, recommended_level = ?, feedback = ?, gaps = ?, completed_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = 'pending'`,
+        JSON.stringify(answers), Math.round(score), verifiedLevel, JSON.stringify(feedback), JSON.stringify(gaps), assessment.id
+      )
+    })()
+    if (!update || update.changes !== 1) {
+      const completed = get(
+        'SELECT id, requested_level, status, score, recommended_level, feedback, gaps FROM placement_assessments WHERE id = ? AND topic_id = ?',
+        assessment.id, topicId
+      )
+      if (completed?.status === 'completed') return res.json(placementResult(completed))
+      return res.status(409).json({ error: 'This placement assessment was submitted concurrently. Please retry.' })
+    }
+
+    return res.json({
+      assessmentId: assessment.id,
+      requestedLevel: assessment.requested_level,
+      score: Math.round(score),
+      passed: verifiedLevel === assessment.requested_level,
+      recommendedLevel: verifiedLevel,
+      feedback,
+      gaps,
+    })
+  } catch (err) {
+    console.error('POST /api/topics/:id/placement/submit error:', err.message)
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to evaluate placement assessment.' })
   }
 })
 
@@ -363,12 +646,9 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
-
-    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week)
+    const config = requireLlmConfig()
+    const request = createRequestAbortSignal(req, res)
+    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
     await streamToSSE(streamResult, res)
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/generate error:', err.message)
@@ -521,10 +801,7 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
       return res.status(400).json({ error: 'Tweak request is required.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    const config = requireLlmConfig()
 
     // Get existing curriculum as context
     const existingModules = all('SELECT * FROM modules WHERE topic_id = ? ORDER BY module_index', topicId)
@@ -568,9 +845,7 @@ Rules:
     const userContent = `Topic: ${topic.title}\nLearner level: ${topic.level || 'Beginner'}\nTime commitment: ${topic.time_per_week || '30 min/day'}\n\nExisting curriculum:\n${JSON.stringify(existingLessons, null, 2)}\n\nUser request: ${tweakRequest.trim()}\n\nReturn the updated full curriculum.`
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: userContent }],
     })
@@ -582,7 +857,6 @@ Rules:
       return res.status(400).json({ error: `Tweak produced an invalid curriculum: ${validation.error}` })
     }
 
-    persistCurriculum(topicId, updated)
     return res.json({ ok: true, modules: updated.modules })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/tweak error:', err.message)
@@ -609,15 +883,9 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
-
-    // Delete old curriculum modules (cascades to lessons)
-    run('DELETE FROM modules WHERE topic_id = ?', topicId)
-
-    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week)
+    const config = requireLlmConfig()
+    const request = createRequestAbortSignal(req, res)
+    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
     await streamToSSE(streamResult, res)
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/regenerate error:', err.message)
@@ -657,10 +925,7 @@ router.get('/topics/:id/lessons/:lid/test-out', async (req, res) => {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    const config = requireLlmConfig()
 
     let outcomes = []
     try {
@@ -679,9 +944,7 @@ Respond in strict JSON:
 Questions should cover the lesson's learning outcomes directly. Do not include markdown formatting.`
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}` }],
     })
@@ -726,10 +989,7 @@ router.post('/topics/:id/lessons/:lid/test-out', async (req, res) => {
       return res.status(400).json({ error: 'Answers are required.' })
     }
 
-    const config = resolveLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    const config = requireLlmConfig()
 
     let outcomes = []
     try {
@@ -751,9 +1011,7 @@ Pass requires score >= 80 AND no critical gaps. Be strict but fair. Do not inclu
     const userContent = `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}\n\nUser answers:\n${answers.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: userContent }],
     })
