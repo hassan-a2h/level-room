@@ -5,7 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-vi.mock('../llm/client.js', () => ({
+  vi.mock('../llm/client.js', () => ({
   streamText: vi.fn(() =>
     Promise.resolve({
       textStream: (async function* () {
@@ -18,6 +18,28 @@ vi.mock('../llm/client.js', () => ({
   ),
   generateText: vi.fn((_params) => {
     const content = _params?.messages?.[0]?.content || ''
+    if (content.includes('placement assessment')) {
+      if (content.includes('Generate placement assessment questions')) {
+        return Promise.resolve({
+          text: JSON.stringify({
+            questions: [
+              { id: 'q1', text: 'Which approach best explains JSX?', type: 'multiple_choice', options: [{ value: 'A', label: 'A syntax extension' }, { value: 'B', label: 'A database' }], correct_answer: 'A' },
+              { id: 'q2', text: 'Which approach best handles component state?', type: 'multiple_choice', options: [{ value: 'A', label: 'Local state' }, { value: 'B', label: 'Random globals' }], correct_answer: 'A' },
+              { id: 'q3', text: 'Explain how you would debug a render loop.', type: 'objective', rubric: 'Names a reproducible debugging process.' },
+              { id: 'q4', text: 'Describe a maintainable component boundary.', type: 'objective', rubric: 'Connects boundaries to cohesion and change.' },
+              { id: 'q5', text: 'How would you test a user interaction?', type: 'objective', rubric: 'Describes a behavior-focused test.' },
+            ],
+          }),
+        })
+      }
+      return Promise.resolve({
+        text: JSON.stringify({
+          score: 88,
+          feedback: ['Strong grasp of the core concepts.'],
+          gaps: [],
+        }),
+      })
+    }
     // Tweak / regenerate prompts contain existing curriculum context and ask for changes
     if (content.includes('User request:') || content.includes('updated full curriculum') || content.includes('Existing curriculum:')) {
       return Promise.resolve({
@@ -145,21 +167,90 @@ describe('Curriculum API', () => {
         .send({ level: 'Beginner' })
       expect(res.status).toBe(400)
     })
+
+    it('canonicalizes a legacy time label before storing it', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
+      const res = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/profile`)
+        .send({ level: 'beginner', timeCommitment: '30 min' })
+      expect(res.status).toBe(200)
+      expect(res.body.timeCommitment).toBe('30 min/day')
+      expect(dbModule.get('SELECT time_per_week FROM topics WHERE id = ?', topic.lastInsertRowid).time_per_week).toBe('30 min/day')
+    })
   })
 
   describe('GET /api/topics/:id/setup-questions', () => {
-    it('returns setup questions via LLM', async () => {
+    it('returns deterministic setup choices with accepted values', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
       const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/setup-questions`)
       expect(res.status).toBe(200)
       expect(res.body.questions).toHaveLength(2)
       expect(res.body.questions[0].text).toBeDefined()
       expect(res.body.questions[0].options).toBeDefined()
+      expect(res.body.questions[0].options.map((option) => option.value)).toEqual(['Beginner', 'Intermediate', 'Advanced'])
+      expect(res.body.questions[1].options.map((option) => option.value)).toEqual(['15 min/day', '30 min/day', '1 hour/day', '2+ hours/day'])
     })
 
     it('returns 404 for nonexistent topic', async () => {
       const res = await request(app).get('/api/topics/999/setup-questions')
       expect(res.status).toBe(404)
+    })
+
+    it('does not require an LLM provider just to render canonical setup choices', async () => {
+      dbModule.run('DELETE FROM llm_settings')
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
+      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/setup-questions`)
+      expect(res.status).toBe(200)
+      expect(res.body.questions[0].options[0].value).toBe('Beginner')
+    })
+  })
+
+  describe('placement assessment', () => {
+    it('generates mixed diagnostic questions and verifies a non-beginner profile', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
+      const start = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/placement/start`)
+        .send({ level: 'Advanced' })
+
+      expect(start.status).toBe(200)
+      expect(start.body.assessmentId).toBeTypeOf('number')
+      expect(start.body.questions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'multiple_choice', options: expect.any(Array) }),
+        expect.objectContaining({ type: 'objective' }),
+      ]))
+      expect(start.body.questions.every((question) => !question.correct_answer && !question.rubric)).toBe(true)
+
+      const answers = Object.fromEntries(start.body.questions.map((question) => [
+        question.id,
+        question.type === 'multiple_choice' ? question.options[0].value : 'A technically grounded explanation.',
+      ]))
+      const submit = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/placement/submit`)
+        .send({ assessmentId: start.body.assessmentId, answers })
+
+      expect(submit.status).toBe(200)
+      expect(submit.body.recommendedLevel).toBe('Advanced')
+      expect(submit.body.passed).toBe(true)
+
+      const profile = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/profile`)
+        .send({
+          level: 'Advanced',
+          selfReportedLevel: 'Advanced',
+          timeCommitment: '30 min/day',
+          placementAssessmentId: start.body.assessmentId,
+        })
+      expect(profile.status).toBe(200)
+      expect(dbModule.get('SELECT level FROM topics WHERE id = ?', topic.lastInsertRowid).level).toBe('Advanced')
+    })
+
+    it('rejects a non-beginner profile without a completed placement assessment', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
+      const res = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/profile`)
+        .send({ level: 'Intermediate', selfReportedLevel: 'Intermediate', timeCommitment: '30 min/day' })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/placement/i)
     })
   })
 
@@ -227,6 +318,10 @@ describe('Curriculum API', () => {
         .send({ request: 'Add a module on testing' })
       expect(res.status).toBe(200)
       expect(res.body.modules).toBeDefined()
+      expect(dbModule.all(
+        'SELECT l.title FROM lessons l JOIN modules m ON l.module_id = m.id WHERE m.topic_id = ? ORDER BY l.lesson_index',
+        topic.lastInsertRowid,
+      ).map(({ title }) => title)).toEqual(['Intro'])
     })
 
     it('rejects empty tweak request', async () => {
