@@ -16,7 +16,46 @@ const TABLES = [
   'streaks',
   'quiz_attempts',
   'exam_attempts',
+  'placement_assessments',
 ]
+
+const OPTIONAL_TABLES = new Set(['placement_assessments'])
+
+const LEGACY_DISCARDED_SETTINGS_FIELDS = new Set(['api_key'])
+
+function getTableColumns(table) {
+  return new Set(db.prepare(`PRAGMA table_info("${table}")`).all().map((column) => column.name))
+}
+
+function prepareImportRows(backup) {
+  const prepared = {}
+  for (const table of TABLES) {
+    const rows = backup[table] || (OPTIONAL_TABLES.has(table) ? [] : null)
+    if (!rows) return { error: `Invalid backup: missing table "${table}".` }
+    const knownColumns = getTableColumns(table)
+    prepared[table] = []
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return { error: `Invalid backup: each "${table}" row must be an object.` }
+      }
+      const cleanRow = {}
+      for (const [column, value] of Object.entries(row)) {
+        if (table === 'llm_settings' && LEGACY_DISCARDED_SETTINGS_FIELDS.has(column.toLowerCase())) continue
+        if (isCredentialColumn(column) || !knownColumns.has(column)) {
+          return { error: 'Invalid backup: credential data or unsupported fields are not accepted.' }
+        }
+        cleanRow[column] = value
+      }
+      prepared[table].push(cleanRow)
+    }
+  }
+  return { rows: prepared }
+}
+
+function isCredentialColumn(column) {
+  const normalized = column.toLowerCase().replace(/[^a-z]/g, '')
+  return ['access', 'refresh', 'refreshtoken', 'token', 'credential', 'accountid', 'authorization', 'apikey'].includes(normalized)
+}
 
 router.get('/export', (_req, res) => {
   try {
@@ -26,7 +65,9 @@ router.get('/export', (_req, res) => {
     }
 
     for (const table of TABLES) {
-      const rows = all(`SELECT * FROM ${table}`)
+      const rows = table === 'llm_settings'
+        ? all('SELECT id, provider, model, reasoning_effort, created_at FROM llm_settings')
+        : all(`SELECT * FROM ${table}`)
       result[table] = rows
     }
 
@@ -60,6 +101,9 @@ router.post('/import', (req, res) => {
       }
     }
 
+    const validated = prepareImportRows(backup)
+    if (validated.error) return res.status(400).json({ error: validated.error })
+
     const counts = {}
 
     const tx = transaction(() => {
@@ -78,21 +122,22 @@ router.post('/import', (req, res) => {
 
       // Insert data in dependency order
       for (const table of TABLES) {
-        const rows = backup[table]
+        const rows = validated.rows[table]
         if (rows.length === 0) {
           counts[table] = 0
           continue
         }
 
-        const columns = Object.keys(rows[0]).filter((col) => col !== 'api_key')
-
-        const placeholders = columns.map(() => '?').join(', ')
-        const insertSql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`
-        const stmt = db.prepare(insertSql)
-
         for (const row of rows) {
-          const values = columns.map((col) => row[col] ?? null)
-          stmt.run(...values)
+          const columns = Object.keys(row)
+          if (columns.length === 0) {
+            db.prepare(`INSERT INTO "${table}" DEFAULT VALUES`).run()
+            continue
+          }
+          const columnSql = columns.map((column) => `"${column}"`).join(', ')
+          const placeholders = columns.map(() => '?').join(', ')
+          const insertSql = `INSERT INTO "${table}" (${columnSql}) VALUES (${placeholders})`
+          db.prepare(insertSql).run(...columns.map((column) => row[column] ?? null))
         }
 
         counts[table] = rows.length
@@ -104,7 +149,7 @@ router.post('/import', (req, res) => {
     return res.json({ success: true, counts })
   } catch (err) {
     console.error('Import error:', err.message)
-    return res.status(500).json({ error: 'Failed to import data: ' + err.message })
+    return res.status(400).json({ error: 'Invalid backup data. No changes were imported.' })
   }
 })
 
