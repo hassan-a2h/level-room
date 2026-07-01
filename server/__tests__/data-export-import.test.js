@@ -138,6 +138,12 @@ describe('Data Export and Import API', () => {
       expect(res.body.llm_settings[0].provider).toBe('openai')
     })
 
+    it('exports only the documented settings fields', async () => {
+      seedDatabase()
+      const res = await request(app).get('/api/data/export')
+      expect(Object.keys(res.body.llm_settings[0]).sort()).toEqual(['created_at', 'id', 'model', 'provider', 'reasoning_effort'])
+    })
+
     it('llm_settings export contains no api_key column', async () => {
       seedDatabase()
       const res = await request(app).get('/api/data/export')
@@ -260,6 +266,47 @@ describe('Data Export and Import API', () => {
       expect(settings.provider).toBe('openai')
       // api_key column no longer exists
       expect(settings.api_key).toBeUndefined()
+    })
+
+    it('imports a pre-reasoning settings row with the neutral default', async () => {
+      const backup = {
+        topics: [], modules: [], lessons: [], progress: [], messages: [],
+        srs_queue: [], artifacts: [],
+        llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', created_at: '2024-01-01 00:00:00' }],
+        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [],
+      }
+
+      const res = await request(app).post('/api/data/import').send(backup)
+
+      expect(res.status).toBe(200)
+      expect(dbModule.get('SELECT provider, model, reasoning_effort FROM llm_settings')).toEqual({
+        provider: 'openai',
+        model: 'gpt-4o',
+        reasoning_effort: 'none',
+      })
+    })
+
+    it('drops legacy api_key fields but rejects OAuth credentials before replacing any data', async () => {
+      seedDatabase()
+      const backup = {
+        topics: [], modules: [], lessons: [], progress: [], messages: [],
+        srs_queue: [], artifacts: [],
+        llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', api_key: 'old-key-fixture' }],
+        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [],
+      }
+
+      const compatible = await request(app).post('/api/data/import').send(backup)
+      expect(compatible.status).toBe(200)
+      expect(dbModule.get('SELECT provider, model FROM llm_settings')).toEqual({ provider: 'openai', model: 'gpt-4o' })
+
+      const preservedTopicId = seedDatabase().topicId
+      const unsafe = { ...backup, topics: [{ id: preservedTopicId, title: 'Replacement' }], llm_settings: [{
+        id: 1, provider: 'openai-codex', model: 'gpt-5.4', reasoning_effort: 'xhigh', access: 'oauth-secret-fixture',
+      }] }
+      const rejected = await request(app).post('/api/data/import').send(unsafe)
+      expect(rejected.status).toBe(400)
+      expect(rejected.text).not.toContain('oauth-secret-fixture')
+      expect(dbModule.get('SELECT title FROM topics WHERE id = ?', preservedTopicId).title).toBe('React')
     })
   })
 })
