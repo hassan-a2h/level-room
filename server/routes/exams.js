@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
-import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
+import { requireLlmConfig } from '../utils/llm-config.js'
 import { generateText, LlmClientError } from '../llm/client.js'
+import { llmRequestOptions } from '../llm/request-options.js'
 import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
@@ -286,9 +287,6 @@ router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     const lessons = getModuleLessonContext(topicId, moduleId)
 
@@ -299,9 +297,7 @@ router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate the module exam questions as JSON.' }],
     })
@@ -434,9 +430,6 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     const lessons = getModuleLessonContext(topicId, moduleId)
 
@@ -449,9 +442,7 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Evaluate the exam answers and return JSON.' }],
     })
@@ -506,38 +497,32 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
 
     const newStatus = passed ? 'passed' : 'failed'
 
-    run(
-      'UPDATE exam_attempts SET answers = ?, evaluation = ?, status = ? WHERE id = ?',
-      JSON.stringify(answers),
-      JSON.stringify(evaluation),
-      newStatus,
-      existing.id
-    )
-
-    // On pass: mark module complete, unlock next module, schedule SRS
-    let nextModuleUnlocked = false
-    if (passed) {
-      const now = new Date().toISOString()
-      run('UPDATE modules SET status = ?, completed_at = ? WHERE id = ?', 'completed', now, moduleId)
-
-      // Schedule SRS for all lessons in this module
-      const moduleLessons = all('SELECT id FROM lessons WHERE module_id = ?', moduleId)
-      for (const lesson of moduleLessons) {
-        scheduleSrs(topicId, lesson.id)
-      }
-
-      // Schedule cumulative module reviews at 7d and 30d
-      scheduleCumulativeReviews(topicId, moduleId)
-
-      // Unlock next module (if any) by unlocking its first foundation lesson
-      const nextModule = get(
-        'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',
-        topicId, moduleId
+    const { nextModuleUnlocked } = transaction(() => {
+      const update = run(
+        'UPDATE exam_attempts SET answers = ?, evaluation = ?, status = ? WHERE id = ? AND status = ?',
+        JSON.stringify(answers), JSON.stringify(evaluation), newStatus, existing.id, 'pending',
       )
-      if (nextModule) {
-        nextModuleUnlocked = true
+      if (update.changes !== 1) {
+        throw new LlmClientError('This exam was already submitted. Reload the exam to see its result.', {
+          code: 'EXAM_ALREADY_SUBMITTED', retryable: false,
+        })
       }
-    }
+
+      let nextUnlocked = false
+      if (passed) {
+        const now = new Date().toISOString()
+        run('UPDATE modules SET status = ?, completed_at = ? WHERE id = ?', 'completed', now, moduleId)
+        const moduleLessons = all('SELECT id FROM lessons WHERE module_id = ?', moduleId)
+        for (const lesson of moduleLessons) scheduleSrs(topicId, lesson.id)
+        scheduleCumulativeReviews(topicId, moduleId)
+        const nextModule = get(
+          'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',
+          topicId, moduleId,
+        )
+        nextUnlocked = Boolean(nextModule)
+      }
+      return { nextModuleUnlocked: nextUnlocked }
+    })()
 
     // Record streak on exam pass
     if (passed) {
@@ -589,9 +574,6 @@ router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     const lessons = getModuleLessonContext(topicId, moduleId)
 
@@ -602,9 +584,7 @@ router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate the module exam questions as JSON.' }],
     })
@@ -683,9 +663,6 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     // Fetch weak lesson details
     const weakLessons = []
@@ -713,9 +690,7 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate the partial retest questions as JSON.' }],
     })
@@ -816,9 +791,6 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     const lessons = getModuleLessonContext(topicId, moduleId)
 
@@ -831,9 +803,7 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Evaluate the partial retest answers and return JSON.' }],
     })
@@ -878,14 +848,6 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
       gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
     }
 
-    run(
-      'UPDATE exam_attempts SET answers = ?, evaluation = ?, status = ? WHERE id = ?',
-      JSON.stringify(answers),
-      JSON.stringify(evaluation),
-      retestPassed ? 'passed' : 'failed',
-      retest.id
-    )
-
     // Check if original exam overall was >=75 — if so, passing retest can complete module
     let modulePassed = false
     let partialPass = false
@@ -903,27 +865,32 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
       }
     }
 
-    let nextModuleUnlocked = false
-    if (modulePassed) {
-      const now = new Date().toISOString()
-      run('UPDATE modules SET status = ?, completed_at = ? WHERE id = ?', 'completed', now, moduleId)
-
-      const moduleLessons = all('SELECT id FROM lessons WHERE module_id = ?', moduleId)
-      for (const lesson of moduleLessons) {
-        scheduleSrs(topicId, lesson.id)
-      }
-
-      // Schedule cumulative module reviews at 7d and 30d
-      scheduleCumulativeReviews(topicId, moduleId)
-
-      const nextModule = get(
-        'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',
-        topicId, moduleId
+    const { nextModuleUnlocked } = transaction(() => {
+      const update = run(
+        'UPDATE exam_attempts SET answers = ?, evaluation = ?, status = ? WHERE id = ? AND status = ?',
+        JSON.stringify(answers), JSON.stringify(evaluation), retestPassed ? 'passed' : 'failed', retest.id, 'pending',
       )
-      if (nextModule) {
-        nextModuleUnlocked = true
+      if (update.changes !== 1) {
+        throw new LlmClientError('This retest was already submitted. Reload the exam to see its result.', {
+          code: 'EXAM_ALREADY_SUBMITTED', retryable: false,
+        })
       }
-    }
+
+      let nextUnlocked = false
+      if (modulePassed) {
+        const now = new Date().toISOString()
+        run('UPDATE modules SET status = ?, completed_at = ? WHERE id = ?', 'completed', now, moduleId)
+        const moduleLessons = all('SELECT id FROM lessons WHERE module_id = ?', moduleId)
+        for (const lesson of moduleLessons) scheduleSrs(topicId, lesson.id)
+        scheduleCumulativeReviews(topicId, moduleId)
+        const nextModule = get(
+          'SELECT id FROM modules WHERE topic_id = ? AND module_index > (SELECT module_index FROM modules WHERE id = ?) ORDER BY module_index LIMIT 1',
+          topicId, moduleId,
+        )
+        nextUnlocked = Boolean(nextModule)
+      }
+      return { nextModuleUnlocked: nextUnlocked }
+    })()
 
     // Record streak on module completion via partial retest
     if (modulePassed) {
