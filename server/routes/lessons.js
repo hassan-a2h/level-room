@@ -1,7 +1,8 @@
 import { Router } from 'express'
-import { get, run, all } from '../db.js'
-import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
+import { get, run, all, transaction } from '../db.js'
+import { requireLlmConfig } from '../utils/llm-config.js'
 import { streamText, generateText, LlmClientError } from '../llm/client.js'
+import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 import { buildDifficultyInstruction, DIFFICULTY_LEVELS } from '../utils/adaptive-difficulty.js'
 import { getActiveMistakes } from '../utils/mistakes-log.js'
 import {
@@ -22,6 +23,52 @@ const router = Router()
 
 const MAX_MESSAGE_LENGTH = 2000
 const DEFAULT_TOTAL_CHUNKS = 3
+
+async function streamReply(streamResult, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  })
+
+  let text = ''
+  try {
+    for await (const chunk of streamResult.textStream) {
+      const value = typeof chunk === 'string' ? chunk : ''
+      text += value
+      res.write(`data: ${JSON.stringify(value)}\n\n`)
+    }
+    if (!text.trim()) {
+      writeStreamError(res, new LlmClientError('The model returned no response. Please retry.', { code: 'EMPTY_RESPONSE' }))
+      if (!res.destroyed && !res.writableEnded) res.end()
+      return { ok: false, text }
+    }
+    return { ok: true, text }
+  } catch (error) {
+    writeStreamError(res, error)
+    if (!res.destroyed && !res.writableEnded) res.end()
+    return { ok: false, text }
+  }
+}
+
+function writeStreamError(res, error) {
+  const known = error instanceof LlmClientError
+  const body = known
+    ? { message: error.message, code: error.code, retryable: error.retryable }
+    : { message: 'The response could not be completed. Please retry.', code: 'STREAM_ERROR', retryable: true }
+  try {
+    if (!res.destroyed) {
+      res.write('event: error\n')
+      res.write(`data: ${JSON.stringify(body)}\n\n`)
+    }
+  } catch {}
+}
+
+function finishStream(res) {
+  if (res.destroyed || res.writableEnded) return
+  res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
+  res.end()
+}
 
 /**
  * Technical topic keywords for mode inference.
@@ -234,35 +281,16 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
     }
 
-    // Transition state via state machine (not_started -> practicing)
-    const currentProgress = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!currentProgress || currentProgress.state === 'not_started') {
-      try {
-        startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
-      } catch (smErr) {
-        if (smErr instanceof StateMachineError) {
-          return res.status(400).json({ error: smErr.message, code: smErr.code })
-        }
-        throw smErr
-      }
-    }
-
-    // Re-fetch progress for chunk info
+    const config = requireLlmConfig()
     const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-
-    // Persist user message
-    run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
-
-    // Build conversation history for LLM
+    const shouldStartPracticing = !progress || progress.state === 'not_started'
+    const chunkNum = shouldStartPracticing ? 1 : progress.current_chunk || 1
+    const totalChunks = progress?.total_chunks || DEFAULT_TOTAL_CHUNKS
     const history = all(
       'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
+      topicId, lessonId,
     )
-
-    const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    history.push({ role: 'user', content: content.trim() })
 
     let outcomes = []
     try {
@@ -272,7 +300,7 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
     }
 
     const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
-    const isFinalChunk = progress.current_chunk >= progress.total_chunks
+    const isFinalChunk = chunkNum >= totalChunks
 
     const difficultyInstruction = buildDifficultyInstruction(topicId)
 
@@ -280,52 +308,33 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
       mode: interactionMode,
       lessonTitle: lesson.title,
       lessonOutcomes: outcomes,
-      chunkNum: progress.current_chunk,
-      totalChunks: progress.total_chunks,
+      chunkNum,
+      totalChunks,
       isFinal: isFinalChunk,
       difficultyInstruction,
     })
 
+    const request = createRequestAbortSignal(req, res)
     const streamResult = await streamText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config, { signal: request.signal }),
       system,
       messages: history.map((m) => ({ role: m.role, content: m.content })),
     })
 
-    // Stream SSE and collect text for persistence
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    })
-
-    let assistantText = ''
+    const streamed = await streamReply(streamResult, res)
+    if (!streamed.ok) return
     try {
-      for await (const chunk of streamResult.textStream) {
-        const text = typeof chunk === 'string' ? chunk : ''
-        assistantText += text
-        res.write(`data: ${JSON.stringify(text)}\n\n`)
-      }
-      res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-      res.end()
-    } catch (err) {
-      if (err instanceof LlmClientError) {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message, code: err.code, retryable: err.retryable })}\n\n`)
-      } else {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message || 'Streaming failed.', code: 'STREAM_ERROR', retryable: true })}\n\n`)
-      }
-      res.end()
+      transaction(() => {
+        if (shouldStartPracticing) startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
+        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
+        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
+      })()
+    } catch (smErr) {
+      writeStreamError(res, smErr instanceof StateMachineError ? smErr : new Error('course state could not be saved'))
+      if (!res.destroyed && !res.writableEnded) res.end()
       return
     }
-
-    // Persist assistant message after streaming
-    if (assistantText.trim()) {
-      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', assistantText.trim())
-    }
+    finishStream(res)
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/chat error:', err.message)
     if (!res.headersSent) {
@@ -336,9 +345,11 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
     }
     // Headers already sent - try to write SSE error
     try {
-      res.write(`event: error\n`)
-      res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
-      res.end()
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(`event: error\n`)
+        res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
+        res.end()
+      }
     } catch {}
   }
 })
@@ -378,22 +389,13 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
       return res.status(400).json({ error: 'Lesson must be in practicing state to continue.' })
     }
 
+    const config = requireLlmConfig()
     const nextChunk = (progress.current_chunk || 0) + 1
-    run('UPDATE progress SET current_chunk = ? WHERE id = ?', nextChunk, progress.id)
-
-    // Persist a synthetic user "continue" message for context
-    run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', '[Continue]')
-
-    // Build conversation history for LLM
     const history = all(
       'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
+      topicId, lessonId,
     )
-
-    const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    history.push({ role: 'user', content: '[Continue]' })
 
     let outcomes = []
     try {
@@ -417,46 +419,33 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
       difficultyInstruction,
     })
 
+    const request = createRequestAbortSignal(req, res)
     const streamResult = await streamText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config, { signal: request.signal }),
       system,
       messages: history.map((m) => ({ role: m.role, content: m.content })),
     })
 
-    // Stream SSE and collect text for persistence
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    })
-
-    let assistantText = ''
+    const streamed = await streamReply(streamResult, res)
+    if (!streamed.ok) return
     try {
-      for await (const chunk of streamResult.textStream) {
-        const text = typeof chunk === 'string' ? chunk : ''
-        assistantText += text
-        res.write(`data: ${JSON.stringify(text)}\n\n`)
-      }
-      res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-      res.end()
-    } catch (err) {
-      if (err instanceof LlmClientError) {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message, code: err.code, retryable: err.retryable })}\n\n`)
-      } else {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message || 'Streaming failed.', code: 'STREAM_ERROR', retryable: true })}\n\n`)
-      }
+      transaction(() => {
+        const update = run(
+          'UPDATE progress SET current_chunk = ? WHERE id = ? AND state = ? AND coalesce(current_chunk, 0) = ?',
+          nextChunk, progress.id, 'practicing', progress.current_chunk || 0,
+        )
+        if (update.changes !== 1) {
+          throw new StateMachineError('Lesson progress changed during generation. Please retry.', 'STATE_CHANGED')
+        }
+        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', '[Continue]')
+        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
+      })()
+    } catch (smErr) {
+      writeStreamError(res, smErr instanceof StateMachineError ? smErr : new Error('course state could not be saved'))
       res.end()
       return
     }
-
-    // Persist assistant message after streaming
-    if (assistantText.trim()) {
-      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', assistantText.trim())
-    }
+    finishStream(res)
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/continue error:', err.message)
     if (!res.headersSent) {
@@ -594,19 +583,6 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
-
-    // Transition via state machine (practicing -> quiz_pending)
-    try {
-      startQuiz({ topicId, lessonId })
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
 
     let outcomes = []
     try {
@@ -630,9 +606,7 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate the quiz questions as JSON.' }],
     })
@@ -656,12 +630,21 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
       return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
     }
 
-    // Persist quiz questions
     const questionsJson = JSON.stringify(validQuestions)
-    run(
-      'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-      topicId, lessonId, questionsJson
-    )
+    try {
+      transaction(() => {
+        startQuiz({ topicId, lessonId })
+        run(
+          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
+          topicId, lessonId, questionsJson,
+        )
+      })()
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
 
     return res.json({ questions: validQuestions })
   } catch (err) {
@@ -757,9 +740,6 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     let outcomes = []
     try {
@@ -782,9 +762,7 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Evaluate the quiz answers and return JSON.' }],
     })
@@ -1063,19 +1041,12 @@ router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
       gaps = []
     }
 
-    // Persist user message
-    run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
-
-    // Build conversation history
+    const config = requireLlmConfig()
     const history = all(
       'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
+      topicId, lessonId,
     )
-
-    const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
+    history.push({ role: 'user', content: content.trim() })
 
     let outcomes = []
     try {
@@ -1095,44 +1066,20 @@ This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT exp
 
 ${difficultyInstruction}`
 
+    const request = createRequestAbortSignal(req, res)
     const streamResult = await streamText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config, { signal: request.signal }),
       system,
       messages: history.map((m) => ({ role: m.role, content: m.content })),
     })
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    })
-
-    let assistantText = ''
-    try {
-      for await (const chunk of streamResult.textStream) {
-        const text = typeof chunk === 'string' ? chunk : ''
-        assistantText += text
-        res.write(`data: ${JSON.stringify(text)}\n\n`)
-      }
-      res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-      res.end()
-    } catch (err) {
-      if (err instanceof LlmClientError) {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message, code: err.code, retryable: err.retryable })}\n\n`)
-      } else {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message || 'Streaming failed.', code: 'STREAM_ERROR', retryable: true })}\n\n`)
-      }
-      res.end()
-      return
-    }
-
-    if (assistantText.trim()) {
-      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', assistantText.trim())
-    }
+    const streamed = await streamReply(streamResult, res)
+    if (!streamed.ok) return
+    transaction(() => {
+      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
+      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
+    })()
+    finishStream(res)
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/remediate/chat error:', err.message)
     if (!res.headersSent) {
@@ -1191,19 +1138,6 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
-
-    // Transition via state machine
-    try {
-      startRetest({ topicId, lessonId })
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
 
     let outcomes = []
     try {
@@ -1228,9 +1162,7 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate the retest questions as JSON.' }],
     })
@@ -1254,10 +1186,20 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
     }
 
     const questionsJson = JSON.stringify(validQuestions)
-    run(
-      'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-      topicId, lessonId, questionsJson
-    )
+    try {
+      transaction(() => {
+        startRetest({ topicId, lessonId })
+        run(
+          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
+          topicId, lessonId, questionsJson,
+        )
+      })()
+    } catch (smErr) {
+      if (smErr instanceof StateMachineError) {
+        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      }
+      throw smErr
+    }
 
     return res.json({ questions: validQuestions })
   } catch (err) {
@@ -1377,9 +1319,6 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     let outcomes = []
     try {
@@ -1396,9 +1335,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
     })
 
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Evaluate the artifact and return JSON.' }],
     })
@@ -1438,37 +1375,40 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       feedback,
     }
 
-    // Get current progress to know quiz score
-    const progress = get('SELECT id, quiz_score FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    const quizScore = progress ? progress.quiz_score : null
-
-    // Record artifact result via state machine
+    let progress
     let stateMachineResult
+    let artifactResult
+    let attemptNumber = 1
     try {
-      stateMachineResult = recordArtifactResult({ topicId, lessonId, artifactPassed: passed, quizScore })
+      transaction(() => {
+        progress = get('SELECT id, quiz_score FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+        stateMachineResult = recordArtifactResult({
+          topicId,
+          lessonId,
+          artifactPassed: passed,
+          quizScore: progress ? progress.quiz_score : null,
+        })
+        if (progress) {
+          const countRow = get('SELECT COUNT(*) as count FROM artifacts WHERE progress_id = ?', progress.id)
+          attemptNumber = (countRow?.count || 0) + 1
+        }
+        const progressId = progress ? progress.id : (stateMachineResult.progressId || 0)
+        artifactResult = run(
+          'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
+          progressId,
+          artifactText.trim(),
+          JSON.stringify(scores),
+          passed ? 1 : 0,
+          JSON.stringify(feedback),
+          attemptNumber,
+        )
+      })()
     } catch (smErr) {
       if (smErr instanceof StateMachineError) {
         return res.status(400).json({ error: smErr.message, code: smErr.code })
       }
       throw smErr
     }
-
-    // Persist artifact submission
-    let attemptNumber = 1
-    if (progress) {
-      const countRow = get('SELECT COUNT(*) as count FROM artifacts WHERE progress_id = ?', progress.id)
-      attemptNumber = (countRow?.count || 0) + 1
-    }
-    const progressId = progress ? progress.id : (stateMachineResult.progressId || 0)
-    const artifactResult = run(
-      'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
-      progressId,
-      artifactText.trim(),
-      JSON.stringify(scores),
-      passed ? 1 : 0,
-      JSON.stringify(feedback),
-      attemptNumber,
-    )
 
     // Record streak when artifact completes the lesson
     if (stateMachineResult.toState === 'passed' || stateMachineResult.toState === 'tested_out') {
