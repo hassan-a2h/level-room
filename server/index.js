@@ -18,7 +18,6 @@ const __dirname = path.dirname(__filename)
 initSchema()
 
 const app = express()
-app.use(express.json())
 
 // Allow CORS from the dev frontend
 app.use((_req, res, next) => {
@@ -27,6 +26,9 @@ app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   next()
 })
+
+app.use('/api/settings/codex', express.json({ limit: '16kb' }))
+app.use(express.json())
 
 // Global error handler for malformed JSON and other errors
 app.use((err, _req, res, next) => {
@@ -50,6 +52,7 @@ app.use('/api', streakRouter)
 app.use('/api/data', dataRouter)
 
 const PORT = process.env.PORT || 3200
-app.listen(PORT, () => {
+const HOST = process.env.HOST || '127.0.0.1'
+app.listen(PORT, HOST, () => {
   console.log(`API server running on http://localhost:${PORT}`)
 })
