@@ -1,29 +1,70 @@
 const API_BASE = 'http://localhost:3200'
 
+async function settingsRequest(path, options) {
+  const res = await fetch(`${API_BASE}/api/settings${path}`, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
+}
+
 export function getLocalDate() {
   return new Date().toLocaleDateString('en-CA')
 }
 
 export async function getSettings() {
-  const res = await fetch(`${API_BASE}/api/settings`)
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res.json()
+  return settingsRequest('')
 }
 
-export async function saveSettings({ provider, model }) {
-  const res = await fetch(`${API_BASE}/api/settings`, {
+export async function getProviderCatalog() {
+  return settingsRequest('/catalog')
+}
+
+export async function saveSettings({ provider, model, reasoningEffort = 'none' }) {
+  return settingsRequest('', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider, model }),
+    body: JSON.stringify({ provider, model, reasoningEffort }),
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
+}
+
+export async function getCodexConnection() {
+  return settingsRequest('/codex/connection')
+}
+
+export async function startCodexLogin(mode = 'browser') {
+  return settingsRequest('/codex/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+}
+
+export async function getCodexLoginStatus(flowId) {
+  return settingsRequest(`/codex/flow/${encodeURIComponent(flowId)}`)
+}
+
+export async function submitCodexManualCode(flowId, code) {
+  return settingsRequest(`/codex/flow/${encodeURIComponent(flowId)}/code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  })
+}
+
+export async function cancelCodexLogin(flowId) {
+  return settingsRequest(`/codex/flow/${encodeURIComponent(flowId)}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+}
+
+export async function disconnectCodex() {
+  return settingsRequest('/codex/disconnect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
 }
 
 // Dashboard / Topics API
@@ -114,16 +155,38 @@ export async function getSetupQuestions(topicId) {
   return res.json()
 }
 
-export async function saveProfile(topicId, { level, timeCommitment }) {
+export async function saveProfile(topicId, { level, timeCommitment, selfReportedLevel, placementAssessmentId } = {}) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/profile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ level, timeCommitment }),
+    body: JSON.stringify({ level, timeCommitment, selfReportedLevel, placementAssessmentId }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     throw new Error(body.error || `HTTP ${res.status}`)
   }
+  return body
+}
+
+export async function startPlacementAssessment(topicId, level) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/placement/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
+}
+
+export async function submitPlacementAssessment(topicId, assessmentId, answers) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/placement/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assessmentId, answers }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
   return body
 }
 
