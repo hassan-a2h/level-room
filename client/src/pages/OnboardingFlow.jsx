@@ -5,11 +5,17 @@ import {
   getSetupQuestions,
   saveProfile,
   generateCurriculum,
+  regenerateCurriculum,
   confirmCurriculum,
   getSettings,
+  startPlacementAssessment,
+  submitPlacementAssessment,
 } from '../api.js'
+import { readCurriculumStream } from '../curriculumStream.js'
+import { normalizeSetupQuestions } from '../setupQuestions.js'
 import CurriculumConfirmation from './CurriculumConfirmation.jsx'
 import { SkeletonOnboarding } from '../components/Skeleton.jsx'
+import AppHeader from '../components/AppHeader.jsx'
 
 function sanitizeTopic(name) {
   // Basic XSS sanitization: strip script tags and dangerous attributes
@@ -27,18 +33,25 @@ export default function OnboardingFlow() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [questions, setQuestions] = useState([])
+  const [questionsLoading, setQuestionsLoading] = useState(false)
   const [answers, setAnswers] = useState({})
+  const [placementAssessmentId, setPlacementAssessmentId] = useState(null)
+  const [placementQuestions, setPlacementQuestions] = useState([])
+  const [placementAnswers, setPlacementAnswers] = useState({})
+  const [placementResult, setPlacementResult] = useState(null)
+  const [placementLoading, setPlacementLoading] = useState(false)
+  const [placementPhase, setPlacementPhase] = useState('')
   const [generating, setGenerating] = useState(false)
   const [curriculum, setCurriculum] = useState(null)
   const [llmConfigured, setLlmConfigured] = useState(true)
-  const sseRef = useRef(null)
+  const skipAutoGenerationRef = useRef(false)
 
   // Check LLM configuration on mount
   useEffect(() => {
     async function check() {
       try {
         const settings = await getSettings()
-        if (!settings.apiKeySet) {
+        if (!(settings.ready ?? settings.apiKeySet)) {
           setLlmConfigured(false)
         }
       } catch {
@@ -78,11 +91,16 @@ export default function OnboardingFlow() {
 
   const loadQuestions = useCallback(async () => {
     if (!topicId) return
+    setQuestionsLoading(true)
+    setError('')
     try {
       const data = await getSetupQuestions(topicId)
-      setQuestions(data.questions || [])
+      setQuestions(normalizeSetupQuestions(data.questions))
     } catch (err) {
       setError(err.message || 'Failed to load setup questions.')
+      setQuestions([])
+    } finally {
+      setQuestionsLoading(false)
     }
   }, [topicId])
 
@@ -95,6 +113,30 @@ export default function OnboardingFlow() {
   const handleAnswerChange = (questionIndex, value) => {
     setAnswers((prev) => ({ ...prev, [questionIndex]: value }))
   }
+
+  const startPlacement = useCallback(async (level) => {
+    setPlacementLoading(true)
+    setPlacementPhase('starting')
+    setPlacementResult(null)
+    setPlacementQuestions([])
+    setPlacementAnswers({})
+    setError('')
+    setStep('depth_check')
+    try {
+      const data = await startPlacementAssessment(topicId, level)
+      if (!Number.isInteger(data.assessmentId) || !Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error('The placement check was incomplete. Please retry.')
+      }
+      setPlacementAssessmentId(data.assessmentId)
+      setPlacementQuestions(data.questions)
+      setPlacementPhase('')
+    } catch (err) {
+      setError(err.message || 'Failed to start the placement check. Please retry.')
+      setPlacementPhase('')
+    } finally {
+      setPlacementLoading(false)
+    }
+  }, [topicId])
 
   const handleProfileSubmit = useCallback(async () => {
     setError('')
@@ -111,6 +153,11 @@ export default function OnboardingFlow() {
     const level = answers[0] || 'Beginner'
     const timeCommitment = answers[1] || '30 min/day'
 
+    if (level !== 'Beginner') {
+      await startPlacement(level)
+      return
+    }
+
     setSubmitting(true)
     try {
       await saveProfile(topicId, { level, timeCommitment })
@@ -120,7 +167,49 @@ export default function OnboardingFlow() {
     } finally {
       setSubmitting(false)
     }
-  }, [topicId, questions, answers])
+  }, [topicId, questions, answers, startPlacement])
+
+  const handlePlacementAnswerChange = useCallback((questionId, value) => {
+    setPlacementAnswers((prev) => ({ ...prev, [questionId]: value }))
+  }, [])
+
+  const handlePlacementSubmit = useCallback(async () => {
+    if (placementQuestions.some((question) => typeof placementAnswers[question.id] !== 'string' || !placementAnswers[question.id].trim())) {
+      setError('Please answer every placement question.')
+      return
+    }
+    setPlacementLoading(true)
+    setPlacementPhase('evaluating')
+    setError('')
+    try {
+      const result = await submitPlacementAssessment(topicId, placementAssessmentId, placementAnswers)
+      setPlacementResult(result)
+    } catch (err) {
+      setError(err.message || 'Failed to evaluate the placement check. Please retry.')
+    } finally {
+      setPlacementLoading(false)
+      setPlacementPhase('')
+    }
+  }, [topicId, placementAssessmentId, placementQuestions, placementAnswers])
+
+  const handlePlacementConfirm = useCallback(async () => {
+    if (!placementResult) return
+    setSubmitting(true)
+    setError('')
+    try {
+      await saveProfile(topicId, {
+        level: placementResult.recommendedLevel,
+        selfReportedLevel: placementResult.requestedLevel,
+        timeCommitment: answers[1] || '30 min/day',
+        placementAssessmentId: placementResult.assessmentId,
+      })
+      setStep('generating')
+    } catch (err) {
+      setError(err.message || 'Failed to save your verified profile.')
+    } finally {
+      setSubmitting(false)
+    }
+  }, [topicId, placementResult, answers])
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true)
@@ -128,37 +217,7 @@ export default function OnboardingFlow() {
     setCurriculum(null)
     try {
       const res = await generateCurriculum(topicId)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-      }
-
-      // Parse SSE events
-      const lines = buffer.split('\n')
-      let fullText = ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const payload = line.slice(6)
-          if (payload === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(payload)
-            if (typeof parsed === 'string') {
-              fullText += parsed
-            }
-          } catch {
-            // ignore malformed lines
-          }
-        }
-      }
-
-      // Clean markdown fences
-      fullText = fullText.replace(/```json/g, '').replace(/```/g, '').trim()
-      const parsed = JSON.parse(fullText)
+      const parsed = await readCurriculumStream(res)
       setCurriculum(parsed)
       setStep('confirmation')
     } catch (err) {
@@ -171,6 +230,10 @@ export default function OnboardingFlow() {
 
   useEffect(() => {
     if (step === 'generating') {
+      if (skipAutoGenerationRef.current) {
+        skipAutoGenerationRef.current = false
+        return
+      }
       handleGenerate()
     }
   }, [step, handleGenerate])
@@ -213,43 +276,12 @@ export default function OnboardingFlow() {
   )
 
   const handleRegenerate = useCallback(async () => {
+    skipAutoGenerationRef.current = true
     setStep('generating')
-    setCurriculum(null)
     setError('')
     try {
-      const res = await fetch(`http://localhost:3200/api/topics/${topicId}/curriculum/regenerate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      })
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-      }
-
-      const lines = buffer.split('\n')
-      let fullText = ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const payload = line.slice(6)
-          if (payload === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(payload)
-            if (typeof parsed === 'string') {
-              fullText += parsed
-            }
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      fullText = fullText.replace(/```json/g, '').replace(/```/g, '').trim()
-      const parsed = JSON.parse(fullText)
+      const res = await regenerateCurriculum(topicId)
+      const parsed = await readCurriculumStream(res)
       setCurriculum(parsed)
       setStep('confirmation')
     } catch (err) {
@@ -261,36 +293,48 @@ export default function OnboardingFlow() {
   const handleBack = () => {
     if (step === 'setup_questions') {
       setStep('topic_input')
+    } else if (step === 'depth_check') {
+      setStep('setup_questions')
     } else if (step === 'confirmation') {
       setStep('setup_questions')
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">Mastery Roadmap</h1>
-        </div>
-      </header>
+  const stageLabels = ['Topic', 'Setup', 'Generation', 'Review']
+  const stageByStep = { topic_input: 0, setup_questions: 1, depth_check: 1, generating: 2, confirmation: 3 }
+  const currentStage = stageByStep[step]
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
+  return (
+    <div className="ui-page min-h-screen">
+      <AppHeader />
+
+      <main className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        <nav className="ui-step-navigation mb-8" aria-label="Learning path setup">
+          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide mb-3">Step {currentStage + 1} of 4</p>
+          <ol className="ui-step-list">
+            {stageLabels.map((label, index) => (
+              <li key={label} aria-label={label} aria-current={currentStage === index ? 'step' : undefined} className={currentStage === index ? 'is-current' : index < currentStage ? 'is-complete' : ''}>
+                <span className="ui-step-marker" aria-hidden="true">{index < currentStage ? '✓' : index + 1}</span>
+                <span>{label}</span>
+              </li>
+            ))}
+          </ol>
+        </nav>
         {/* LLM not configured banner */}
         {!llmConfigured && (
-          <div className="mb-6 rounded-lg bg-yellow-50 border border-yellow-200 p-4 text-sm text-yellow-800" role="alert">
-            You need an API key to generate lessons.
+          <div className="ui-alert ui-alert-warning mb-6" role="alert">
+            Connect an LLM provider in Settings to generate lessons.
             <button
               onClick={() => navigate('/settings')}
               className="ml-2 underline font-medium"
             >
-              Go to Settings → LLM to add one
+              Go to Settings → LLM Configuration
             </button>
           </div>
         )}
 
-        {error && (
-          <div className="mb-6 rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700" role="alert">
+        {error && step !== 'topic_input' && step !== 'confirmation' && (
+          <div className="ui-alert ui-alert-danger mb-6" role="alert">
             {error}
             {step === 'generating' && (
               <div className="mt-2">
@@ -308,24 +352,28 @@ export default function OnboardingFlow() {
         {/* Step 1: Topic Input */}
         {step === 'topic_input' && (
           <div className="flex flex-col items-center justify-center min-h-[50vh]">
-            <h2 className="text-3xl font-bold text-gray-900 mb-2">What do you want to learn?</h2>
-            <p className="text-gray-600 mb-8 text-center max-w-md">
+            <h1 className="text-3xl font-bold ui-text mb-2">What do you want to learn?</h1>
+            <p className="ui-text-secondary mb-8 text-center max-w-md">
               Enter any topic — React, Calculus, Negotiation, Japanese — and we will build a personalized learning path.
             </p>
             <form onSubmit={handleTopicSubmit} className="w-full max-w-md">
               <div className="flex flex-col gap-2">
+                <label htmlFor="topic-name" className="ui-field-label">Topic</label>
                 <input
+                  id="topic-name"
                   type="text"
                   value={topicName}
                   onChange={(e) => setTopicName(e.target.value)}
                   placeholder="Enter a topic (e.g., React, Calculus)"
                   maxLength={100}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
+                  className="ui-field w-full"
                   disabled={submitting}
+                  aria-invalid={Boolean(error && step === 'topic_input')}
+                  aria-describedby={error && step === 'topic_input' ? 'topic-error' : undefined}
                   autoFocus
                 />
                 {error && step === 'topic_input' && (
-                  <p className="text-sm text-red-600" role="alert">
+                  <p id="topic-error" className="text-sm text-red-600" role="alert">
                     {error}
                   </p>
                 )}
@@ -344,35 +392,65 @@ export default function OnboardingFlow() {
         {/* Step 2: Setup Questions */}
         {step === 'setup_questions' && (
           <div className="flex flex-col items-center justify-center min-h-[50vh]">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2 max-w-full truncate">Quick setup for {topicName}</h2>
-            <p className="text-gray-600 mb-6 text-center max-w-md">
+            <h1 className="text-2xl font-bold ui-text mb-2 max-w-full break-words">Quick setup for {topicName}</h1>
+            <p className="ui-text-secondary mb-6 text-center max-w-md">
               Answer 1–2 quick questions so we can tailor your learning path.
             </p>
 
             <div className="w-full max-w-md space-y-6">
               {questions.map((q, i) => (
-                <div key={i} className="bg-white rounded-lg border border-gray-200 p-4">
+                <div key={i} className="ui-panel p-4">
                   <p className="font-medium text-gray-900 mb-3">{q.text}</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2" role="group" aria-label={q.text}>
                     {q.options.map((opt) => (
                       <button
-                        key={opt}
-                        onClick={() => handleAnswerChange(i, opt)}
+                        key={opt.value}
+                        type="button"
+                        onClick={() => handleAnswerChange(i, opt.value)}
+                        aria-pressed={answers[i] === opt.value}
                         className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                          answers[i] === opt
-                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                          answers[i] === opt.value
+                            ? 'ui-choice is-selected'
                             : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                         }`}
                       >
-                        {opt}
+                        {opt.label}
+                        {answers[i] === opt.value && <span className="ml-2" aria-hidden="true">✓</span>}
                       </button>
                     ))}
                   </div>
                 </div>
               ))}
 
-              {questions.length === 0 && (
-                <div className="text-gray-500 text-center">Loading questions...</div>
+              {questionsLoading && (
+                <div className="text-gray-500 text-center" role="status">Loading questions...</div>
+              )}
+
+              {!questionsLoading && questions.length === 0 && error && (
+                <div className="ui-panel p-4 text-center">
+                  <p className="ui-text-secondary text-sm mb-3">We could not load the setup questions.</p>
+                  <button
+                    type="button"
+                    onClick={loadQuestions}
+                    className="ui-button ui-button-secondary"
+                  >
+                    Retry questions
+                  </button>
+                </div>
+              )}
+
+              {!questionsLoading && questions.length > 0 && error && answers[0] && answers[0] !== 'Beginner' && (
+                <div className="ui-panel p-4 text-center">
+                  <p className="ui-text-secondary text-sm mb-3">The level check did not start.</p>
+                  <button
+                    type="button"
+                    onClick={() => startPlacement(answers[0])}
+                    disabled={placementLoading}
+                    className="ui-button ui-button-secondary"
+                  >
+                    Retry placement check
+                  </button>
+                </div>
               )}
 
               <div className="flex items-center gap-3">
@@ -384,7 +462,7 @@ export default function OnboardingFlow() {
                 </button>
                 <button
                   onClick={handleProfileSubmit}
-                  disabled={submitting || questions.length === 0}
+                  disabled={submitting || questionsLoading || placementLoading || questions.length === 0}
                   className="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {submitting ? 'Saving...' : 'Continue'}
@@ -394,12 +472,125 @@ export default function OnboardingFlow() {
           </div>
         )}
 
+        {/* Setup sub-step: verify a claimed Intermediate/Advanced level. */}
+        {step === 'depth_check' && (
+          <div className="flex flex-col items-center justify-center min-h-[50vh]">
+            <h1 className="text-2xl font-bold ui-text mb-2 max-w-full break-words">Let&apos;s verify your {answers[0]} level</h1>
+            <p className="ui-text-secondary mb-6 text-center max-w-lg">
+              Answer a few practical questions. Your result helps us start at the right depth; it will not delete or change any existing learning.
+            </p>
+
+            <div className="w-full max-w-2xl space-y-5">
+              {placementResult ? (
+                <div className="ui-panel p-5" role="status" aria-live="polite">
+                  <h2 className="text-lg font-bold ui-text mb-2">
+                    {placementResult.passed ? 'Level confirmed' : 'We found a better starting point'}
+                  </h2>
+                  <p className="ui-text-secondary mb-3">
+                    Score: <strong>{placementResult.score}%</strong>. We recommend starting at <strong>{placementResult.recommendedLevel}</strong>.
+                  </p>
+                  {placementResult.gaps?.length > 0 && (
+                    <ul className="list-disc list-inside text-sm ui-text-secondary mb-3 space-y-1">
+                      {placementResult.gaps.map((gap, index) => <li key={index}>{gap}</li>)}
+                    </ul>
+                  )}
+                  {placementResult.feedback?.length > 0 && (
+                    <p className="text-sm ui-text-secondary mb-4">{placementResult.feedback[0]}</p>
+                  )}
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={handlePlacementConfirm}
+                      disabled={submitting}
+                      className="ui-button ui-button-primary"
+                    >
+                      {submitting ? 'Saving...' : `Continue with ${placementResult.recommendedLevel}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startPlacement(answers[0])}
+                      disabled={placementLoading || submitting}
+                      className="ui-button ui-button-secondary"
+                    >
+                      Try another check
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {placementQuestions.map((question, index) => (
+                    <div key={question.id} className="ui-panel p-4">
+                      <p className="font-medium ui-text mb-3">{index + 1}. {question.text}</p>
+                      {question.type === 'multiple_choice' ? (
+                        <div className="flex flex-wrap gap-2" role="group" aria-label={question.text}>
+                          {(question.options || []).map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => handlePlacementAnswerChange(question.id, option.value)}
+                              aria-pressed={placementAnswers[question.id] === option.value}
+                              className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                                placementAnswers[question.id] === option.value
+                                  ? 'ui-choice is-selected'
+                                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <textarea
+                          aria-label={question.text}
+                          value={placementAnswers[question.id] || ''}
+                          onChange={(event) => handlePlacementAnswerChange(question.id, event.target.value)}
+                          rows={4}
+                          maxLength={2000}
+                          placeholder="Explain your reasoning in your own words..."
+                          className="ui-field w-full resize-none"
+                          disabled={placementLoading}
+                        />
+                      )}
+                    </div>
+                  ))}
+
+                  {placementLoading && <div className="text-gray-500 text-center" role="status">
+                    {placementPhase === 'starting' ? 'Preparing your level check...' : 'Checking your level...'}
+                  </div>}
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleBack} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                      Back
+                    </button>
+                    {placementQuestions.length === 0 && error && !placementLoading ? (
+                      <button
+                        type="button"
+                        onClick={() => startPlacement(answers[0])}
+                        className="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                      >
+                        Retry placement check
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handlePlacementSubmit}
+                        disabled={placementLoading || placementQuestions.length === 0}
+                        className="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {placementLoading ? 'Checking...' : 'Check my level'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Step 3: Generating */}
         {step === 'generating' && (
           <div className="flex flex-col items-center justify-center min-h-[50vh]">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4" />
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Designing your learning path...</h2>
-            <p className="text-gray-600 text-center max-w-md text-sm sm:text-base">
+            <div className="ui-spinner mb-4" role="status" aria-label="Generating your learning path" />
+            <h1 className="text-xl font-bold ui-text mb-2">Designing your learning path...</h1>
+            <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base">
               Our AI tutor is building a personalized curriculum with modules, lessons, and skill checks.
               This takes about 30–60 seconds.
             </p>
