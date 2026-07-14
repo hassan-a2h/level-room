@@ -1,16 +1,19 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useId } from 'react'
 
-function LessonCard({ lesson, onTestOut }) {
+function LessonCard({ lesson }) {
   const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 transition-shadow hover:shadow-sm">
+    <div className="ui-surface-flat rounded-lg border border-gray-200 p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setExpanded((v) => !v)}
             className="text-gray-500 hover:text-gray-700 focus:outline-none"
             aria-label={expanded ? 'Collapse lesson details' : 'Expand lesson details'}
+            aria-expanded={expanded}
+            aria-controls={detailsId}
           >
             {expanded ? '▼' : '▶'}
           </button>
@@ -26,19 +29,11 @@ function LessonCard({ lesson, onTestOut }) {
               📝 Artifact
             </span>
           )}
-          {onTestOut && (
-            <button
-              onClick={() => onTestOut(lesson)}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 underline"
-            >
-              ⚡ Test Out
-            </button>
-          )}
         </div>
       </div>
 
       {expanded && (
-        <div className="mt-3 pl-6 text-sm text-gray-700 space-y-2">
+        <div id={detailsId} className="mt-3 pl-6 text-sm text-gray-700 space-y-2">
           <div>
             <span className="font-medium text-gray-900">Outcomes:</span>
             <ul className="list-disc list-inside mt-1 space-y-0.5">
@@ -82,8 +77,8 @@ export default function CurriculumConfirmation({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Your Learning Path</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold ui-text">Your Learning Path</h1>
         <button
           onClick={onBack}
           className="text-sm text-gray-500 hover:text-gray-700 underline"
@@ -93,7 +88,7 @@ export default function CurriculumConfirmation({
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700" role="alert">
+        <div className="ui-alert ui-alert-danger" role="alert">
           {error}
         </div>
       )}
@@ -102,7 +97,7 @@ export default function CurriculumConfirmation({
         {modules.map((mod, mi) => (
           <div key={mi} className="space-y-3">
             <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold">
+              <span className="ui-module-number inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-bold">
                 {mi + 1}
               </span>
               {mod.title}
@@ -112,7 +107,6 @@ export default function CurriculumConfirmation({
                 <LessonCard
                   key={lesson.id || lesson.title}
                   lesson={lesson}
-                  onTestOut={() => {}}
                 />
               ))}
             </div>
@@ -121,7 +115,7 @@ export default function CurriculumConfirmation({
       </div>
 
       {/* Actions */}
-      <div className="flex flex-col gap-3 pt-4 border-t border-gray-200">
+      <div className="ui-curriculum-actions flex flex-col gap-3 pt-4 border-t border-gray-200">
         {!showTweakInput && (
           <div className="flex flex-wrap gap-3">
             <button
