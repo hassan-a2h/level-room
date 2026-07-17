@@ -30,6 +30,7 @@ describe('ArtifactPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Submit Artifact/i })).toBeInTheDocument()
     })
+    expect(screen.getByRole('textbox', { name: /artifact submission/i })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Paste your code/i)).toBeInTheDocument()
     expect(screen.getByText(/Evaluation Rubric/i)).toBeInTheDocument()
   })
@@ -111,6 +112,8 @@ describe('ArtifactPanel', () => {
     expect(screen.getByText(/Completeness/i)).toBeInTheDocument()
     expect(screen.getByText(/Clarity/i)).toBeInTheDocument()
     expect(screen.getByText(/Edge Cases/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/2\/2 — Strong/i)).toHaveLength(2)
+    expect(screen.getAllByText(/2\/2 — Strong/i).every((badge) => badge.dataset.status === 'success')).toBe(true)
   })
 
   it('shows failure state with revise option', async () => {
