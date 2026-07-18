@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react'
 import { startQuiz, getQuiz, submitQuiz, getLocalDate } from '../api.js'
 import RemediationPanel from './RemediationPanel.jsx'
 import { SkeletonQuiz } from '../components/Skeleton.jsx'
+import StatusBadge from './ui/StatusBadge.jsx'
+import ProgressBar from './ui/ProgressBar.jsx'
 
 const TYPE_LABELS = {
   Recall: 'Recall',
@@ -20,51 +22,49 @@ const TYPE_WEIGHTS = {
 }
 
 function CorrectnessBadge({ correctness }) {
-  const styles = {
-    correct: 'bg-green-100 text-green-800',
-    partial: 'bg-yellow-100 text-yellow-800',
-    incorrect: 'bg-red-100 text-red-800',
-  }
   const labels = {
     correct: 'Correct',
     partial: 'Partial',
     incorrect: 'Incorrect',
   }
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[correctness] || styles.incorrect}`}>
-      {labels[correctness] || correctness}
-    </span>
-  )
+  const status = { correct: 'success', partial: 'warning', incorrect: 'danger' }[correctness] || 'danger'
+  return <StatusBadge status={status}>{labels[correctness] || correctness}</StatusBadge>
 }
 
 function QuestionCard({ question, answer, onAnswerChange, index, total, disabled, feedback }) {
+  const questionId = `quiz-question-${question.id}`
+  const hasAnswer = Boolean(answer?.trim())
   return (
-    <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
-      <div className="flex items-center justify-between mb-2">
+    <section className="ui-panel mb-6 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <span className="text-xs font-medium text-gray-500">Question {index + 1} of {total}</span>
-        <span className="text-xs font-medium text-gray-400">
-          {TYPE_LABELS[question.type] || question.type} (×{TYPE_WEIGHTS[question.type] || 1})
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-gray-400">
+            {TYPE_LABELS[question.type] || question.type} (×{TYPE_WEIGHTS[question.type] || 1})
+          </span>
+          {!feedback && <StatusBadge status={hasAnswer ? 'progress' : 'neutral'}>{hasAnswer ? 'Answered' : 'Not answered'}</StatusBadge>}
+        </div>
       </div>
-      <p className="text-sm font-medium text-gray-900 mb-3">{question.text}</p>
+      <p id={questionId} className="text-sm font-medium ui-text mb-3">{question.text}</p>
       <textarea
+        aria-labelledby={questionId}
         value={answer || ''}
         onChange={(e) => onAnswerChange(question.id, e.target.value)}
         placeholder="Type your answer here..."
         disabled={disabled}
         rows={4}
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+        className="ui-field w-full resize-none disabled:cursor-not-allowed"
       />
       {feedback && (
-        <div className="mt-3 rounded-lg bg-gray-50 p-3">
+        <div className="ui-surface ui-surface-inset mt-3 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1">
             <CorrectnessBadge correctness={feedback.correctness} />
-            <span className="text-xs text-gray-500">Score: {feedback.score}</span>
+            <span className="text-xs ui-text-muted">Score: {feedback.score}</span>
           </div>
-          <p className="text-sm text-gray-700">{feedback.explanation}</p>
+          <p className="text-sm ui-text-secondary">{feedback.explanation}</p>
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -72,34 +72,34 @@ function EvaluationResult({ evaluation, onBack, onRetry, onStartRemediation }) {
   const isPass = evaluation.passed
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
-      <div className={`rounded-xl border p-6 mb-6 ${isPass ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+      <section className={`ui-alert ${isPass ? 'ui-alert-success' : 'ui-alert-danger'} mb-6`} aria-live="polite">
         <div className="flex items-center gap-3 mb-2">
-          <div className={`text-3xl ${isPass ? 'text-green-600' : 'text-red-600'}`}>
+          <div className="text-3xl ui-text">
             {isPass ? '✅' : '❌'}
           </div>
           <div>
-            <h2 className={`text-lg font-bold ${isPass ? 'text-green-900' : 'text-red-900'}`}>
+            <h2 className="text-lg font-bold ui-text">
               {isPass ? 'You passed!' : 'Not quite — let\'s look at the gaps'}
             </h2>
-            <p className={`text-sm ${isPass ? 'text-green-700' : 'text-red-700'}`}>
+            <p className="text-sm ui-text-secondary">
               Overall score: <span className="font-semibold">{evaluation.overallScore}%</span>
               {evaluation.criticalGap && (
-                <span className="ml-2 font-medium">Critical gap detected</span>
+                <span className="ml-2"><StatusBadge status="warning">Critical gap detected</StatusBadge></span>
               )}
             </p>
           </div>
         </div>
         {evaluation.gaps && evaluation.gaps.length > 0 && (
           <div className="mt-3">
-            <p className="text-sm font-medium text-gray-700 mb-1">Identified gaps:</p>
-            <ul className="list-disc list-inside text-sm text-gray-700 space-y-0.5">
+            <p className="text-sm font-medium ui-text-secondary mb-1">Identified gaps:</p>
+            <ul className="list-disc list-inside text-sm ui-text-secondary space-y-0.5">
               {evaluation.gaps.map((gap, idx) => (
                 <li key={idx}>{gap}</li>
               ))}
             </ul>
           </div>
         )}
-      </div>
+      </section>
 
       <div className="space-y-4">
         {evaluation.feedback && evaluation.feedback.map((fb) => {
@@ -296,6 +296,13 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
           <h2 className="text-lg font-bold text-gray-900">Quiz</h2>
           <span className="text-xs text-gray-500">{questions.length} questions</span>
         </div>
+
+        <ProgressBar
+          value={questions.filter((question) => typeof answers[question.id] === 'string' && answers[question.id].trim()).length}
+          max={questions.length}
+          label="Quiz questions answered"
+          className="mb-5"
+        />
 
         {error && (
           <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4" role="alert">
