@@ -96,7 +96,7 @@ describe('QuizPanel', () => {
       questions: [
         { id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 },
       ],
-      answers: {},
+      answers: { removedQuestion: 'An old answer from a previous quiz version.' },
       evaluation: null,
     })
 
@@ -107,9 +107,13 @@ describe('QuizPanel', () => {
     })
 
     const textarea = screen.getByPlaceholderText(/type your answer/i)
+    expect(screen.getByRole('progressbar', { name: 'Quiz questions answered' })).toHaveAttribute('aria-valuenow', '0')
+    expect(screen.getByText('Not answered')).toHaveAttribute('data-status', 'neutral')
     fireEvent.change(textarea, { target: { value: 'JSX is JavaScript XML.' } })
 
     expect(textarea.value).toBe('JSX is JavaScript XML.')
+    expect(screen.getByRole('progressbar', { name: 'Quiz questions answered' })).toHaveAttribute('aria-valuenow', '1')
+    expect(screen.getByText('Answered')).toHaveAttribute('data-status', 'progress')
   })
 
   it('disables submit when no answers filled', async () => {
@@ -158,6 +162,7 @@ describe('QuizPanel', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/type your answer/i)).toBeInTheDocument()
     })
+    expect(screen.getByRole('textbox', { name: /what is jsx/i })).toBeInTheDocument()
 
     const textarea = screen.getByPlaceholderText(/type your answer/i)
     fireEvent.change(textarea, { target: { value: 'JSX is JavaScript XML.' } })
@@ -168,6 +173,7 @@ describe('QuizPanel', () => {
       expect(screen.getByText(/you passed/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/85%/)).toBeInTheDocument()
+    expect(screen.getByText('Correct')).toHaveAttribute('data-status', 'success')
   })
 
   it('submits answers and shows remediation panel on fail', async () => {
