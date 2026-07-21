@@ -4,6 +4,7 @@ import { getLesson, sendChatMessage, continueLesson, getQuiz } from '../api.js'
 import QuizPanel from './QuizPanel.jsx'
 import ArtifactPanel from './ArtifactPanel.jsx'
 import { SkeletonLesson } from '../components/Skeleton.jsx'
+import AppHeader from './AppHeader.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
@@ -19,11 +20,6 @@ function LessonHeader({ lesson, progress, interactionMode, onSubmitArtifact }) {
 
   return (
     <div className="border-b border-gray-200 bg-white px-4 py-3 shrink-0">
-      <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
-        <span>{lesson.module_title}</span>
-        <span>/</span>
-        <span className="font-medium text-gray-900">{lesson.title}</span>
-      </div>
       <div className="flex items-center gap-3 flex-wrap">
         {lesson.depth && (
           <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
@@ -126,10 +122,11 @@ function ChatMessage({ message, isStreaming }) {
       <div
         className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
           isUser
-            ? 'bg-indigo-600 text-white rounded-br-md'
-            : 'bg-gray-100 text-gray-900 rounded-bl-md'
+            ? 'ui-message ui-message-user rounded-br-md'
+            : 'ui-message ui-message-tutor rounded-bl-md'
         }`}
       >
+        <span className="sr-only">{isUser ? 'You: ' : 'Tutor: '}</span>
         {message.content}
         {isStreaming && (
           <span className="inline-block ml-1 w-1.5 h-4 bg-current opacity-50 animate-pulse" />
@@ -142,11 +139,11 @@ function ChatMessage({ message, isStreaming }) {
 function TypingIndicator() {
   return (
     <div className="flex justify-start mb-3">
-      <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-2.5">
+      <div className="ui-message ui-message-tutor rounded-2xl rounded-bl-md px-4 py-2.5" role="status" aria-label="Tutor is responding">
         <div className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce opacity-70" style={{ animationDelay: '0ms' }} />
+          <span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce opacity-70" style={{ animationDelay: '150ms' }} />
+          <span className="w-1.5 h-1.5 bg-current rounded-full animate-bounce opacity-70" style={{ animationDelay: '300ms' }} />
         </div>
       </div>
     </div>
@@ -181,6 +178,68 @@ function CheckUnderstandingPrompt({ onStartQuiz }) {
       </button>
     </div>
   )
+}
+
+function EmptyLessonState({ lesson, onBegin }) {
+  return (
+    <div className="ui-chat-empty flex flex-col items-center justify-center text-center py-12 px-4">
+      <div className="text-4xl mb-3" aria-hidden="true">🌱</div>
+      <h2 className="text-lg font-semibold ui-text mb-2">Ready to begin {lesson.title}?</h2>
+      <p className="ui-text-secondary text-sm max-w-md mb-5">
+        Start with a guided overview, or ask the tutor a question about this lesson.
+      </p>
+      <button
+        type="button"
+        onClick={onBegin}
+        className="ui-button ui-button-primary"
+        aria-label="Begin lesson"
+      >
+        Begin lesson
+      </button>
+    </div>
+  )
+}
+
+async function readSSEText(body, onText, onReader) {
+  if (!body || typeof body.getReader !== 'function') {
+    throw new Error('The tutor response was unavailable. Please retry.')
+  }
+
+  const reader = body.getReader()
+  onReader?.(reader)
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let fullText = ''
+
+  const processLine = (line) => {
+    if (!line.startsWith('data: ')) return
+    const raw = line.slice(6)
+    let parsed
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return
+    }
+    if (parsed === '[DONE]') return
+    if (parsed && typeof parsed === 'object') {
+      throw new Error(typeof parsed.message === 'string' ? parsed.message : 'The tutor response could not be completed. Please retry.')
+    }
+    if (typeof parsed !== 'string') return
+    fullText += parsed
+    onText(fullText)
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    lines.forEach(processLine)
+  }
+  buffer += decoder.decode()
+  if (buffer) processLine(buffer)
+  return fullText
 }
 
 export default function LessonChat() {
@@ -255,8 +314,9 @@ export default function LessonChat() {
     scrollToBottom()
   }, [messages, streamText, scrollToBottom])
 
-  const handleSend = useCallback(async () => {
-    const trimmed = input.trim()
+  const handleSend = useCallback(async (message = input) => {
+    const requestedMessage = typeof message === 'string' ? message : input
+    const trimmed = requestedMessage.trim()
     if (!trimmed || trimmed.length > MAX_MESSAGE_LENGTH) return
     if (isStreaming) return
 
@@ -268,32 +328,9 @@ export default function LessonChat() {
 
     try {
       const res = await sendChatMessage(topicId, lessonId, trimmed)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let fullText = ''
-
-      abortRef.current = reader
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6)
-          try {
-            const parsed = JSON.parse(raw)
-            if (parsed === '[DONE]') continue
-            fullText += parsed
-            setStreamText(fullText)
-          } catch {
-            // ignore malformed lines
-          }
-        }
-      }
+      const fullText = await readSSEText(res.body, setStreamText, (reader) => {
+        abortRef.current = reader
+      })
 
       if (fullText.trim()) {
         setMessages((prev) => [...prev, { role: 'assistant', content: fullText.trim(), id: Date.now() }])
@@ -308,6 +345,10 @@ export default function LessonChat() {
     }
   }, [input, isStreaming, topicId, lessonId])
 
+  const handleBeginLesson = useCallback(() => {
+    handleSend('Begin this lesson with a concise overview, then give me the first practical task.')
+  }, [handleSend])
+
   const handleContinue = useCallback(async () => {
     if (isStreaming) return
     setIsStreaming(true)
@@ -316,32 +357,9 @@ export default function LessonChat() {
 
     try {
       const res = await continueLesson(topicId, lessonId)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let fullText = ''
-
-      abortRef.current = reader
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6)
-          try {
-            const parsed = JSON.parse(raw)
-            if (parsed === '[DONE]') continue
-            fullText += parsed
-            setStreamText(fullText)
-          } catch {
-            // ignore malformed lines
-          }
-        }
-      }
+      const fullText = await readSSEText(res.body, setStreamText, (reader) => {
+        abortRef.current = reader
+      })
 
       if (fullText.trim()) {
         setMessages((prev) => [...prev, { role: 'assistant', content: fullText.trim(), id: Date.now() }])
@@ -379,6 +397,10 @@ export default function LessonChat() {
   const lastMessageIsAssistant = messages.length > 0 && messages[messages.length - 1].role === 'assistant'
   const showContinue = !isStreaming && !isFinalChunk && lastMessageIsAssistant && progress?.state === 'practicing'
   const showQuizPrompt = !isStreaming && isFinalChunk && lastMessageIsAssistant && progress?.state === 'practicing'
+  const apiKeyError = error.toLowerCase().includes('api key')
+  const lessonDetail = [lesson?.module_title, progress?.total_chunks ? `Part ${progress.current_chunk || 0} of ${progress.total_chunks}` : null]
+    .filter(Boolean)
+    .join(' · ')
 
   const handleStartQuiz = useCallback(() => {
     setQuizMode(true)
@@ -400,18 +422,8 @@ export default function LessonChat() {
 
   if (locked && lesson) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <header className="bg-white border-b border-gray-200">
-          <div className="max-w-3xl mx-auto px-4 py-3 flex items-center">
-            <button
-              onClick={() => navigate('/')}
-              className="text-sm text-gray-600 hover:text-gray-900 mr-4"
-            >
-              ← Dashboard
-            </button>
-            <h1 className="text-lg font-bold text-gray-900">Lesson</h1>
-          </div>
-        </header>
+      <div className="ui-page min-h-screen">
+        <AppHeader variant="focus" title={lesson.title} detail={lesson.module_title} returnTo="/" returnLabel="Dashboard" />
         <main className="max-w-3xl mx-auto">
           <LockedView lesson={lesson} prerequisites={prerequisites} onBack={() => navigate('/')} />
         </main>
@@ -420,19 +432,8 @@ export default function LessonChat() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 shrink-0">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center">
-          <button
-            onClick={() => navigate('/')}
-            className="text-sm text-gray-600 hover:text-gray-900 mr-4 shrink-0"
-          >
-            ← Dashboard
-          </button>
-          <h1 className="text-base sm:text-lg font-bold text-gray-900 truncate">Lesson</h1>
-        </div>
-      </header>
+    <div className="ui-page min-h-screen flex flex-col">
+      <AppHeader variant="focus" title={lesson?.title || 'Lesson'} detail={lessonDetail} returnTo="/" returnLabel="Dashboard" />
 
       {/* Lesson metadata */}
       {lesson && (
@@ -440,9 +441,9 @@ export default function LessonChat() {
       )}
 
       {/* No LLM key configured warning */}
-      {error && error.toLowerCase().includes('api key') && (
+      {apiKeyError && (
         <div className="max-w-3xl mx-auto px-4 mt-3 w-full">
-          <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-700" role="alert">
+          <div className="ui-alert ui-alert-warning flex flex-wrap items-center gap-2" role="alert">
             <span>{error}</span>
             <button
               onClick={() => navigate('/settings')}
@@ -455,13 +456,13 @@ export default function LessonChat() {
       )}
 
       {/* Error banner */}
-      {error && (
+      {error && !apiKeyError && (
         <div className="max-w-3xl mx-auto px-4 mt-3 w-full">
-          <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 flex items-center justify-between" role="alert">
+          <div className="ui-alert ui-alert-danger flex items-center justify-between gap-3" role="alert">
             <span>{error}</span>
             <button
               onClick={() => setError('')}
-              className="text-red-700 hover:text-red-900 text-xs ml-2"
+              className="text-xs ml-2 underline ui-text-link"
             >
               Dismiss
             </button>
@@ -478,6 +479,9 @@ export default function LessonChat() {
           {/* Chat area */}
           <div className="flex-1 overflow-y-auto px-4 py-4" role="log" aria-live="polite" aria-label="Lesson chat">
             <div className="max-w-3xl mx-auto">
+              {messages.length === 0 && !isStreaming && lesson && ['not_started', 'practicing'].includes(progress?.state) && (
+                <EmptyLessonState lesson={lesson} onBegin={handleBeginLesson} />
+              )}
               {messages.map((msg, idx) => (
                 <ChatMessage
                   key={msg.id || idx}
@@ -503,7 +507,7 @@ export default function LessonChat() {
           </div>
 
           {/* Input area */}
-          <div className="border-t border-gray-200 bg-white px-4 py-3 shrink-0">
+          <div className="ui-composer border-t border-gray-200 bg-white px-4 py-3 shrink-0">
             <div className="max-w-3xl mx-auto flex items-end gap-2">
               <div className="flex-1 relative">
                 <textarea
