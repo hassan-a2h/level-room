@@ -1,24 +1,18 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { getRemediationState, sendRemediateChat, startRetest, submitQuiz, deferLesson, getLocalDate } from '../api.js'
+import StatusBadge from './ui/StatusBadge.jsx'
+import ProgressBar from './ui/ProgressBar.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
 function CorrectnessBadge({ correctness }) {
-  const styles = {
-    correct: 'bg-green-100 text-green-800',
-    partial: 'bg-yellow-100 text-yellow-800',
-    incorrect: 'bg-red-100 text-red-800',
-  }
   const labels = {
     correct: 'Correct',
     partial: 'Partial',
     incorrect: 'Incorrect',
   }
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[correctness] || styles.incorrect}`}>
-      {labels[correctness] || correctness}
-    </span>
-  )
+  const status = { correct: 'success', partial: 'warning', incorrect: 'danger' }[correctness] || 'danger'
+  return <StatusBadge status={status}>{labels[correctness] || correctness}</StatusBadge>
 }
 
 function ChatMessage({ message, isStreaming }) {
@@ -28,12 +22,13 @@ function ChatMessage({ message, isStreaming }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <div
-        className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+        className={`ui-message max-w-[85%] sm:max-w-[75%] rounded-2xl border px-4 py-2.5 text-sm leading-relaxed ${
           isUser
-            ? 'bg-indigo-600 text-white rounded-br-md'
-            : 'bg-gray-100 text-gray-900 rounded-bl-md'
+            ? 'ui-message-user rounded-br-md'
+            : 'ui-message-tutor rounded-bl-md'
         }`}
       >
+        <span className="sr-only">{isUser ? 'You' : 'Tutor'}: </span>
         {message.content}
         {isStreaming && (
           <span className="inline-block ml-1 w-1.5 h-4 bg-current opacity-50 animate-pulse" />
@@ -45,7 +40,7 @@ function ChatMessage({ message, isStreaming }) {
 
 function TypingIndicator() {
   return (
-    <div className="flex justify-start mb-3">
+    <div className="flex justify-start mb-3" role="status" aria-label="Tutor is thinking">
       <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-2.5">
         <div className="flex items-center gap-1">
           <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -58,59 +53,65 @@ function TypingIndicator() {
 }
 
 function QuestionCard({ question, answer, onAnswerChange, index, total, disabled, feedback }) {
+  const questionId = `remediation-question-${question.id}`
+  const hasAnswer = Boolean(answer?.trim())
   return (
-    <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
-      <div className="flex items-center justify-between mb-2">
+    <section className="ui-panel mb-6 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <span className="text-xs font-medium text-gray-500">Question {index + 1} of {total}</span>
-        <span className="text-xs font-medium text-gray-400">
-          {question.type} (×{question.weight})
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-gray-400">
+            {question.type} (×{question.weight})
+          </span>
+          {!feedback && <StatusBadge status={hasAnswer ? 'progress' : 'neutral'}>{hasAnswer ? 'Answered' : 'Not answered'}</StatusBadge>}
+        </div>
       </div>
-      <p className="text-sm font-medium text-gray-900 mb-3">{question.text}</p>
+      <p id={questionId} className="text-sm font-medium ui-text mb-3">{question.text}</p>
       <textarea
+        aria-labelledby={questionId}
         value={answer || ''}
         onChange={(e) => onAnswerChange(question.id, e.target.value)}
         placeholder="Type your answer here..."
         disabled={disabled}
         rows={4}
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+        className="ui-field w-full resize-none disabled:cursor-not-allowed"
       />
       {feedback && (
-        <div className="mt-3 rounded-lg bg-gray-50 p-3">
+        <div className="ui-surface ui-surface-inset mt-3 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1">
             <CorrectnessBadge correctness={feedback.correctness} />
-            <span className="text-xs text-gray-500">Score: {feedback.score}</span>
+            <span className="text-xs ui-text-muted">Score: {feedback.score}</span>
           </div>
-          <p className="text-sm text-gray-700">{feedback.explanation}</p>
+          <p className="text-sm ui-text-secondary">{feedback.explanation}</p>
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
 function DiagnosticBanner({ gaps, attemptNumber }) {
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-4 mb-4">
+    <section className="ui-alert ui-alert-warning mb-4">
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xl">🔍</span>
-        <h3 className="text-sm font-bold text-red-900">Diagnostic Feedback</h3>
+        <h3 className="text-sm font-bold ui-text">Diagnostic Feedback</h3>
       </div>
-      <p className="text-sm text-red-800 mb-2">
+      <p className="text-sm ui-text-secondary mb-2">
         {attemptNumber === 1
           ? "Not quite — let's look at where the gap is."
           : "Still struggling — let's figure out the best next step."}
       </p>
       {gaps && gaps.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-red-800 mb-1">Specific gaps identified:</p>
-          <ul className="list-disc list-inside text-sm text-red-700 space-y-0.5">
+          <p className="text-xs font-semibold ui-text-secondary mb-1">Specific gaps identified:</p>
+          <ul className="list-disc list-inside text-sm ui-text-secondary space-y-0.5">
             {gaps.map((gap, idx) => (
               <li key={idx}>{gap}</li>
             ))}
           </ul>
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -118,34 +119,34 @@ function RetestEvaluation({ evaluation, onBack, onRetry, onReteach, onPrereq, on
   const isPass = evaluation.passed
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
-      <div className={`rounded-xl border p-6 mb-6 ${isPass ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+      <section className={`ui-alert ${isPass ? 'ui-alert-success' : 'ui-alert-danger'} mb-6`} aria-live="polite">
         <div className="flex items-center gap-3 mb-2">
-          <div className={`text-3xl ${isPass ? 'text-green-600' : 'text-red-600'}`}>
+          <div className="text-3xl ui-text">
             {isPass ? '✅' : '❌'}
           </div>
           <div>
-            <h2 className={`text-lg font-bold ${isPass ? 'text-green-900' : 'text-red-900'}`}>
+            <h2 className="text-lg font-bold ui-text">
               {isPass ? 'You passed!' : 'Not quite — let\'s look at the gaps'}
             </h2>
-            <p className={`text-sm ${isPass ? 'text-green-700' : 'text-red-700'}`}>
+            <p className="text-sm ui-text-secondary">
               Overall score: <span className="font-semibold">{evaluation.overallScore}%</span>
               {evaluation.criticalGap && (
-                <span className="ml-2 font-medium">Critical gap detected</span>
+                <span className="ml-2"><StatusBadge status="warning">Critical gap detected</StatusBadge></span>
               )}
             </p>
           </div>
         </div>
         {evaluation.gaps && evaluation.gaps.length > 0 && (
           <div className="mt-3">
-            <p className="text-sm font-medium text-gray-700 mb-1">Identified gaps:</p>
-            <ul className="list-disc list-inside text-sm text-gray-700 space-y-0.5">
+            <p className="text-sm font-medium ui-text-secondary mb-1">Identified gaps:</p>
+            <ul className="list-disc list-inside text-sm ui-text-secondary space-y-0.5">
               {evaluation.gaps.map((gap, idx) => (
                 <li key={idx}>{gap}</li>
               ))}
             </ul>
           </div>
         )}
-      </div>
+      </section>
 
       <div className="space-y-4">
         {evaluation.feedback && evaluation.feedback.map((fb) => {
@@ -177,8 +178,8 @@ function RetestEvaluation({ evaluation, onBack, onRetry, onReteach, onPrereq, on
         ) : (
           <>
             {attemptNumber >= 2 ? (
-              <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-semibold text-amber-900 mb-3">
+              <div className="ui-alert ui-alert-warning w-full">
+                <p className="text-sm font-semibold ui-text mb-3">
                   You\'ve tried a few times. What would you like to do?
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
@@ -438,8 +439,15 @@ export default function RemediationPanel({
             <span className="text-xs text-gray-500">{questions.length} questions</span>
           </div>
 
+          <ProgressBar
+            value={questions.filter((question) => typeof answers[question.id] === 'string' && answers[question.id].trim()).length}
+            max={questions.length}
+            label="Retest questions answered"
+            className="mb-5"
+          />
+
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4" role="alert">
+            <div className="ui-alert ui-alert-danger mb-4" role="alert">
               {error}
             </div>
           )}
@@ -478,7 +486,7 @@ export default function RemediationPanel({
         <DiagnosticBanner gaps={gaps} attemptNumber={attemptNumber} />
 
         {error && (
-          <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-3" role="alert">
+          <div className="ui-alert ui-alert-danger mb-3" role="alert">
             {error}
           </div>
         )}
@@ -531,18 +539,19 @@ export default function RemediationPanel({
       </div>
 
       {/* Chat input */}
-      <div className="border-t border-gray-200 bg-white px-4 py-3 shrink-0">
+      <div className="ui-composer border-t border-gray-200 bg-white px-4 py-3 shrink-0">
         <div className="max-w-3xl mx-auto flex items-end gap-2">
           <div className="flex-1 relative">
             <textarea
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              aria-label="Ask the tutor a question"
               placeholder="Type a message..."
               rows={1}
               maxLength={MAX_MESSAGE_LENGTH}
               disabled={isStreaming}
-              className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              className="ui-field w-full resize-none disabled:cursor-not-allowed"
               style={{ minHeight: '44px', maxHeight: '120px' }}
             />
             <div className="absolute right-2 bottom-2 text-[10px] text-gray-400 pointer-events-none">
