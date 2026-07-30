@@ -1,0 +1,405 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+SCRIPT_PATH="$(realpath -e "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname -- "$SCRIPT_PATH")"
+REPO_DIR="$(realpath -e "$SCRIPT_DIR/.." 2>/dev/null || true)"
+SUPERVISOR="$SCRIPT_DIR/learning-supervisor"
+USER_ID="$(id -u)"
+RUNTIME_BASE="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+RUNTIME_DIR="${LEARNING_RUNTIME_DIR:-$RUNTIME_BASE/learning-roadmap-learning-$USER_ID}"
+META_FILE="$RUNTIME_DIR/process.meta"
+LOCK_FILE="$RUNTIME_DIR/control.lock"
+LOG_FILE="$RUNTIME_DIR/app.log"
+BACKEND_URL="${LEARNING_BACKEND_URL:-http://127.0.0.1:3200/health}"
+FRONTEND_URL="${LEARNING_FRONTEND_URL:-http://127.0.0.1:3201/}"
+START_TIMEOUT_MS=30000
+STOP_TIMEOUT_MS=10000
+FORCE_TIMEOUT_MS=2000
+POLL_INTERVAL=0.25
+
+META_PID=''
+META_PGID=''
+META_START_TICKS=''
+META_REPO=''
+META_STARTED_AT=''
+
+usage() {
+  cat <<'EOF'
+Usage: learning {start|status|stop}
+
+Commands:
+  learning start   Start the frontend and backend
+  learning status  Show live process and service status
+  learning stop    Stop this app's process group
+EOF
+}
+
+print_service_urls() {
+  printf 'Frontend: http://localhost:3201\n'
+  printf 'Backend:  http://localhost:3200\n'
+}
+
+fail() {
+  local code="$1"
+  shift
+  printf 'learning: %s\n' "$*" >&2
+  exit "$code"
+}
+
+now_ms() {
+  date +%s%3N
+}
+
+runtime_error() {
+  fail 2 "$1"
+}
+
+ensure_runtime_dir() {
+  if [[ -L "$RUNTIME_DIR" ]]; then
+    runtime_error "runtime directory is a symlink: $RUNTIME_DIR"
+  fi
+  if [[ -e "$RUNTIME_DIR" && ! -d "$RUNTIME_DIR" ]]; then
+    runtime_error "runtime path is not a directory: $RUNTIME_DIR"
+  fi
+  mkdir -p -- "$RUNTIME_DIR" || runtime_error "cannot create runtime directory: $RUNTIME_DIR"
+  chmod 700 -- "$RUNTIME_DIR" || runtime_error "cannot secure runtime directory: $RUNTIME_DIR"
+  [[ ! -L "$RUNTIME_DIR" ]] || runtime_error "runtime directory became a symlink"
+  [[ "$(stat -c '%u' -- "$RUNTIME_DIR")" == "$USER_ID" ]] || runtime_error "runtime directory is not owned by the current user"
+  [[ "$(stat -c '%a' -- "$RUNTIME_DIR")" == '700' ]] || runtime_error "runtime directory permissions are not 700"
+  realpath -e -- "$RUNTIME_DIR" >/dev/null || runtime_error "runtime directory cannot be resolved"
+}
+
+acquire_lock() {
+  [[ ! -L "$LOCK_FILE" ]] || runtime_error "control lock is a symlink: $LOCK_FILE"
+  if [[ -e "$LOCK_FILE" && "$(stat -c '%u' -- "$LOCK_FILE")" != "$USER_ID" ]]; then
+    runtime_error "control lock is not owned by the current user"
+  fi
+  exec 9>"$LOCK_FILE" || runtime_error "cannot open control lock: $LOCK_FILE"
+  chmod 600 -- "$LOCK_FILE" || runtime_error "cannot secure control lock: $LOCK_FILE"
+  flock -n 9 || fail 3 "another learning command is already running"
+}
+
+require_tools() {
+  local tool
+  for tool in "$@"; do
+    command -v "$tool" >/dev/null 2>&1 || fail 2 "required command is missing: $tool"
+  done
+}
+
+require_repo() {
+  [[ -n "$REPO_DIR" && -d "$REPO_DIR" ]] || fail 2 "repository checkout is missing; rerun ./scripts/install-learning"
+  [[ -f "$REPO_DIR/package.json" ]] || fail 2 "package.json is missing from $REPO_DIR"
+  [[ -x "$SUPERVISOR" ]] || fail 2 "supervisor is missing or not executable: $SUPERVISOR"
+  [[ -x "$REPO_DIR/node_modules/.bin/concurrently" ]] || fail 2 "dependencies are not installed; run npm install"
+  [[ -x "$REPO_DIR/node_modules/.bin/vite" ]] || fail 2 "dependencies are not installed; run npm install"
+}
+
+prepare_log() {
+  if [[ -L "$LOG_FILE" ]]; then
+    runtime_error "log path is a symlink: $LOG_FILE"
+  fi
+  if [[ -e "$LOG_FILE" && "$(stat -c '%u' -- "$LOG_FILE")" != "$USER_ID" ]]; then
+    runtime_error "log file is not owned by the current user"
+  fi
+  : >"$LOG_FILE" || runtime_error "cannot create log file: $LOG_FILE"
+  chmod 600 -- "$LOG_FILE" || runtime_error "cannot secure log file: $LOG_FILE"
+}
+
+write_metadata() {
+  local temp
+  temp="$(mktemp "$RUNTIME_DIR/process.meta.XXXXXX")" || return 1
+  chmod 600 -- "$temp" || return 1
+  {
+    printf 'pid=%s\n' "$META_PID"
+    printf 'pgid=%s\n' "$META_PGID"
+    printf 'start_ticks=%s\n' "$META_START_TICKS"
+    printf 'repo=%s\n' "$REPO_DIR"
+    printf 'started_at=%s\n' "$META_STARTED_AT"
+  } >"$temp" || return 1
+  mv -f -- "$temp" "$META_FILE" || return 1
+}
+
+read_metadata() {
+  local line key value
+  local pid_seen=0 pgid_seen=0 ticks_seen=0 repo_seen=0 started_seen=0
+  [[ -f "$META_FILE" && ! -L "$META_FILE" ]] || return 1
+  META_PID=''
+  META_PGID=''
+  META_START_TICKS=''
+  META_REPO=''
+  META_STARTED_AT=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == *=* ]] || return 1
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      pid) META_PID="$value"; pid_seen=1 ;;
+      pgid) META_PGID="$value"; pgid_seen=1 ;;
+      start_ticks) META_START_TICKS="$value"; ticks_seen=1 ;;
+      repo) META_REPO="$value"; repo_seen=1 ;;
+      started_at) META_STARTED_AT="$value"; started_seen=1 ;;
+      *) return 1 ;;
+    esac
+  done <"$META_FILE"
+  (( pid_seen && pgid_seen && ticks_seen && repo_seen && started_seen )) || return 1
+  [[ "$META_PID" =~ ^[0-9]+$ ]] || return 1
+  [[ "$META_PGID" =~ ^[0-9]+$ ]] || return 1
+  [[ "$META_START_TICKS" =~ ^[0-9]+$ ]] || return 1
+  [[ "$META_STARTED_AT" =~ ^[0-9]+$ ]] || return 1
+  [[ -n "$META_REPO" ]] || return 1
+}
+
+process_start_ticks() {
+  awk '{ print $22 }' "/proc/$1/stat" 2>/dev/null
+}
+
+process_pgid() {
+  ps -o pgid= -p "$1" 2>/dev/null | tr -d ' '
+}
+
+process_command_line() {
+  tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null
+}
+
+process_has_argument() {
+  local expected="$1" argument
+  while IFS= read -r -d '' argument; do
+    [[ "$argument" == "$expected" ]] && return 0
+  done <"/proc/$2/cmdline"
+  return 1
+}
+
+identity_valid() {
+  read_metadata || return 1
+  [[ -d "/proc/$META_PID" ]] || return 1
+  [[ "$(process_start_ticks "$META_PID")" == "$META_START_TICKS" ]] || return 1
+  [[ "$(process_pgid "$META_PID")" == "$META_PGID" ]] || return 1
+  [[ "$(ps -o stat= -p "$META_PID" 2>/dev/null)" != *Z* ]] || return 1
+  process_has_argument "$SUPERVISOR" "$META_PID" || return 1
+  process_has_argument "$META_REPO" "$META_PID" || return 1
+}
+
+group_alive() {
+  [[ "$META_PGID" =~ ^[0-9]+$ ]] || return 1
+  ps -eo pgid=,stat= 2>/dev/null | awk -v pgid="$META_PGID" '$1 == pgid && $2 !~ /^Z/ { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+port_in_use() {
+  [[ -n "$(ss -H -ltn "sport = :$1" 2>/dev/null || true)" ]]
+}
+
+listeners_exist() {
+  port_in_use 3200 || port_in_use 3201
+}
+
+backend_healthy() {
+  local response status body
+  response="$(curl --silent --show-error --max-time 2 --write-out $'\nlearning-status:%{http_code}' "$BACKEND_URL" 2>/dev/null)" || return 1
+  status="${response##*$'\nlearning-status:'}"
+  body="${response%$'\nlearning-status:'*}"
+  [[ "$status" == 200 ]] || return 1
+  printf '%s' "$body" | jq -e '.status == "ok"' >/dev/null 2>&1
+}
+
+frontend_healthy() {
+  local status
+  status="$(curl --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "$FRONTEND_URL" 2>/dev/null)" || return 1
+  [[ "$status" =~ ^2[0-9][0-9]$ || "$status" =~ ^3[0-9][0-9]$ ]]
+}
+
+remove_metadata() {
+  rm -f -- "$META_FILE"
+}
+
+terminate_validated_group() {
+  local deadline
+  identity_valid || return 1
+  group_alive || return 0
+  kill -TERM -- "-$META_PGID" 2>/dev/null || return 1
+  deadline=$(( $(now_ms) + STOP_TIMEOUT_MS ))
+  while group_alive && (( $(now_ms) < deadline )); do
+    sleep "$POLL_INTERVAL"
+  done
+  if group_alive; then
+    identity_valid || return 1
+    kill -KILL -- "-$META_PGID" 2>/dev/null || return 1
+    deadline=$(( $(now_ms) + FORCE_TIMEOUT_MS ))
+    while group_alive && (( $(now_ms) < deadline )); do
+      sleep "$POLL_INTERVAL"
+    done
+  fi
+  ! group_alive
+}
+
+cleanup_untracked_supervisor() {
+  local pid="$1" command_line
+  [[ "$pid" =~ ^[0-9]+$ && -d "/proc/$pid" ]] || return 0
+  command_line="$(process_command_line "$pid")"
+  [[ "$command_line" == *"$SUPERVISOR"* && "$command_line" == *"$REPO_DIR"* ]] || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+status_command() {
+  local backend=0 frontend=0 uptime_ms
+  ensure_runtime_dir
+  acquire_lock
+  require_tools flock curl jq ps ss
+
+  if [[ ! -e "$META_FILE" ]]; then
+    backend_healthy && backend=1 || true
+    frontend_healthy && frontend=1 || true
+    if ! listeners_exist; then
+      printf 'stopped backend=down frontend=down\n'
+      return 0
+    elif (( backend && frontend )); then
+      printf 'unmanaged backend=ok frontend=ok\n'
+      return 1
+    else
+      printf 'conflict backend=%s frontend=%s\n' "$([[ $backend == 1 ]] && echo ok || echo down)" "$([[ $frontend == 1 ]] && echo ok || echo down)"
+      return 3
+    fi
+  fi
+
+  if ! read_metadata; then
+    printf 'stale metadata\n'
+    remove_metadata
+    return 1
+  fi
+
+  if ! identity_valid; then
+    if listeners_exist; then
+      printf 'orphaned backend=%s frontend=%s\n' "$([[ $(backend_healthy; echo $?) == 0 ]] && echo ok || echo down)" "$([[ $(frontend_healthy; echo $?) == 0 ]] && echo ok || echo down)"
+      return 1
+    fi
+    printf 'crashed\n'
+    remove_metadata
+    return 1
+  fi
+
+  backend_healthy && backend=1 || true
+  frontend_healthy && frontend=1 || true
+  uptime_ms=$(( $(now_ms) - META_STARTED_AT ))
+  if (( backend && frontend )); then
+    printf 'running backend=ok frontend=ok pid=%s\n' "$META_PID"
+    return 0
+  elif (( uptime_ms < START_TIMEOUT_MS )); then
+    printf 'starting backend=%s frontend=%s pid=%s\n' "$([[ $backend == 1 ]] && echo ok || echo down)" "$([[ $frontend == 1 ]] && echo ok || echo down)" "$META_PID"
+    return 1
+  fi
+  printf 'degraded backend=%s frontend=%s pid=%s log=%s\n' "$([[ $backend == 1 ]] && echo ok || echo down)" "$([[ $frontend == 1 ]] && echo ok || echo down)" "$META_PID" "$LOG_FILE"
+  return 1
+}
+
+start_command() {
+  local pid pgid deadline
+  ensure_runtime_dir
+  acquire_lock
+  require_tools npm node setsid flock curl jq ps ss
+  require_repo
+
+  if [[ -e "$META_FILE" ]] && identity_valid; then
+    printf 'already running pid=%s\n' "$META_PID"
+    print_service_urls
+    return 0
+  fi
+  [[ ! -e "$META_FILE" ]] || remove_metadata
+  if listeners_exist; then
+    fail 3 'port conflict: 3200 or 3201 is already listening'
+  fi
+
+  prepare_log
+  setsid "$SUPERVISOR" "$REPO_DIR" 9>&- >>"$LOG_FILE" 2>&1 &
+  pid=$!
+  pgid="$(process_pgid "$pid")"
+  if ! [[ "$pid" =~ ^[0-9]+$ && "$pgid" =~ ^[0-9]+$ ]]; then
+    cleanup_untracked_supervisor "$pid"
+    fail 1 "could not identify supervisor; see $LOG_FILE"
+  fi
+  META_PID="$pid"
+  META_PGID="$pgid"
+  META_START_TICKS="$(process_start_ticks "$pid")"
+  META_REPO="$REPO_DIR"
+  META_STARTED_AT="$(now_ms)"
+  if ! [[ "$META_START_TICKS" =~ ^[0-9]+$ ]]; then
+    cleanup_untracked_supervisor "$pid"
+    fail 1 "could not record supervisor identity; see $LOG_FILE"
+  fi
+  if ! write_metadata; then
+    cleanup_untracked_supervisor "$pid"
+    fail 1 "could not write process metadata; see $LOG_FILE"
+  fi
+
+  deadline=$(( $(now_ms) + START_TIMEOUT_MS ))
+  while (( $(now_ms) < deadline )); do
+    if ! identity_valid; then
+      printf 'degraded log=%s\n' "$LOG_FILE" >&2
+      remove_metadata
+      return 1
+    fi
+    if backend_healthy && frontend_healthy; then
+      printf 'running backend=ok frontend=ok pid=%s\n' "$META_PID"
+      print_service_urls
+      return 0
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  printf 'degraded startup timed out log=%s\n' "$LOG_FILE" >&2
+  terminate_validated_group || true
+  remove_metadata
+  return 1
+}
+
+stop_command() {
+  ensure_runtime_dir
+  acquire_lock
+  require_tools flock ps ss
+
+  if [[ ! -e "$META_FILE" ]]; then
+    if listeners_exist; then
+      printf 'orphaned or unmanaged listeners remain\n' >&2
+      return 1
+    fi
+    printf 'already stopped\n'
+    return 0
+  fi
+  if ! read_metadata; then
+    remove_metadata
+    printf 'already stopped\n'
+    return 0
+  fi
+  if ! identity_valid; then
+    if listeners_exist; then
+      printf 'orphaned process group; refusing unsafe signal\n' >&2
+      return 1
+    fi
+    remove_metadata
+    printf 'already stopped\n'
+    return 0
+  fi
+  if terminate_validated_group; then
+    remove_metadata
+    printf 'stopped\n'
+    return 0
+  fi
+  printf 'process group remains; see %s\n' "$LOG_FILE" >&2
+  return 1
+}
+
+main() {
+  case "${1:-}" in
+    start) start_command ;;
+    status) status_command ;;
+    stop) stop_command ;;
+    --help|-h)
+      usage
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+}
+
+main "$@"
