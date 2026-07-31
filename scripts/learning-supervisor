@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_dir="${1:?repository path is required}"
+cd -- "$repo_dir"
+
+child_pid=''
+
+cleanup_child() {
+  if [[ "$child_pid" =~ ^[0-9]+$ ]]; then
+    kill -TERM "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+}
+
+trap cleanup_child TERM INT HUP
+npm run dev &
+child_pid=$!
+wait "$child_pid"
+exit_code=$?
+trap - TERM INT HUP
+exit "$exit_code"
