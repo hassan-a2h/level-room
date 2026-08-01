@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+script_path="$(realpath -e "${BASH_SOURCE[0]}")"
+script_dir="$(dirname -- "$script_path")"
+repo_dir="$(realpath -e "$script_dir/.." 2>/dev/null || true)"
+[[ -n "$repo_dir" && -x "$repo_dir/scripts/learning" ]] || {
+  printf 'learning installer: repository command is missing\n' >&2
+  exit 2
+}
+
+home_dir="${HOME:?HOME is not set}"
+bin_dir="$home_dir/.local/bin"
+mkdir -p -- "$bin_dir"
+chmod 755 -- "$bin_dir"
+[[ "$(stat -c '%u' -- "$bin_dir")" == "$(id -u)" ]] || {
+  printf 'learning installer: %s is not owned by the current user\n' "$bin_dir" >&2
+  exit 2
+}
+
+wrapper="$bin_dir/learning"
+temp="$(mktemp "$bin_dir/.learning.XXXXXX")"
+quoted_repo="$(printf '%q' "$repo_dir")"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
+  printf 'repo_dir=%s\n' "$quoted_repo"
+  printf '%s\n' 'if [[ ! -x "$repo_dir/scripts/learning" ]]; then' '  printf "learning: checkout is missing; rerun ./scripts/install-learning\\n" >&2' '  exit 2' 'fi'
+  printf '%s\n' 'exec "$repo_dir/scripts/learning" "$@"'
+} >"$temp"
+chmod 755 -- "$temp"
+mv -f -- "$temp" "$wrapper"
+
+case ":${PATH:-}:" in
+  *":$bin_dir:"*)
+    printf 'installed learning at %s\n' "$wrapper"
+    ;;
+  *)
+    printf 'installed learning at %s\n' "$wrapper"
+    printf 'add this directory to PATH: %s\n' "$bin_dir"
+    ;;
+esac
