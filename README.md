@@ -32,6 +32,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 - **Streak Tracking:** Consecutive-day activity tracking with backlog detection after 7+ days inactive.
 - **Mistakes Log & Adaptive Difficulty:** Recurring errors tracked; difficulty auto-adjusts based on performance.
 - **Data Export/Import:** Full JSON backup and restore of all learning data.
+- **Codex Subscription Provider (Experimental):** In-process OAuth sign-in with browser and device-code flows, model and reasoning choices, and local disconnect.
 - **Responsive Design:** Usable from 375px mobile to 1280px+ desktop.
 - **Error Boundaries & Offline Indicators:** Friendly error UI and backend connectivity monitoring.
 
@@ -41,7 +42,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 |-------|------------|
 | Frontend | React 19 + Vite + React Router + Tailwind CSS |
 | Backend | Express 4 + better-sqlite3 |
-| LLM | Vercel AI SDK (`ai` + `@ai-sdk/openai` + `@ai-sdk/anthropic`) — Fireworks via OpenAI-compatible endpoint |
+| LLM | Vercel AI SDK for API-key providers; in-process Pi AI provider for experimental Codex subscription sign-in |
 | Testing | Vitest + Supertest + React Testing Library |
 | Styling | Tailwind CSS v4 |
 
@@ -50,7 +51,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 - **Node.js** v25.9.0 or later
 - **npm** v11.12.1 or later
 - **SQLite** v3.53.0 or later (system-wide, for `better-sqlite3` compilation)
-- An API key from one of the supported LLM providers (see [LLM Provider Setup](#llm-provider-setup))
+- An API key from an API-billed provider or a ChatGPT account eligible for Codex sign-in (see [LLM Provider Setup](#llm-provider-setup))
 
 ## Setup
 
@@ -74,7 +75,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
    npm test
    ```
 
-   All backend and frontend tests should pass (309 backend + 88 frontend tests).
+   All backend and frontend tests should pass.
 
 ## Running the App
 
@@ -87,6 +88,26 @@ npm run dev
 This starts both services concurrently:
 - **Backend API:** `http://localhost:3200`
 - **Frontend dev server:** `http://localhost:3201`
+
+### Quick control from any directory
+
+Install the `learning` command once from the repository:
+
+```bash
+./scripts/install-learning
+```
+
+Then control both development services without changing directories:
+
+```bash
+learning start
+learning status
+learning stop
+```
+
+The command tracks only this checkout's process group. Logs and lifecycle
+metadata are stored outside the repository. If `~/.local/bin` is not already
+on `PATH`, the installer prints the required shell export.
 
 ### Backend only
 
@@ -125,31 +146,56 @@ PORT=3200          # backend API port
 CLIENT_PORT=3201   # frontend dev server port
 ```
 
-**Note:** API keys are NOT stored in `.env`. They are entered via the Settings UI and persisted in the SQLite `llm_settings` table.
+API keys stay outside the learning database. Set any API-key provider credentials in the environment before starting the server:
+
+```bash
+OPENAI_API_KEY=your-openai-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
+FIREWORKS_API_KEY=your-fireworks-api-key
+```
+
+The Settings page reports whether each environment variable is present; it never accepts or returns key values. A connected Codex subscription can be used without an API key.
 
 ## LLM Provider Setup
 
-Before generating lessons, you must configure an LLM provider in the app's Settings page (`http://localhost:3201/settings`):
+Choose a provider in the app's Settings page (`http://localhost:3201/settings`). API-key providers use their respective platform API billing. Codex subscription sign-in uses the ChatGPT/Codex plan quota where eligible; OpenAI API-key billing is separate.
 
 ### OpenAI
 1. Get an API key from [platform.openai.com](https://platform.openai.com)
-2. In Settings, select **OpenAI** as the provider
-3. Choose a model: `gpt-4o`, `gpt-4o-mini`, or `o3-mini`
-4. Paste your API key and click **Save Settings**
+2. Set `OPENAI_API_KEY` in the environment before starting the server
+3. In Settings, select **OpenAI API key** as the provider
+4. Choose a model: `gpt-4o`, `gpt-4o-mini`, or `o3-mini`, then click **Save Settings**
 
 ### Anthropic
 1. Get an API key from [console.anthropic.com](https://console.anthropic.com)
-2. In Settings, select **Anthropic** as the provider
-3. Choose a model: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`, or `claude-3-haiku-20240307`
-4. Paste your API key and click **Save Settings**
+2. Set `ANTHROPIC_API_KEY` in the environment before starting the server
+3. In Settings, select **Anthropic API key** as the provider
+4. Choose a model: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`, or `claude-3-haiku-20240307`, then click **Save Settings**
 
 ### Fireworks
 1. Get an API key from [fireworks.ai](https://fireworks.ai)
-2. In Settings, select **Fireworks** as the provider
-3. Choose a model: `accounts/fireworks/models/llama-v3p1-70b-instruct` or `accounts/fireworks/models/llama-v3p1-8b-instruct`
-4. Paste your API key and click **Save Settings**
+2. Set `FIREWORKS_API_KEY` in the environment before starting the server
+3. In Settings, select **Fireworks API key** as the provider
+4. Choose a model: `accounts/fireworks/models/llama-v3p1-70b-instruct`, `accounts/fireworks/models/llama-v3p1-8b-instruct`, or the Kimi router, then click **Save Settings**
 
-The app validates the key with a test API call before saving. Invalid keys show a clear error without crashing.
+### OpenAI Codex subscription (experimental)
+
+1. In Settings, choose **OpenAI Codex subscription**.
+2. Select an available Codex model and one of its listed reasoning levels.
+3. Select **Connect with browser**. If local browser callback setup is unavailable, or the browser flow cannot finish, use the device-code or manual-code option.
+4. Return to the app and save the provider settings.
+
+This integration uses the Pi AI provider's in-process OAuth and Responses implementation. It does not invoke Codex CLI or Pi CLI and does not use an OpenAI API key. OpenAI does not document a general-purpose third-party OAuth API for this flow; the integration depends on an unofficial/private backend path and may stop working as OpenAI changes it. It is intended for personal local use. If it is unavailable, switch to OpenAI API, Anthropic API, or Fireworks API credentials.
+
+Pi OAuth credentials are stored separately from SQLite and JSON backups in an app-owned, owner-protected file:
+
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/roadmap-learning/codex-auth.json`
+- macOS: `~/Library/Application Support/roadmap-learning/codex-auth.json`
+- Windows: `%LOCALAPPDATA%\roadmap-learning\codex-auth.json`
+
+Disconnect removes the local credential data. It does not claim to revoke the authorization remotely. Backups include the selected provider, model, and reasoning level, but never OAuth tokens or account metadata; restoring a Codex selection on another machine requires signing in there.
+
+Switching providers changes the model used for future AI operations. It does not change saved roadmaps, lesson order, progress, chat history, attempts, spaced-repetition records, artifacts, or mistakes. New generated text can differ by model.
 
 ## Testing
 
@@ -167,7 +213,7 @@ This runs backend tests first, then frontend tests.
 npm run test:backend
 ```
 
-Runs 309+ tests covering API routes, database operations, state machine logic, SRS scheduling, streak tracking, and LLM client adapters.
+Runs the backend suite covering API routes, database operations, state machine logic, SRS scheduling, streak tracking, and LLM client adapters.
 
 ### Frontend tests only
 
@@ -175,7 +221,7 @@ Runs 309+ tests covering API routes, database operations, state machine logic, S
 npm run test:frontend
 ```
 
-Runs 88+ tests covering React components, user interactions, and API integration.
+Runs the frontend suite covering React components, user interactions, themes, and API integration.
 
 ### Lint & Typecheck
 
