@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import OfflineIndicator from '../components/OfflineIndicator.jsx'
 
 describe('OfflineIndicator', () => {
@@ -36,6 +36,7 @@ describe('OfflineIndicator', () => {
     })
     expect(screen.getByText(/cannot reach the learning engine/i)).toBeInTheDocument()
     expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveClass('ui-alert-warning')
   })
 
   it('can be dismissed', async () => {
@@ -45,7 +46,7 @@ describe('OfflineIndicator', () => {
       expect(screen.getByTestId('offline-banner')).toBeInTheDocument()
     })
     const dismissBtn = screen.getByRole('button', { name: /dismiss/i })
-    dismissBtn.click()
+    fireEvent.click(dismissBtn)
     await waitFor(() => {
       expect(screen.queryByTestId('offline-banner')).not.toBeInTheDocument()
     })
