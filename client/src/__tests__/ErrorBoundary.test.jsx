@@ -36,6 +36,7 @@ describe('ErrorBoundary', () => {
     )
     expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
     expect(screen.getByText(/your progress is safely saved/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/something went wrong/i)
     expect(screen.getByRole('button', { name: /reload page/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /go to dashboard/i })).toBeInTheDocument()
   })
