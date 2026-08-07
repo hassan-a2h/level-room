@@ -254,6 +254,43 @@ describe('database schema', () => {
     expect(tables).toContain('migrations')
   })
 
+  it('adds course lineage and task assessment columns and tables', () => {
+    const db = dbModule.default
+    const topicColumns = db.prepare('PRAGMA table_info(topics)').all().map((column) => column.name)
+    const lessonColumns = db.prepare('PRAGMA table_info(lessons)').all().map((column) => column.name)
+    const quizColumns = db.prepare('PRAGMA table_info(quiz_attempts)').all().map((column) => column.name)
+
+    expect(topicColumns).toEqual(expect.arrayContaining([
+      'course_kind',
+      'course_stage',
+      'course_focus',
+      'course_summary',
+      'course_completed_at',
+    ]))
+    expect(lessonColumns).toContain('task_spec')
+    expect(quizColumns).toEqual(expect.arrayContaining(['answer_key', 'format_version']))
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'course_links'").get()).toBeTruthy()
+    expect(db.prepare("SELECT name FROM migrations WHERE name = '012_add_course_lineage_and_task_assessment'").get()).toBeTruthy()
+  })
+
+  it('uses safe Core defaults for existing topic and lesson rows', () => {
+    const db = dbModule.default
+    const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Legacy topic')
+    const mod = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(topic.lastInsertRowid, 0, 'Basics')
+    const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)').run(mod.lastInsertRowid, 0, 'First lesson')
+    const storedTopic = db.prepare('SELECT course_kind, course_stage, course_focus, course_summary, course_completed_at FROM topics WHERE id = ?').get(topic.lastInsertRowid)
+    const storedLesson = db.prepare('SELECT task_spec FROM lessons WHERE id = ?').get(lesson.lastInsertRowid)
+
+    expect(storedTopic).toMatchObject({
+      course_kind: 'core',
+      course_stage: 0,
+      course_focus: '',
+      course_summary: '',
+      course_completed_at: null,
+    })
+    expect(storedLesson.task_spec).toBe('')
+  })
+
   it('adds the neutral reasoning default to an existing settings row', () => {
     const db = dbModule.default
     db.exec('DROP TABLE llm_settings')
