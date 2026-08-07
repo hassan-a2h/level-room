@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { streamText, generateText } from 'ai'
 
+const codexMocks = vi.hoisted(() => ({
+  streamText: vi.fn(),
+  generateText: vi.fn(),
+}))
+
 // We need to import the actual module, but it may use real AI SDK functions.
 // We will test our adapter functions and SSE helpers directly.
 
@@ -31,6 +36,15 @@ vi.mock('@ai-sdk/anthropic', () => ({
       provider: 'anthropic',
     })),
   })),
+}))
+
+vi.mock('../llm/codex-adapter.js', () => ({
+  createCodexAdapter: vi.fn(() => codexMocks),
+}))
+
+vi.mock('../llm/codex-auth.js', () => ({
+  codexAuth: {},
+  codexModels: {},
 }))
 
 // Now import the module under test
@@ -86,6 +100,25 @@ describe('LLM Client', () => {
   })
 
   describe('streamText', () => {
+    it('dispatches Codex requests through the subscription adapter with the captured snapshot', async () => {
+      const result = { textStream: (async function* () { yield 'Codex' })() }
+      codexMocks.streamText.mockResolvedValue(result)
+      const signal = new AbortController().signal
+      const request = {
+        provider: 'openai-codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+        credentialGeneration: 'captured-generation',
+        signal,
+        messages: [{ role: 'user', content: 'hello' }],
+      }
+
+      await expect(llmModule.streamText(request)).resolves.toBe(result)
+
+      expect(codexMocks.streamText).toHaveBeenCalledWith(request)
+      expect(streamText).not.toHaveBeenCalled()
+    })
+
     it('calls ai.streamText with the correct model for openai', async () => {
       const mockStream = {
         textStream: (async function* () {
