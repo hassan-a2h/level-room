@@ -130,7 +130,51 @@ describe('Artifact API', () => {
     return { topicId: topic.lastInsertRowid, lessonId: lesson.lastInsertRowid }
   }
 
+  function taskSpec() {
+    return JSON.stringify({
+      title: 'Build a local setup',
+      scenario: 'You are preparing a safe local environment.',
+      goal: 'Create and verify the requested behavior.',
+      constraints: ['Use test data only'],
+      deliverables: ['Commands or configuration', 'Observed output'],
+      success_criteria: ['The behavior is observable', 'The result is reproducible'],
+      estimated_time: 15,
+      primary_setup: { kind: 'local', description: 'Use a local installation.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      free_fallback: { kind: 'no_software', description: 'Explain the expected local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      hints: [],
+      safety_notes: ['Use only systems you own.'],
+    })
+  }
+
   describe('POST /api/topics/:id/lessons/:lid/artifact', () => {
+    it('requires all teaching chunks before task evidence', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 2, 3)
+
+      const res = await request(app)
+        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
+        .send({ evidence: { setup: 'local', actions: 'run', result: 'ok', reflection: 'done' } })
+
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('TASK_NOT_READY')
+      expect(dbModule.get('SELECT COUNT(*) AS count FROM artifacts').count).toBe(0)
+    })
+
+    it('accepts structured task evidence only after the final chunk', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
+
+      const res = await request(app)
+        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
+        .send({ evidence: { setup: 'local fixture', actions: 'ran the command', result: 'expected output', reflection: 'repeatable' } })
+
+      expect(res.status).toBe(200)
+      expect(res.body.evaluation).toBeDefined()
+      expect(dbModule.get('SELECT artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).artifact_passed).toBe(1)
+      expect(dbModule.get('SELECT content FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?)', topicId, lessonId).content).toMatch(/Setup:/)
+    })
     it('submits a text artifact and returns structured evaluation', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
@@ -371,6 +415,15 @@ describe('Artifact API', () => {
       expect(res.body.lesson.artifact_type).toBe('code')
     })
 
+    it('returns validated task metadata for task-backed lessons', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
+      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
+      expect(res.status).toBe(200)
+      expect(res.body.lesson.task_spec.title).toBe('Build a local setup')
+      expect(res.body.lesson.task_spec.free_fallback.kind).toBe('no_software')
+    })
+
     it('includes artifact_passed in progress response', async () => {
       const { topicId, lessonId } = seedTopicAndLesson('React', 'JSX', 1, 'code')
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, artifact_passed, quiz_score) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 1, 85)
@@ -378,6 +431,30 @@ describe('Artifact API', () => {
       const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
       expect(res.status).toBe(200)
       expect(res.body.progress.artifact_passed).toBe(1)
+    })
+  })
+
+  describe('Task-backed lesson ordering', () => {
+    it('blocks quiz start until task evidence passes', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
+
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`)
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('TASK_REQUIRED')
+    })
+
+    it('rejects task-backed test-out through both legacy route families', async () => {
+      const { topicId, lessonId } = seedTopicAndLesson()
+      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
+
+      const start = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/test-out/start`).send({})
+      const legacy = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}/test-out`)
+      expect(start.status).toBe(409)
+      expect(start.body.code).toBe('TASK_REQUIRED')
+      expect(legacy.status).toBe(409)
+      expect(legacy.body.code).toBe('TASK_REQUIRED')
     })
   })
 
