@@ -6,6 +6,7 @@ import db, { initSchema } from './db.js'
 import settingsRouter from './routes/settings.js'
 import dashboardRouter from './routes/dashboard.js'
 import curriculumRouter from './routes/curriculum.js'
+import continuationRouter from './routes/continuations.js'
 import lessonsRouter from './routes/lessons.js'
 import examsRouter from './routes/exams.js'
 import reviewsRouter from './routes/reviews.js'
@@ -28,7 +29,9 @@ app.use((_req, res, next) => {
 })
 
 app.use('/api/settings/codex', express.json({ limit: '16kb' }))
-app.use(express.json())
+app.use('/api/data/import', express.json({ limit: '50mb' }))
+app.use('/api/topics/:id/lessons/:lid/artifact', express.json({ limit: '32mb' }))
+app.use(express.json({ limit: '6mb' }))
 
 // Global error handler for malformed JSON and other errors
 app.use((err, _req, res, next) => {
@@ -45,6 +48,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/settings', settingsRouter)
 app.use('/api', dashboardRouter)
 app.use('/api', curriculumRouter)
+app.use('/api', continuationRouter)
 app.use('/api', lessonsRouter)
 app.use('/api', examsRouter)
 app.use('/api', reviewsRouter)
