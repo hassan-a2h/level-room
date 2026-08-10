@@ -5,6 +5,35 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
+const codexState = vi.hoisted(() => ({
+  connection: { connected: false, status: 'disconnected' },
+  flowStatus: { flowId: 'flow-fixture', state: 'awaiting_manual_code', mode: 'browser' },
+}))
+const codexMocks = vi.hoisted(() => ({
+  startLogin: vi.fn(async (mode) => ({ flowId: 'flow-fixture', state: 'starting', mode })),
+  getFlowStatus: vi.fn(() => codexState.flowStatus),
+  submitManualCode: vi.fn(async () => ({ accepted: true })),
+  cancelFlow: vi.fn(async () => ({ flowId: 'flow-fixture', state: 'cancelled' })),
+  disconnect: vi.fn(async () => ({ connected: false, status: 'disconnected' })),
+}))
+
+vi.mock('../llm/codex-auth.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    codexAuth: {
+      ...actual.codexAuth,
+      ...codexMocks,
+      getConnectionStatus: () => codexState.connection,
+      getRuntimeSnapshot: () => ({
+        ...codexState.connection,
+        credentialGeneration: codexState.connection.connected ? 'internal-generation-fixture' : undefined,
+      }),
+    },
+    codexModels: {},
+  }
+})
+
 vi.mock('../llm/client.js', () => ({
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
   LlmClientError: class LlmClientError extends Error {
@@ -34,6 +63,9 @@ describe('Settings API', () => {
     delete process.env.FIREWORKS_API_KEY
     delete process.env.LLM_PROVIDER
     delete process.env.LLM_MODEL
+    codexState.connection = { connected: false, status: 'disconnected' }
+    codexState.flowStatus = { flowId: 'flow-fixture', state: 'awaiting_manual_code', mode: 'browser' }
+    vi.clearAllMocks()
     vi.resetModules()
     dbModule = await import('../db.js')
     dbModule.initSchema()
@@ -41,6 +73,7 @@ describe('Settings API', () => {
     // Import and mount the settings router on a fresh express app
     const { default: settingsRouter } = await import('../routes/settings.js')
     app = express()
+    app.use('/api/settings/codex', express.json({ limit: '16kb' }))
     app.use(express.json())
     app.use('/api/settings', settingsRouter)
   })
@@ -92,6 +125,101 @@ describe('Settings API', () => {
       const res = await request(app).get('/api/settings')
       expect(res.status).toBe(200)
       expect(res.body.apiKeySet).toBe(false)
+    })
+  })
+
+  describe('provider catalog and Codex subscription endpoints', () => {
+    const localRequest = (method, url) => request(app)[method](url)
+      .set('Host', 'localhost:3200')
+      .set('Origin', 'http://localhost:3201')
+
+    it('returns the canonical provider/model catalog with per-model reasoning choices', async () => {
+      const res = await request(app).get('/api/settings/catalog')
+      expect(res.status).toBe(200)
+      expect(res.body.providers.map(({ id }) => id)).toEqual(['openai', 'anthropic', 'fireworks', 'openai-codex'])
+      expect(res.body.providers.find(({ id }) => id === 'openai-codex').models)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.4', reasoningEfforts: ['minimal', 'xhigh'] })]))
+    })
+
+    it('allows saving a Codex model and effort before subscription sign-in', async () => {
+      const res = await request(app).post('/api/settings')
+        .send({ provider: 'openai-codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' })
+
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({ provider: 'openai-codex', model: 'gpt-5.4', apiKeySet: false, ready: false })
+      expect(dbModule.get('SELECT provider, model, reasoning_effort FROM llm_settings LIMIT 1')).toEqual({
+        provider: 'openai-codex', model: 'gpt-5.4', reasoning_effort: 'xhigh',
+      })
+    })
+
+    it('rejects unsupported effort and any credential-shaped settings field', async () => {
+      const unsupported = await request(app).post('/api/settings')
+        .send({ provider: 'openai-codex', model: 'gpt-5.4', reasoningEffort: 'medium' })
+      expect(unsupported.status).toBe(400)
+
+      const credential = await request(app).post('/api/settings')
+        .send({ provider: 'openai-codex', model: 'gpt-5.4', access: 'secret-fixture' })
+      expect(credential.status).toBe(400)
+      expect(credential.text).not.toContain('secret-fixture')
+    })
+
+    it('restricts OAuth routes to the configured local app origin and API host', async () => {
+      const blocked = await request(app).post('/api/settings/codex/login').send({ mode: 'browser' })
+      expect(blocked.status).toBe(403)
+      expect(codexMocks.startLogin).not.toHaveBeenCalled()
+
+      const allowed = await localRequest('post', '/api/settings/codex/login').send({ mode: 'browser' })
+      expect(allowed.status).toBe(202)
+      expect(allowed.body.flowId).toBe('flow-fixture')
+      expect(codexMocks.startLogin).toHaveBeenCalledWith('browser')
+
+      const hostileHost = await request(app).post('/api/settings/codex/login')
+        .set('Host', '192.168.1.5:3200')
+        .set('Origin', 'http://localhost:3201')
+        .send({ mode: 'device_code' })
+      expect(hostileHost.status).toBe(403)
+    })
+
+    it('limits repeated sign-in starts from one local client', async () => {
+      const responses = []
+      for (let index = 0; index < 6; index += 1) {
+        responses.push(await localRequest('post', '/api/settings/codex/login').send({ mode: 'browser' }))
+      }
+      expect(responses.slice(0, 5).every((response) => response.status === 202)).toBe(true)
+      expect(responses[5].status).toBe(429)
+      expect(codexMocks.startLogin).toHaveBeenCalledTimes(5)
+    })
+
+    it('limits repeated manual authorization submissions', async () => {
+      const responses = []
+      for (let index = 0; index < 11; index += 1) {
+        responses.push(await localRequest('post', '/api/settings/codex/flow/flow-fixture/code').send({ code: `code-${index}` }))
+      }
+      expect(responses.slice(0, 10).every((response) => response.status === 200)).toBe(true)
+      expect(responses[10].status).toBe(429)
+      expect(codexMocks.submitManualCode).toHaveBeenCalledTimes(10)
+    })
+
+    it('rejects oversized OAuth request bodies before invoking auth operations', async () => {
+      const response = await localRequest('post', '/api/settings/codex/flow/flow-fixture/code')
+        .send({ code: 'x'.repeat(20_000) })
+      expect(response.status).toBe(413)
+      expect(codexMocks.submitManualCode).not.toHaveBeenCalled()
+    })
+
+    it('returns a sanitized connection state and forwards manual authorization codes without echoing them', async () => {
+      codexState.connection = { connected: true, status: 'connected' }
+      const status = await localRequest('get', '/api/settings/codex/connection')
+      expect(status.status).toBe(200)
+      expect(status.body).toEqual({ connected: true, status: 'connected' })
+      expect(status.text).not.toContain('internal-generation-fixture')
+
+      const manual = await localRequest('post', '/api/settings/codex/flow/flow-fixture/code')
+        .send({ code: 'one-time-secret-fixture' })
+      expect(manual.status).toBe(200)
+      expect(manual.body).toEqual({ accepted: true })
+      expect(manual.text).not.toContain('one-time-secret-fixture')
+      expect(codexMocks.submitManualCode).toHaveBeenCalledWith('flow-fixture', 'one-time-secret-fixture')
     })
   })
 
