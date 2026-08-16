@@ -1,24 +1,12 @@
 import { streamText as aiStreamText, generateText as aiGenerateText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
+import { LlmClientError } from './errors.js'
+import { createCodexAdapter } from './codex-adapter.js'
+import { codexAuth, codexModels } from './codex-auth.js'
 
-/**
- * Custom error class for LLM client errors with retry suggestions.
- */
-export class LlmClientError extends Error {
-  /**
-   * @param {string} message
-   * @param {object} [options]
-   * @param {string} [options.code]
-   * @param {boolean} [options.retryable]
-   */
-  constructor(message, { code, retryable = false } = {}) {
-    super(message)
-    this.name = 'LlmClientError'
-    this.code = code
-    this.retryable = retryable
-  }
-}
+export { LlmClientError } from './errors.js'
+const codexAdapter = createCodexAdapter({ models: codexModels, auth: codexAuth })
 
 /**
  * Supported LLM providers.
@@ -53,6 +41,11 @@ export function getAuthHeaders(provider, apiKey) {
  * @returns {{ model: object, provider: string }}
  */
 export async function createProviderAdapter({ provider, apiKey, model }) {
+  if (provider === 'openai-codex') {
+    throw new LlmClientError('Codex subscription access uses the OAuth connection in Settings.', {
+      code: 'MISSING_CODEX_AUTH',
+    })
+  }
   if (!apiKey || typeof apiKey !== 'string') {
     throw new LlmClientError('API key is required', { code: 'MISSING_API_KEY' })
   }
@@ -143,7 +136,11 @@ function wrapSdkError(err) {
  * @param {string} [params.system]
  * @returns {Promise<object>} The result from ai.streamText (contains textStream, etc.)
  */
-export async function streamText({ provider, apiKey, model, messages, system }) {
+export async function streamText(params) {
+  const { provider, apiKey, model, messages, system } = params
+  if (provider === 'openai-codex') {
+    return codexAdapter.streamText(params)
+  }
   try {
     const { model: languageModel } = await createProviderAdapter({ provider, apiKey, model })
 
@@ -174,7 +171,11 @@ export async function streamText({ provider, apiKey, model, messages, system }) 
  * @param {string} [params.system]
  * @returns {Promise<object>} The result from ai.generateText (contains text, usage, etc.)
  */
-export async function generateText({ provider, apiKey, model, messages, system }) {
+export async function generateText(params) {
+  const { provider, apiKey, model, messages, system } = params
+  if (provider === 'openai-codex') {
+    return codexAdapter.generateText(params)
+  }
   try {
     const { model: languageModel } = await createProviderAdapter({ provider, apiKey, model })
 
@@ -216,7 +217,7 @@ export async function streamToSSE(streamResult, res) {
     res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
     res.end()
   } catch (err) {
-    const wrapped = wrapSdkError(err)
+    const wrapped = err instanceof LlmClientError ? err : wrapSdkError(err)
     res.write(`event: error\n`)
     res.write(`data: ${JSON.stringify({ message: wrapped.message, code: wrapped.code, retryable: wrapped.retryable })}\n\n`)
     res.end()
