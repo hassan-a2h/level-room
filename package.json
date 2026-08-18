@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "PORT=3200 node server/index.js",
-    "dev:client": "PORT=3201 npx vite --config client/vite.config.js client --host",
-    "build": "npx vite build --config client/vite.config.js",
+    "dev:server": "HOST=127.0.0.1 PORT=3200 node server/index.js",
+    "dev:client": "PORT=3201 npx vite --config client/vite.config.js client --host 127.0.0.1",
+    "build": "cd client && npx vite build --config ./vite.config.js",
     "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "npx vitest run server",
     "test:frontend": "cd client && npx vitest run --config ./vitest.config.js",
@@ -17,10 +17,12 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
+    "@earendil-works/pi-ai": "0.85.1",
     "ai": "^4.0.0",
     "better-sqlite3": "^12.0.0",
     "dotenv": "^17.4.2",
     "express": "^4.21.0",
+    "proper-lockfile": "4.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0"
