@@ -132,19 +132,6 @@ export async function selectTopic(topicId) {
   return body
 }
 
-export async function updateLessonState(topicId, lessonId, state) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/state`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ state }),
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
 // Curriculum / Onboarding API
 export async function getSetupQuestions(topicId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/setup-questions`)
@@ -249,6 +236,55 @@ export async function generateCurriculum(topicId) {
   return res
 }
 
+// Advanced continuation API. Generation is intentionally transient until confirm.
+async function continuationJson(topicId, path, options = {}) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/${path}`, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
+}
+
+export async function getContinuationReadiness(topicId) {
+  return continuationJson(topicId, 'continuation-readiness')
+}
+
+export async function getContinuationOptions(topicId) {
+  return continuationJson(topicId, 'continuation-options', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+}
+
+export async function generateContinuation(topicId, { lane, level, timeCommitment }) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/continuations/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ lane, level, timeCommitment }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function tweakContinuation(topicId, { lane, level, timeCommitment, curriculum, request }) {
+  return continuationJson(topicId, 'continuations/tweak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lane, level, timeCommitment, curriculum, request }),
+  })
+}
+
+export async function confirmContinuation(topicId, { lane, level, timeCommitment, curriculum }) {
+  return continuationJson(topicId, 'continuations/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lane, level, timeCommitment, curriculum }),
+  })
+}
+
 export async function getTestOutQuestions(topicId, lessonId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`)
   if (!res.ok) {
@@ -328,11 +364,11 @@ export async function getQuiz(topicId, lessonId) {
   return body
 }
 
-export async function submitQuiz(topicId, lessonId, answers, localDate) {
+export async function submitQuiz(topicId, lessonId, answers, localDate, attemptId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers, localDate }),
+    body: JSON.stringify({ answers, localDate, ...(attemptId ? { attemptId } : {}) }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -474,11 +510,11 @@ export async function submitPartialRetest(topicId, moduleId, retestId, answers, 
 }
 
 // Artifact API
-export async function submitArtifact(topicId, lessonId, content, localDate) {
+export async function submitArtifact(topicId, lessonId, content, localDate, evidence) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/artifact`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, localDate }),
+    body: JSON.stringify({ content, localDate, ...(evidence ? { evidence } : {}) }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
