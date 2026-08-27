@@ -25,6 +25,7 @@ function getNextLesson(modules = []) {
 
 function GlobalStats({ topics }) {
   if (!topics || topics.length === 0) return null
+  const activeTopicCount = topics.filter((topic) => topic.status === 'active' || !topic.status).length
   const totalPassed = topics.reduce((sum, t) => sum + (t.passedLessons || 0), 0)
   const totalLessons = topics.reduce((sum, t) => sum + (t.totalLessons || 0), 0)
   const masteredTopics = topics.filter((t) => (t.progress || 0) >= 100).length
@@ -32,7 +33,7 @@ function GlobalStats({ topics }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
       <div className="ui-surface ui-surface-flat p-3 text-center">
-        <div className="text-xl font-bold ui-text">{topics.length}</div>
+        <div className="text-xl font-bold ui-text">{activeTopicCount}</div>
         <div className="text-xs ui-text-muted">Active Topics</div>
       </div>
       <div className="ui-surface ui-surface-flat p-3 text-center">
@@ -71,6 +72,9 @@ function EmptyState({ onStart }) {
 
 function TopicCard({ topic, isActive, onClick, onDelete }) {
   const progress = topic.progress ?? 0
+  const courseLabel = topic.courseStage > 0
+    ? `Advanced · Stage ${topic.courseStage}`
+    : 'Core course'
   return (
     <div
       data-testid="topic-card"
@@ -98,6 +102,7 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
           <span className="block text-xs ui-text-muted truncate">
             {topic.passedLessons ?? 0} / {topic.totalLessons ?? 0} lessons
           </span>
+          <span className="mt-1 block text-xs ui-text-muted truncate">{courseLabel}{topic.courseFocus ? ` · ${topic.courseFocus}` : ''}</span>
         </button>
         {onDelete && (
           <button
@@ -289,6 +294,10 @@ export default function Dashboard() {
     setExamModuleId(moduleId)
   }
 
+  const handleContinue = () => {
+    if (activeTopicId) navigate(`/topic/${activeTopicId}/continue`)
+  }
+
   const handleExamBack = useCallback(() => {
     setExamModuleId(null)
     if (activeTopicId) {
@@ -320,6 +329,14 @@ export default function Dashboard() {
         ? `Start lesson: ${nextLesson.title}`
         : `Resume lesson: ${nextLesson.title}`
     : null
+  const courseComplete = Boolean(
+    dashboard?.topic?.status === 'completed'
+      && dashboard.modules?.length > 0
+      && dashboard.modules.every((module) => module.status === 'completed'),
+  )
+  const activeTopics = topics.filter((topic) => topic.status === 'active' || !topic.status)
+  const completedTopics = topics.filter((topic) => topic.status === 'completed')
+  const archivedTopics = topics.filter((topic) => topic.status && !['active', 'completed'].includes(topic.status))
 
   return (
     <div className="min-h-screen ui-bg-canvas ui-text">
@@ -405,18 +422,26 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             {/* Sidebar: topic list */}
             <aside className="lg:col-span-1 space-y-3">
-              <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">
-                Your Topics
-              </h2>
-              {topics.map((topic) => (
-                <TopicCard
-                  key={topic.id}
-                  topic={topic}
-                  isActive={topic.id === activeTopicId}
-                  onClick={handleTopicClick}
-                  onDelete={handleDeleteTopic}
-                />
-              ))}
+              <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Active Topics</h2>
+              {activeTopics.length > 0 ? activeTopics.map((topic) => (
+                <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+              )) : <p className="text-sm ui-text-muted">No active courses.</p>}
+              {completedTopics.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Completed Courses</h2>
+                  {completedTopics.map((topic) => (
+                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+                  ))}
+                </div>
+              )}
+              {archivedTopics.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Archived Topics</h2>
+                  {archivedTopics.map((topic) => (
+                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+                  ))}
+                </div>
+              )}
             </aside>
 
             {/* Main: competence graph or exam panel */}
@@ -454,7 +479,19 @@ export default function Dashboard() {
                       {dashboard.topic.passedLessons ?? 0} / {dashboard.topic.totalLessons ?? 0} lessons completed
                       {' '}({dashboard.topic.progress ?? 0}%)
                     </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="ui-status ui-status-neutral">
+                        {dashboard.topic.courseStage > 0 ? `Advanced · Stage ${dashboard.topic.courseStage}` : 'Core · 80/20 foundation'}
+                      </span>
+                      {dashboard.topic.courseFocus && <span className="ui-text-muted">Lane: {dashboard.topic.courseFocus}</span>}
+                    </div>
                   </div>
+                  {dashboard.topic.parent && (
+                    <div className="ui-surface ui-surface-inset mb-5 p-3 text-sm ui-text-secondary">
+                      Builds on <button type="button" className="ui-button ui-button-quiet min-h-0 p-0 text-sm" onClick={() => handleTopicClick(dashboard.topic.parent.id)}>{dashboard.topic.parent.title}</button>
+                      {dashboard.topic.parent.lane && <span className="ui-text-muted"> · {dashboard.topic.parent.lane}</span>}
+                    </div>
+                  )}
                   {nextLesson && (
                     <div className="mb-6">
                       <button
@@ -464,6 +501,18 @@ export default function Dashboard() {
                       >
                         {nextLessonLabel}
                       </button>
+                    </div>
+                  )}
+                  {courseComplete && (
+                    <div className="ui-surface ui-surface-raised mb-6 p-4 sm:p-5" data-testid="continuation-card">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide ui-text-muted">Course complete</p>
+                          <h3 className="mt-1 text-lg font-semibold ui-text">Ready to go deeper?</h3>
+                          <p className="mt-1 text-sm ui-text-secondary">Choose a new specialization lane. Your completed course stays unchanged and becomes the foundation for the next stage.</p>
+                        </div>
+                        <button type="button" className="ui-button ui-button-primary shrink-0" onClick={handleContinue}>Choose an advanced lane</button>
+                      </div>
                     </div>
                   )}
                   {/* Module cards */}
