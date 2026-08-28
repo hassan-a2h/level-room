@@ -12,7 +12,6 @@ import {
   submitPlacementAssessment,
 } from '../api.js'
 import { readCurriculumStream } from '../curriculumStream.js'
-import { normalizeSetupQuestions } from '../setupQuestions.js'
 import CurriculumConfirmation from './CurriculumConfirmation.jsx'
 import { SkeletonOnboarding } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
@@ -301,7 +300,7 @@ export default function OnboardingFlow() {
   }
 
   const stageLabels = ['Topic', 'Setup', 'Generation', 'Review']
-  const stageByStep = { topic_input: 0, setup_questions: 1, depth_check: 1, generating: 2, confirmation: 3 }
+  const stageByStep = { topic_input: 0, setup_questions: 1, generating: 2, confirmation: 3 }
   const currentStage = stageByStep[step]
 
   return (
@@ -354,7 +353,7 @@ export default function OnboardingFlow() {
           <div className="flex flex-col items-center justify-center min-h-[50vh]">
             <h1 className="text-3xl font-bold ui-text mb-2">What do you want to learn?</h1>
             <p className="ui-text-secondary mb-8 text-center max-w-md">
-              Enter any topic — React, Calculus, Negotiation, Japanese — and we will build a personalized learning path.
+              Enter any topic — React, Calculus, Negotiation, Japanese — and we will build a finite 80/20 foundation with clear module checkpoints.
             </p>
             <form onSubmit={handleTopicSubmit} className="w-full max-w-md">
               <div className="flex flex-col gap-2">
@@ -404,18 +403,18 @@ export default function OnboardingFlow() {
                   <div className="flex flex-wrap gap-2" role="group" aria-label={q.text}>
                     {q.options.map((opt) => (
                       <button
-                        key={opt.value}
+                        key={opt}
                         type="button"
-                        onClick={() => handleAnswerChange(i, opt.value)}
-                        aria-pressed={answers[i] === opt.value}
+                        onClick={() => handleAnswerChange(i, opt)}
+                        aria-pressed={answers[i] === opt}
                         className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                          answers[i] === opt.value
+                          answers[i] === opt
                             ? 'ui-choice is-selected'
                             : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                         }`}
                       >
-                        {opt.label}
-                        {answers[i] === opt.value && <span className="ml-2" aria-hidden="true">✓</span>}
+                        {opt}
+                        {answers[i] === opt && <span className="ml-2" aria-hidden="true">✓</span>}
                       </button>
                     ))}
                   </div>
@@ -591,7 +590,7 @@ export default function OnboardingFlow() {
             <div className="ui-spinner mb-4" role="status" aria-label="Generating your learning path" />
             <h1 className="text-xl font-bold ui-text mb-2">Designing your learning path...</h1>
             <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base">
-              Our AI tutor is building a personalized curriculum with modules, lessons, and skill checks.
+              Our AI tutor is building a finite 80/20 curriculum with modules, practical tasks, and skill checks.
               This takes about 30–60 seconds.
             </p>
           </div>
