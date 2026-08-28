@@ -239,6 +239,22 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /reviews, 3 due/i })).toBeInTheDocument()
   })
 
+  it('shows a continuation CTA only after every module checkpoint is complete', async () => {
+    getTopics.mockResolvedValue({ topics: [{ id: 21, title: 'DevOps', progress: 100, totalLessons: 3, passedLessons: 3, status: 'completed', courseStage: 0 }] })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start today!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 21, title: 'DevOps' } })
+    getDashboard.mockResolvedValue({
+      topic: { id: 21, title: 'DevOps', status: 'completed', courseStage: 0, courseKind: 'core', progress: 100, totalLessons: 3, passedLessons: 3 },
+      modules: [{ id: 1, title: 'Foundation', status: 'completed', examReady: false, lessonsRemaining: 0, lessons: [{ id: 1, title: 'Lesson', state: 'passed', locked: false, prerequisites: [] }] }],
+    })
+
+    renderDashboardWithPath()
+    expect(await screen.findByTestId('continuation-card')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /choose an advanced lane/i }))
+    expect(screen.getByTestId('current-path')).toHaveTextContent('/topic/21/continue')
+  })
+
   it('prefers an unlocked practicing lesson for the continue action', async () => {
     getTopics.mockResolvedValue({ topics: [{ id: 7, title: 'React', progress: 25, totalLessons: 4, passedLessons: 1 }] })
     getReviewCount.mockResolvedValue({ totalDue: 0 })
