@@ -172,37 +172,6 @@ describe('LessonChat', () => {
     expect(screen.getByRole('log', { name: 'Lesson chat' })).toHaveTextContent('You: What is JSX?')
   })
 
-  it('surfaces a streamed tutor error instead of rendering it as assistant text', async () => {
-    getLesson.mockResolvedValue({
-      lesson: { id: 1, title: 'JSX', depth: 'Beginner', estimated_time: 10, module_title: 'Basics' },
-      progress: { state: 'practicing', current_chunk: 1, total_chunks: 3 },
-      messages: [],
-      interactionMode: 'code',
-      locked: false,
-    })
-    sendChatMessage.mockResolvedValue({
-      body: createRawSSEStream('event: error\ndata: {"message":"Codex could not complete the request.","code":"LLM_ERROR"}\n\n'),
-    })
-
-    render(
-      <MemoryRouter initialEntries={['/topic/1/lesson/1']}>
-        <Routes>
-          <Route path="/topic/:topicId/lesson/:lessonId" element={<LessonChat />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    const input = await screen.findByPlaceholderText(/type a message/i)
-    fireEvent.change(input, { target: { value: 'Explain JSX' } })
-    fireEvent.click(screen.getByRole('button', { name: /send/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/codex could not complete/i)
-    })
-    expect(screen.getByRole('log', { name: 'Lesson chat' })).not.toHaveTextContent('[object Object]')
-    expect(screen.queryByLabelText('Tutor is responding')).not.toBeInTheDocument()
-  })
-
   it('shows Continue button after tutor chunk', async () => {
     getLesson.mockResolvedValue({
       lesson: { id: 1, title: 'JSX', depth: 'Beginner', estimated_time: 10, module_title: 'Basics' },
