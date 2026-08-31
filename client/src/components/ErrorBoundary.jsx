@@ -1,4 +1,5 @@
 import { Component } from 'react'
+import Button from './ui/Button.jsx'
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -27,38 +28,39 @@ class ErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl border border-red-200 shadow-lg p-8 max-w-md w-full text-center">
-            <div className="text-5xl mb-4">⚠️</div>
-            <h1 className="text-xl font-bold text-gray-900 mb-2">
-              Something went wrong
-            </h1>
-            <p className="text-sm text-gray-600 mb-6">
-              We encountered an unexpected issue. Your progress is safely saved in the local database. Try reloading the page or going back to the dashboard.
-            </p>
+        <div className="ui-page min-h-screen flex items-center justify-center px-4 py-8">
+          <div className="ui-panel p-8 max-w-md w-full text-center">
+            <div className="text-5xl mb-4" aria-hidden="true">⚠️</div>
+            <div role="alert" className="ui-alert ui-alert-danger mb-6 text-left">
+              <h1 className="text-xl font-bold ui-text mb-2">Something went wrong</h1>
+              <p className="text-sm ui-text-secondary">
+                We encountered an unexpected issue. Your progress is safely saved in the local database. Try reloading the page or going back to the dashboard.
+              </p>
+            </div>
             {this.state.error && (
               <details className="mb-6 text-left">
-                <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                <summary className="text-xs ui-text-muted cursor-pointer">
                   Technical details
                 </summary>
-                <pre className="mt-2 text-xs text-red-700 bg-red-50 rounded-lg p-3 overflow-auto max-h-32">
+                <pre className="ui-alert ui-alert-danger mt-2 text-xs overflow-auto max-h-32">
                   {this.state.error.toString()}
                 </pre>
               </details>
             )}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-              <button
+              <Button
                 onClick={this.handleReload}
-                className="w-full sm:w-auto rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+                className="w-full sm:w-auto"
               >
                 Reload Page
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={this.handleGoHome}
-                className="w-full sm:w-auto rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
+                className="w-full sm:w-auto"
               >
                 Go to Dashboard
-              </button>
+              </Button>
             </div>
           </div>
         </div>
