@@ -33,28 +33,53 @@ function CorrectnessBadge({ correctness }) {
 
 function QuestionCard({ question, answer, onAnswerChange, index, total, disabled, feedback }) {
   const questionId = `quiz-question-${question.id}`
-  const hasAnswer = Boolean(answer?.trim())
+  const isChoice = question.format === 'multiple_choice'
+  const hasAnswer = Boolean(typeof answer === 'string' && answer.trim())
   return (
     <section className="ui-panel mb-6 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <span className="text-xs font-medium text-gray-500">Question {index + 1} of {total}</span>
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-gray-400">
-            {TYPE_LABELS[question.type] || question.type} (×{TYPE_WEIGHTS[question.type] || 1})
+            {TYPE_LABELS[question.category] || TYPE_LABELS[question.type] || question.category || question.type} (×{question.weight || TYPE_WEIGHTS[question.type] || 1})
           </span>
           {!feedback && <StatusBadge status={hasAnswer ? 'progress' : 'neutral'}>{hasAnswer ? 'Answered' : 'Not answered'}</StatusBadge>}
         </div>
       </div>
-      <p id={questionId} className="text-sm font-medium ui-text mb-3">{question.text}</p>
-      <textarea
-        aria-labelledby={questionId}
-        value={answer || ''}
-        onChange={(e) => onAnswerChange(question.id, e.target.value)}
-        placeholder="Type your answer here..."
-        disabled={disabled}
-        rows={4}
-        className="ui-field w-full resize-none disabled:cursor-not-allowed"
-      />
+      <p id={questionId} className="text-sm font-medium ui-text mb-3">{question.prompt || question.text}</p>
+      {isChoice ? (
+        <fieldset aria-labelledby={questionId} className="space-y-2">
+          <legend className="sr-only">Choose one answer</legend>
+          {question.options.map((option) => (
+            <label key={option.id} className="flex items-start gap-2 rounded-lg ui-surface ui-surface-flat p-3 text-sm ui-text cursor-pointer">
+              <input
+                type="radio"
+                name={question.id}
+                value={option.id}
+                checked={answer === option.id}
+                onChange={(e) => onAnswerChange(question.id, e.target.value)}
+                disabled={disabled}
+                className="mt-0.5"
+              />
+              <span>{option.text}</span>
+            </label>
+          ))}
+        </fieldset>
+      ) : (
+        <>
+          <textarea
+            aria-labelledby={questionId}
+            value={answer || ''}
+            onChange={(e) => onAnswerChange(question.id, e.target.value)}
+            placeholder="Type your answer here..."
+            maxLength={question.max_words ? 2000 : undefined}
+            disabled={disabled}
+            rows={4}
+            className="ui-field w-full resize-none disabled:cursor-not-allowed"
+          />
+          {question.max_words && <p className="mt-1 text-xs ui-text-muted">Keep this answer under {question.max_words} words and 2,000 characters.</p>}
+        </>
+      )}
       {feedback && (
         <div className="ui-surface ui-surface-inset mt-3 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-1">
@@ -151,6 +176,7 @@ function EvaluationResult({ evaluation, onBack, onRetry, onStartRemediation }) {
 
 export default function QuizPanel({ topicId, lessonId, onBack }) {
   const [questions, setQuestions] = useState([])
+  const [attemptId, setAttemptId] = useState(null)
   const [answers, setAnswers] = useState({})
   const [evaluation, setEvaluation] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -165,6 +191,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
         if (data.questions) {
           setQuestions(data.questions)
         }
+        if (data.attemptId) setAttemptId(data.attemptId)
         if (data.answers) {
           setAnswers(data.answers)
         }
@@ -185,6 +212,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
       const data = await startQuiz(topicId, lessonId)
       if (data.questions) {
         setQuestions(data.questions)
+        setAttemptId(data.attemptId || null)
         setAnswers({})
         setEvaluation(null)
         setRemediationMode(false)
@@ -210,7 +238,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
     setLoading(true)
     setError('')
     try {
-      const result = await submitQuiz(topicId, lessonId, answers, getLocalDate())
+      const result = await submitQuiz(topicId, lessonId, answers, getLocalDate(), attemptId)
       setEvaluation({ ...result, _questions: questions, _answers: answers })
       if (!result.passed) {
         setRemediationMode(true)
@@ -220,7 +248,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
     } finally {
       setLoading(false)
     }
-  }, [topicId, lessonId, answers, questions])
+  }, [topicId, lessonId, answers, questions, attemptId])
 
   const handleRetry = useCallback(() => {
     setEvaluation(null)
@@ -269,7 +297,7 @@ export default function QuizPanel({ topicId, lessonId, onBack }) {
           <div className="text-4xl mb-3">📝</div>
           <h2 className="text-lg font-bold text-gray-900 mb-2">Check Your Understanding</h2>
           <p className="text-sm text-gray-600 mb-4 max-w-sm">
-            Ready to test what you have learned? A short quiz with {3}–{8} free-text questions will help confirm your understanding.
+            Ready to test what you have learned? A short quiz will help confirm your understanding.
           </p>
           {loading ? (
             <SkeletonQuiz />
