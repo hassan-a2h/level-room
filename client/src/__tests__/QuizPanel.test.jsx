@@ -43,6 +43,38 @@ describe('QuizPanel', () => {
     })
   })
 
+  it('renders mixed questions accessibly and submits the attempt id', async () => {
+    getQuiz.mockResolvedValue({
+      attemptId: 42,
+      formatVersion: 2,
+      questions: [
+        { id: 'mc1', format: 'multiple_choice', category: 'Recall', prompt: 'Which command lists files?', options: [{ id: 'a', text: 'ls' }, { id: 'b', text: 'pwd' }], weight: 1 },
+        { id: 'mc2', format: 'multiple_choice', category: 'Apply', prompt: 'Which command prints the directory?', options: [{ id: 'a', text: 'pwd' }, { id: 'b', text: 'cd' }], weight: 1 },
+        { id: 'wr1', format: 'written', category: 'Explain', prompt: 'Explain why.', max_words: 80, weight: 2 },
+        { id: 'wr2', format: 'written', category: 'Transfer', prompt: 'How would you verify?', max_words: 80, weight: 2 },
+      ],
+      answers: {},
+      evaluation: null,
+    })
+    submitQuiz.mockResolvedValue({ overallScore: 100, passed: true, feedback: [], gaps: [] })
+
+    render(<QuizPanel topicId={1} lessonId={1} onBack={vi.fn()} />)
+
+    await waitFor(() => expect(screen.getByText('Which command lists files?')).toBeInTheDocument())
+    expect(screen.getAllByRole('radio')).toHaveLength(4)
+    expect(screen.getAllByText(/under 80 words/i)).toHaveLength(2)
+    const radios = screen.getAllByRole('radio')
+    fireEvent.click(radios[0])
+    fireEvent.click(radios[2])
+    const textareas = screen.getAllByPlaceholderText(/type your answer/i)
+    fireEvent.change(textareas[0], { target: { value: 'Explain clearly.' } })
+    fireEvent.change(textareas[1], { target: { value: 'Verify locally.' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit answers/i }))
+
+    await waitFor(() => expect(screen.getByText(/you passed/i)).toBeInTheDocument())
+    expect(submitQuiz).toHaveBeenCalledWith(1, 1, { mc1: 'a', mc2: 'a', wr1: 'Explain clearly.', wr2: 'Verify locally.' }, '2024-06-01', 42)
+  })
+
   it('loads existing evaluation result on mount', async () => {
     getQuiz.mockResolvedValue({
       questions: [
