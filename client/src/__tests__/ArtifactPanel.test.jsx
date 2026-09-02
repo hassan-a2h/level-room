@@ -52,6 +52,41 @@ describe('ArtifactPanel', () => {
     })
   })
 
+  it('renders structured task evidence with safety context and hidden hints', async () => {
+    getArtifact.mockRejectedValue(new Error('No artifact'))
+    render(
+      <ArtifactPanel
+        topicId={1}
+        lessonId={1}
+        lesson={{
+          artifact_type: 'task_evidence',
+          artifact_required: true,
+          task_spec: {
+            title: 'Build a local setup',
+            scenario: 'Prepare a safe local environment.',
+            goal: 'Create and verify the setup.',
+            constraints: ['Use test data only'],
+            deliverables: ['Commands', 'Observed output'],
+            success_criteria: ['The behavior is observable', 'The result is repeatable'],
+            primary_setup: { kind: 'local', description: 'Use a local installation.', requires_account: false },
+            free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false },
+            hints: ['Start with the smallest setup.'],
+            safety_notes: ['Use only systems you own.'],
+          },
+        }}
+        onBack={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Build a local setup/i })).toBeInTheDocument())
+    expect(screen.getByText(/Prepare a safe local environment/i)).toBeInTheDocument()
+    expect(screen.getByText(/Free fallback/i)).toBeInTheDocument()
+    expect(screen.getByText(/Use only systems you own/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Start with the smallest setup/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Show hints/i }))
+    expect(screen.getByText(/Start with the smallest setup/i)).toBeInTheDocument()
+  })
+
   it('disables submit button when content is empty', async () => {
     getArtifact.mockRejectedValue(new Error('No artifact'))
 
