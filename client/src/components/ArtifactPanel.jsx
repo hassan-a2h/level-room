@@ -109,6 +109,8 @@ function EvaluationResult({ evaluation, onRevise, artifactContent }) {
 
 export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
   const [content, setContent] = useState('')
+  const [evidence, setEvidence] = useState({ setup: '', actions: '', result: '', reflection: '' })
+  const [showHints, setShowHints] = useState(false)
   const [evaluation, setEvaluation] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -166,26 +168,32 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
   }, [])
 
   const handleSubmit = useCallback(async () => {
+    const taskSpec = lesson?.task_spec
     const trimmed = content.trim()
-    if (!trimmed) {
-      setError('Please enter or upload your solution before submitting.')
-      return
+    if (taskSpec) {
+      if (Object.values(evidence).some((value) => !value.trim())) {
+        setError('Complete all four evidence fields before submitting.')
+        return
+      }
+    } else if (!trimmed) {
+        setError('Please enter or upload your solution before submitting.')
+        return
     }
 
     setLoading(true)
     setError('')
     try {
-      const result = await submitArtifact(topicId, lessonId, trimmed, getLocalDate())
+      const result = await submitArtifact(topicId, lessonId, taskSpec ? '' : trimmed, getLocalDate(), taskSpec ? evidence : undefined)
       if (result.evaluation) {
         setEvaluation(result.evaluation)
-        setPrevContent(trimmed)
+        setPrevContent(taskSpec ? JSON.stringify(evidence) : trimmed)
       }
     } catch (err) {
       setError(err.message || 'Failed to submit artifact.')
     } finally {
       setLoading(false)
     }
-  }, [topicId, lessonId, content])
+  }, [topicId, lessonId, content, evidence, lesson])
 
   const handleRevise = useCallback(() => {
     setEvaluation(null)
@@ -194,6 +202,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
   }, [prevContent])
 
   const artifactType = lesson?.artifact_type || 'code'
+  const taskSpec = lesson?.task_spec
   const isDesign = artifactType === 'design'
   const placeholder = isDesign
     ? 'Describe your design or upload a file...'
@@ -219,11 +228,13 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
     )
   }
 
+  const evidenceComplete = taskSpec && Object.values(evidence).every((value) => value.trim())
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-900">Submit Artifact</h2>
+          <h2 className="text-lg font-bold ui-text">{taskSpec ? 'Complete Practical Task' : 'Submit Artifact'}</h2>
           {artifactType && (
             <StatusBadge status="progress">
               {artifactType}
@@ -231,7 +242,32 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
           )}
         </div>
 
-        <RubricPreview />
+        {taskSpec ? (
+          <section className="ui-panel mb-4 p-4" aria-labelledby="task-title">
+            <h3 id="task-title" className="text-base font-semibold ui-text">{taskSpec.title}</h3>
+            <p className="mt-2 text-sm ui-text-secondary">{taskSpec.scenario}</p>
+            <p className="mt-2 text-sm ui-text"><strong>Goal:</strong> {taskSpec.goal}</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3 text-xs ui-text-secondary">
+              <div><strong>Constraints</strong><ul className="mt-1 list-disc pl-4">{taskSpec.constraints?.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              <div><strong>Deliverables</strong><ul className="mt-1 list-disc pl-4">{taskSpec.deliverables?.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              <div><strong>Success criteria</strong><ul className="mt-1 list-disc pl-4">{taskSpec.success_criteria?.map((item) => <li key={item}>{item}</li>)}</ul></div>
+            </div>
+            <div className="mt-3 rounded-lg ui-surface ui-surface-flat p-3 text-xs ui-text-secondary">
+              <strong>Free path:</strong> {taskSpec.primary_setup?.description} ({taskSpec.primary_setup?.kind})
+              <br />
+              <strong>Free fallback:</strong> {taskSpec.free_fallback?.description}
+            </div>
+            {taskSpec.safety_notes?.length > 0 && <p className="mt-3 text-xs ui-text-muted"><strong>Safety:</strong> {taskSpec.safety_notes.join(' ')}</p>}
+            {taskSpec.hints?.length > 0 && (
+              <div className="mt-3">
+                <button type="button" className="text-xs ui-text-secondary underline" onClick={() => setShowHints((current) => !current)}>
+                  {showHints ? 'Hide hints' : 'Show hints'}
+                </button>
+                {showHints && <ul className="mt-1 list-disc pl-4 text-xs ui-text-secondary">{taskSpec.hints.map((hint) => <li key={hint}>{hint}</li>)}</ul>}
+              </div>
+            )}
+          </section>
+        ) : <RubricPreview />}
 
         {error && (
           <div className="ui-alert ui-alert-danger mb-4" role="alert">
@@ -240,19 +276,42 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
         )}
 
         <div className="space-y-3 mb-4">
-          <label htmlFor="artifact-submission" className="ui-field-label">Your artifact submission</label>
-          <textarea
-            id="artifact-submission"
-            value={content}
-            onChange={(e) => {
-              setContent(e.target.value)
-              setError('')
-            }}
-            placeholder={placeholder}
-            rows={isDesign ? 4 : 10}
-            disabled={loading}
-            className="ui-field w-full resize-none font-mono disabled:cursor-not-allowed"
-          />
+          {taskSpec ? (
+            [
+              ['setup', 'Setup'],
+              ['actions', 'Actions taken'],
+              ['result', 'Observed result'],
+              ['reflection', 'Reflection'],
+            ].map(([field, label]) => (
+              <label key={field} className="block ui-field-label">
+                {label}
+                <textarea
+                  aria-label={label}
+                  value={evidence[field]}
+                  onChange={(e) => { setEvidence((current) => ({ ...current, [field]: e.target.value })); setError('') }}
+                  rows={3}
+                  disabled={loading}
+                  className="ui-field mt-1 w-full resize-none disabled:cursor-not-allowed"
+                />
+              </label>
+            ))
+          ) : (
+            <>
+              <label htmlFor="artifact-submission" className="ui-field-label">Your artifact submission</label>
+              <textarea
+                id="artifact-submission"
+                value={content}
+                onChange={(e) => {
+                  setContent(e.target.value)
+                  setError('')
+                }}
+                placeholder={placeholder}
+                rows={isDesign ? 4 : 10}
+                disabled={loading}
+                className="ui-field w-full resize-none font-mono disabled:cursor-not-allowed"
+              />
+            </>
+          )}
 
           {isDesign && (
             <div className="flex items-center gap-3">
@@ -277,10 +336,10 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={handleSubmit}
-            disabled={loading || !content.trim()}
+            disabled={loading || (taskSpec ? !evidenceComplete : !content.trim())}
             className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'Evaluating…' : 'Submit Artifact'}
+            {loading ? 'Evaluating…' : taskSpec ? 'Submit Task Evidence' : 'Submit Artifact'}
           </button>
           <button
             onClick={onBack}
