@@ -104,8 +104,17 @@ describe('ExamPanel', () => {
       expect(screen.getByPlaceholderText(/type your answer/i)).toBeInTheDocument()
     })
 
+    expect(screen.getByRole('progressbar', { name: 'Exam questions answered' })).toHaveAttribute('aria-valuenow', '0')
+    expect(screen.getByRole('textbox', { name: 'Q1' })).toBeInTheDocument()
+    const questionOneButton = screen.getByRole('button', { name: /go to question 1.*current.*unanswered/i })
+    expect(questionOneButton).toHaveAttribute('aria-current', 'step')
+    expect(questionOneButton).toHaveTextContent('—')
+    expect(screen.getByText('Not answered')).toHaveAttribute('data-status', 'neutral')
+
     fireEvent.change(screen.getByPlaceholderText(/type your answer/i), { target: { value: 'Answer' } })
     expect(screen.getByText(/1\/2 answered/i)).toBeInTheDocument()
+    expect(questionOneButton).toHaveTextContent('✓')
+    expect(screen.getByText('Answered')).toHaveAttribute('data-status', 'progress')
   })
 
   it('blocks submission with unanswered questions', async () => {
@@ -166,6 +175,7 @@ describe('ExamPanel', () => {
     // 85% appears twice (overall + per-lesson), so use getAllByText
     expect(screen.getAllByText(/85%/)).toHaveLength(2)
     expect(screen.getByText(/module complete/i)).toBeInTheDocument()
+    expect(screen.getByText('Correct')).toHaveAttribute('data-status', 'success')
   })
 
   it('submits answers and shows fail result with weak lessons', async () => {
