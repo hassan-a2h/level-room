@@ -1,59 +1,76 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 
-/**
- * Node state color/styling definitions.
- * Each state has a fill, stroke, text color, and optional icon.
- */
+/** Theme-backed styling and text labels for every lesson state. */
 const STATE_STYLES = {
   not_started: {
-    fill: '#f3f4f6',
-    stroke: '#d1d5db',
-    text: '#6b7280',
+    fill: 'var(--ui-neutral-bg)',
+    stroke: 'var(--ui-neutral-border)',
+    text: 'var(--ui-neutral-text)',
     strokeWidth: 1,
     strokeDasharray: '4 2',
     glow: false,
     label: 'Not started',
   },
   practicing: {
-    fill: '#fffbeb',
-    stroke: '#f59e0b',
-    text: '#92400e',
+    fill: 'var(--ui-warning-bg)',
+    stroke: 'var(--ui-warning-border)',
+    text: 'var(--ui-warning-text)',
     strokeWidth: 2,
     strokeDasharray: null,
     glow: true,
     label: 'Practicing',
   },
   passed: {
-    fill: '#dcfce7',
-    stroke: '#22c55e',
-    text: '#15803d',
+    fill: 'var(--ui-success-bg)',
+    stroke: 'var(--ui-success-border)',
+    text: 'var(--ui-success-text)',
     strokeWidth: 2,
     strokeDasharray: null,
     glow: true,
     label: 'Passed',
   },
   skipped: {
-    fill: '#f9fafb',
-    stroke: '#e5e7eb',
-    text: '#9ca3af',
+    fill: 'var(--ui-surface-alt)',
+    stroke: 'var(--ui-neutral-border)',
+    text: 'var(--ui-neutral-text)',
     strokeWidth: 1,
     strokeDasharray: '6 3',
     glow: false,
     label: 'Skipped',
   },
   tested_out: {
-    fill: '#e0e7ff',
-    stroke: '#6366f1',
-    text: '#3730a3',
+    fill: 'var(--ui-progress-bg)',
+    stroke: 'var(--ui-progress-border)',
+    text: 'var(--ui-progress-text)',
     strokeWidth: 2,
     strokeDasharray: null,
     glow: true,
     label: 'Tested out',
   },
+  quiz_pending: {
+    fill: 'var(--ui-progress-bg)',
+    stroke: 'var(--ui-progress-border)',
+    text: 'var(--ui-progress-text)',
+    strokeWidth: 2,
+    strokeDasharray: null,
+    glow: true,
+    label: 'Quiz pending',
+  },
+  remediating: {
+    fill: 'var(--ui-warning-bg)',
+    stroke: 'var(--ui-warning-border)',
+    text: 'var(--ui-warning-text)',
+    strokeWidth: 2,
+    strokeDasharray: null,
+    glow: true,
+    label: 'Remediating',
+  },
 }
 
-const NODE_WIDTH = 140
-const NODE_HEIGHT = 48
+const UNKNOWN_STATE_STYLE = { ...STATE_STYLES.not_started, label: 'Unknown' }
+
+const NODE_WIDTH = 160
+const NODE_HEIGHT = 64
 const NODE_RX = 8
 const VERTICAL_GAP = 80
 const HORIZONTAL_GAP = 40
@@ -140,7 +157,7 @@ function EdgeLine({ source, target, isHighlighted, isDimmed }) {
       <path
         d={d}
         fill="none"
-        stroke={isHighlighted ? '#6366f1' : '#d1d5db'}
+        stroke={isHighlighted ? 'var(--ui-action)' : 'var(--ui-divider)'}
         strokeWidth={isHighlighted ? 2.5 : 1.5}
         strokeDasharray={isHighlighted ? null : '4 2'}
         opacity={isDimmed ? 0.2 : 1}
@@ -149,7 +166,7 @@ function EdgeLine({ source, target, isHighlighted, isDimmed }) {
       {/* Arrowhead */}
       <polygon
         points={`${tx - 4},${ty - 6} ${tx + 4},${ty - 6} ${tx},${ty}`}
-        fill={isHighlighted ? '#6366f1' : '#d1d5db'}
+        fill={isHighlighted ? 'var(--ui-action)' : 'var(--ui-divider)'}
         opacity={isDimmed ? 0.2 : 1}
         className="transition-all duration-300"
       />
@@ -159,7 +176,7 @@ function EdgeLine({ source, target, isHighlighted, isDimmed }) {
 
 function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMouseEnter, onMouseLeave }) {
   const { data } = node
-  const style = STATE_STYLES[data.state] || STATE_STYLES.not_started
+  const style = STATE_STYLES[data.state] || UNKNOWN_STATE_STYLE
   const nodeRef = useRef(null)
 
   useEffect(() => {
@@ -169,11 +186,8 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
   }, [isFocused])
 
   const title = data.title || 'Untitled'
+  const tooltipId = `competence-graph-tooltip-${node.moduleIndex}-${node.lessonIndex}`
   const truncated = title.length > 22 ? title.slice(0, 19) + '...' : title
-
-  const depthIndicator = data.depth && data.state !== 'not_started' && data.state !== 'skipped'
-    ? data.depth
-    : null
 
   const lockIcon = data.locked ? '🔒' : null
   const continueIcon = data.state === 'practicing' ? '▶' : null
@@ -183,7 +197,8 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
       ref={nodeRef}
       role="button"
       tabIndex={0}
-      aria-label={`${title}, ${style.label}${data.locked ? ', locked' : ''}${depthIndicator ? ', depth ' + depthIndicator : ''}`}
+      aria-label={`${title}, ${style.label}${data.locked ? ', locked' : ''}${data.depth ? ', depth ' + data.depth : ''}`}
+      aria-describedby={isFocused ? tooltipId : undefined}
       onClick={() => onClick(data)}
       onFocus={onFocus}
       onBlur={onBlur}
@@ -217,7 +232,7 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
         rx={NODE_RX}
         ry={NODE_RX}
         fill={style.fill}
-        stroke={isFocused || isHovered ? '#4f46e5' : style.stroke}
+        stroke={isFocused || isHovered ? 'var(--ui-focus)' : style.stroke}
         strokeWidth={isFocused || isHovered ? 3 : style.strokeWidth}
         strokeDasharray={style.strokeDasharray}
         className="transition-all duration-300"
@@ -234,7 +249,7 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
           rx={NODE_RX + 3}
           ry={NODE_RX + 3}
           fill="none"
-          stroke="#4f46e5"
+          stroke="var(--ui-focus)"
           strokeWidth={2}
           strokeDasharray="4 2"
           className="transition-all duration-300"
@@ -245,9 +260,9 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
       {continueIcon && (
         <circle
           cx={node.x + node.width - 10}
-          cy={node.y + 10}
+          cy={node.y + 14}
           r={6}
-          fill="#f59e0b"
+          fill="var(--ui-warning-text)"
           className="animate-pulse"
         />
       )}
@@ -268,9 +283,9 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
       {/* Title text */}
       <text
         x={node.x + node.width / 2}
-        y={node.y + node.height / 2 - 2}
-        fontSize={11}
-        fontWeight={data.state === 'passed' || data.state === 'tested_out' ? 600 : 400}
+        y={node.y + 23}
+        fontSize={12}
+        fontWeight={600}
         textAnchor="middle"
         dominantBaseline="middle"
         fill={style.text}
@@ -279,28 +294,26 @@ function GraphNode({ node, isFocused, isHovered, onClick, onFocus, onBlur, onMou
         {truncated}
       </text>
 
-      {/* Depth indicator */}
-      {depthIndicator && (
-        <text
-          x={node.x + node.width / 2}
-          y={node.y + node.height - 6}
-          fontSize={9}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill={style.text}
-          opacity={0.7}
-          className="select-none pointer-events-none"
-        >
-          {depthIndicator}
-        </text>
-      )}
+      <text
+        x={node.x + node.width / 2}
+        y={node.y + 48}
+        fontSize={10}
+        fontWeight={600}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={style.text}
+        className="select-none pointer-events-none"
+      >
+        {style.label}
+      </text>
     </g>
   )
 }
 
 function Tooltip({ node, mousePos }) {
   const { data } = node
-  const style = STATE_STYLES[data.state] || STATE_STYLES.not_started
+  const style = STATE_STYLES[data.state] || UNKNOWN_STATE_STYLE
+  const tooltipId = `competence-graph-tooltip-${node.moduleIndex}-${node.lessonIndex}`
 
   const prereqNames = (data.prerequisites || [])
     .filter((pr) => {
@@ -312,26 +325,27 @@ function Tooltip({ node, mousePos }) {
 
   return (
     <div
-      className="absolute z-50 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg pointer-events-none max-w-xs"
+      className="ui-surface-raised ui-text absolute z-50 text-xs rounded-lg px-3 py-2 shadow-lg pointer-events-none max-w-xs"
       style={{
         left: mousePos.x + 12,
         top: mousePos.y - 12,
       }}
       role="tooltip"
+      id={tooltipId}
     >
       <div className="font-semibold mb-1">{data.title}</div>
-      <div className="text-gray-300 mb-1">Status: {style.label}</div>
+      <div className="ui-text-secondary mb-1">Status: {style.label}</div>
       {data.estimated_time && data.state !== 'passed' && data.state !== 'tested_out' && (
-        <div className="text-gray-300 mb-1">~{data.estimated_time} min</div>
+        <div className="ui-text-secondary mb-1">~{data.estimated_time} min</div>
       )}
       {data.depth && (
-        <div className="text-gray-300 mb-1">Depth: {data.depth}</div>
+        <div className="ui-text-secondary mb-1">Depth: {data.depth}</div>
       )}
       {prereqNames && (
-        <div className="text-red-300">Locked: needs {prereqNames}</div>
+        <div style={{ color: 'var(--ui-danger-text)' }}>Locked: needs {prereqNames}</div>
       )}
       {data.locked && !prereqNames && (
-        <div className="text-red-300">Locked</div>
+        <div style={{ color: 'var(--ui-danger-text)' }}>Locked</div>
       )}
     </div>
   )
@@ -339,6 +353,7 @@ function Tooltip({ node, mousePos }) {
 
 export default function CompetenceGraph({ modules, onNodeClick, onStateChange }) {
   const svgRef = useRef(null)
+  const scrollRegionRef = useRef(null)
   const [focusedNodeId, setFocusedNodeId] = useState(null)
   const [hoveredNodeId, setHoveredNodeId] = useState(null)
   const [tooltipNode, setTooltipNode] = useState(null)
@@ -392,14 +407,29 @@ export default function CompetenceGraph({ modules, onNodeClick, onStateChange })
 
   return (
     <div className="relative w-full" role="region" aria-label="Competence graph">
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-auto"
-        role="application"
-        aria-label="Competence graph showing lesson nodes and prerequisite relationships"
-        onMouseMove={handleMouseMove}
+      <div
+        ref={scrollRegionRef}
+        className="overflow-x-auto"
+        role="group"
+        aria-label="Competence graph, scroll horizontally to explore lessons"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return
+          if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+            event.preventDefault()
+            scrollRegionRef.current.scrollLeft += event.key === 'ArrowRight' ? 120 : -120
+          }
+        }}
       >
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${width} ${height}`}
+          className="block max-w-none h-auto"
+          style={{ width: `${width}px` }}
+          role="application"
+          aria-label="Competence graph showing lesson nodes and prerequisite relationships"
+          onMouseMove={handleMouseMove}
+        >
         {/* Edges */}
         {edges.map((edge) => {
           const source = nodes.find((n) => n.id === edge.source)
@@ -435,8 +465,14 @@ export default function CompetenceGraph({ modules, onNodeClick, onStateChange })
                 isFocused={isFocused}
                 isHovered={isHovered}
                 onClick={handleNodeClick}
-                onFocus={() => setFocusedNodeId(node.id)}
-                onBlur={() => setFocusedNodeId(null)}
+                onFocus={() => {
+                  setFocusedNodeId(node.id)
+                  setTooltipNode(node)
+                }}
+                onBlur={() => {
+                  setFocusedNodeId(null)
+                  setTooltipNode(null)
+                }}
                 onMouseEnter={() => {
                   setHoveredNodeId(node.id)
                   setTooltipNode(node)
@@ -449,7 +485,8 @@ export default function CompetenceGraph({ modules, onNodeClick, onStateChange })
             </g>
           )
         })}
-      </svg>
+        </svg>
+      </div>
 
       {/* Tooltip */}
       {tooltipNode && (
@@ -457,9 +494,9 @@ export default function CompetenceGraph({ modules, onNodeClick, onStateChange })
       )}
 
       {/* Legend */}
-      <div className="mt-4 flex flex-wrap gap-4 text-xs text-gray-600">
+      <div className="mt-4 flex flex-wrap gap-4 text-xs ui-text-secondary" role="list" aria-label="Lesson status legend">
         {Object.entries(STATE_STYLES).map(([key, s]) => (
-          <div key={key} className="flex items-center gap-1.5">
+          <div key={key} className="flex items-center gap-1.5" role="listitem">
             <span
               className="inline-block w-3 h-3 rounded-sm border"
               style={{
