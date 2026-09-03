@@ -142,12 +142,17 @@ describe('RemediationPanel', () => {
       expect(screen.getByText(/explain jsx vs html/i)).toBeInTheDocument()
     })
 
+    expect(screen.getByRole('progressbar', { name: 'Retest questions answered' })).toHaveAttribute('aria-valuenow', '0')
+    expect(screen.getByText('Not answered')).toHaveAttribute('data-status', 'neutral')
     fireEvent.change(screen.getByPlaceholderText(/type your answer/i), { target: { value: 'JSX is different.' } })
+    expect(screen.getByRole('progressbar', { name: 'Retest questions answered' })).toHaveAttribute('aria-valuenow', '1')
+    expect(screen.getByText('Answered')).toHaveAttribute('data-status', 'progress')
     fireEvent.click(screen.getByRole('button', { name: /submit answers/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/you passed/i)).toBeInTheDocument()
     })
+    expect(screen.getByText('Correct')).toHaveAttribute('data-status', 'success')
   })
 
   it('submits retest and shows fail result with exit paths', async () => {
@@ -181,6 +186,7 @@ describe('RemediationPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(/explain jsx vs html/i)).toBeInTheDocument()
     })
+    expect(screen.getByRole('textbox', { name: /explain jsx vs html/i })).toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText(/type your answer/i), { target: { value: 'Wrong' } })
     fireEvent.click(screen.getByRole('button', { name: /submit answers/i }))
