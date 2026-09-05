@@ -1,16 +1,30 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getReviews, getReviewCount, startReviewSession } from '../api.js'
+import AppHeader from '../components/AppHeader.jsx'
+import Button from '../components/ui/Button.jsx'
+import StatusBadge from '../components/ui/StatusBadge.jsx'
 
-function EmptyQueue() {
+function EmptyQueue({ onReturn }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[40vh] px-4">
-      <div className="text-5xl mb-4">🎉</div>
-      <h2 className="text-xl font-bold text-gray-900 mb-2">No reviews due today</h2>
-      <p className="text-gray-600 text-center max-w-md">
+    <section className="ui-surface ui-surface-raised mx-auto flex min-h-[35vh] max-w-2xl flex-col items-center justify-center px-6 py-10 text-center" aria-labelledby="empty-reviews-title">
+      <div className="mb-4 text-5xl" aria-hidden="true">🌿</div>
+      <h2 id="empty-reviews-title" className="mb-2 text-xl font-bold ui-text">No reviews due today</h2>
+      <p className="mb-6 max-w-md ui-text-secondary">
         You are all caught up! Come back when new reviews are scheduled.
       </p>
-    </div>
+      <Button variant="secondary" onClick={onReturn}>Back to learning</Button>
+    </section>
+  )
+}
+
+function ReviewLoadError({ onRetry }) {
+  return (
+    <section className="ui-surface ui-surface-raised mx-auto max-w-2xl p-6 text-center" aria-labelledby="reviews-error-title">
+      <h2 id="reviews-error-title" className="mb-2 text-lg font-semibold ui-text">Reviews could not be loaded</h2>
+      <p className="mb-5 ui-text-secondary">Check your connection and try again.</p>
+      <Button onClick={onRetry}>Try again</Button>
+    </section>
   )
 }
 
@@ -62,97 +76,64 @@ export default function ReviewQueue() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading review queue...</div>
-      </div>
-    )
-  }
-
   const dueItems = reviews?.due || []
   const totalDue = counts?.totalDue || 0
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-gray-900">Review Queue</h1>
-          <button
-            onClick={() => navigate('/')}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-          >
-            Back to Dashboard
-          </button>
-        </div>
-      </header>
-
-      {/* Main content */}
-      <main className="max-w-4xl mx-auto px-4 py-6">
+    <div className="ui-page min-h-screen">
+      <AppHeader dueCount={loading ? undefined : totalDue} />
+      <main className="ui-container max-w-5xl space-y-6 px-4 py-6 sm:py-8">
+        <h1 className="text-3xl font-bold ui-text">Review Queue</h1>
+        {loading && (
+          <p className="ui-text-secondary" role="status" aria-live="polite">Loading review queue…</p>
+        )}
         {error && (
-          <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4" role="alert">
+          <div className="ui-alert ui-alert-danger" role="alert">
             {error}
           </div>
         )}
 
-        {totalDue > 0 && (
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">
-                <span className="font-semibold text-gray-900">{totalDue}</span> review{totalDue !== 1 ? 's' : ''} due
-                {counts?.overdue > 0 && (
-                  <span className="text-red-600 ml-1">({counts.overdue} overdue)</span>
-                )}
-              </p>
-            </div>
-            <button
-              onClick={handleStartReview}
-              disabled={startingSession}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
-            >
-              {startingSession ? 'Starting...' : 'Start Review'}
-            </button>
-          </div>
-        )}
+        {!loading && reviews === null && error && <ReviewLoadError onRetry={loadData} />}
 
-        {dueItems.length === 0 ? (
-          <EmptyQueue />
-        ) : (
-          <div className="space-y-3">
+        {!loading && reviews !== null && dueItems.length === 0 && <EmptyQueue onReturn={() => navigate('/')} />}
+
+        {!loading && dueItems.length > 0 && (
+          <>
+          <section className="ui-surface ui-surface-flat flex flex-wrap items-center justify-between gap-4 p-4" aria-label="Review summary">
+            <p className="flex flex-wrap items-center gap-2 text-sm ui-text-secondary">
+              <strong className="ui-text">{totalDue} review{totalDue !== 1 ? 's' : ''} due</strong>
+              {counts?.overdue > 0 && <StatusBadge status="danger">{counts.overdue} overdue</StatusBadge>}
+            </p>
+            <Button onClick={handleStartReview} disabled={startingSession}>
+              {startingSession ? 'Starting…' : 'Start Review'}
+            </Button>
+          </section>
+          <div className="space-y-3" aria-label="Reviews due" role="list">
             {dueItems.map((item) => (
-              <div
+              <article
                 key={item.id}
-                className={`rounded-xl border bg-white p-4 flex items-center justify-between ${
-                  item.isOverdue ? 'border-red-200 bg-red-50' : 'border-gray-200'
-                }`}
+                role="listitem"
+                className={`ui-surface ui-surface-flat flex flex-wrap items-start justify-between gap-4 border-l-4 p-4 sm:p-5 ${item.isOverdue ? 'ui-review-item-overdue' : 'ui-review-item'}`}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      {item.topicTitle}
-                    </span>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider ui-text-muted">{item.topicTitle}</span>
                     {item.isOverdue && (
-                      <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-                        Overdue
-                      </span>
+                      <StatusBadge status="danger">Overdue</StatusBadge>
                     )}
                     {item.reviewType === 'cumulative' && (
-                      <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
-                        Module Review
-                      </span>
+                      <StatusBadge status="progress">Module review</StatusBadge>
                     )}
                   </div>
-                  <h3 className="font-medium text-gray-900 truncate">
-                    {item.lessonTitle}
-                  </h3>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <h2 className="truncate font-semibold ui-text">{item.lessonTitle}</h2>
+                  <p className="mt-1 text-sm ui-text-secondary">
                     Due: {item.dueDate} · Interval: {item.intervalIndex + 1} of 5
                   </p>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
+          </>
         )}
       </main>
     </div>
