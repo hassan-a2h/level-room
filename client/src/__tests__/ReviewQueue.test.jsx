@@ -76,6 +76,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByText('Overdue')).toBeInTheDocument()
     })
+    expect(screen.getByRole('link', { name: /reviews, 1 due/i })).toBeInTheDocument()
   })
 
   it('navigates to review session on Start Review click', async () => {
