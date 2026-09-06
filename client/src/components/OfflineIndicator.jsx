@@ -47,17 +47,17 @@ export default function OfflineIndicator() {
 
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-[100] bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-800 flex items-center justify-center gap-3"
+      className="ui-offline-banner ui-alert ui-alert-warning slide-down"
       role="status"
       data-testid="offline-banner"
     >
       <span className="inline-flex items-center gap-1.5">
-        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+        <span className="ui-warning-dot w-2 h-2 rounded-full animate-pulse" />
         Cannot reach the learning engine. Make sure the server is running on port 3200.
       </span>
       <button
         onClick={() => setDismissed(true)}
-        className="text-amber-700 hover:text-amber-900 underline text-xs"
+        className="ui-text-link underline text-xs font-medium"
       >
         Dismiss
       </button>
