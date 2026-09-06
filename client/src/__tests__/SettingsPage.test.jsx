@@ -12,7 +12,7 @@ function mockFetch(data, status = 200) {
     Promise.resolve({
       ok: status >= 200 && status < 300,
       status,
-      json: () => Promise.resolve(data),
+      json: () => Promise.resolve({ providers: MOCK_PROVIDERS, ...data }),
     })
   )
 }
@@ -23,12 +23,19 @@ const MOCK_ENV_STATUS = [
   { provider: 'fireworks', configured: true, envVar: 'FIREWORKS_API_KEY' },
 ]
 
+const MOCK_PROVIDERS = [
+  { id: 'openai', name: 'OpenAI API key', authType: 'api_key', defaultModel: 'gpt-4o', models: [{ id: 'gpt-4o', name: 'gpt-4o', reasoningEfforts: [] }] },
+  { id: 'anthropic', name: 'Anthropic API key', authType: 'api_key', defaultModel: 'claude-3-5-sonnet-20241022', models: [{ id: 'claude-3-5-sonnet-20241022', name: 'claude-3-5-sonnet-20241022', reasoningEfforts: [] }] },
+  { id: 'fireworks', name: 'Fireworks API key', authType: 'api_key', defaultModel: 'accounts/fireworks/routers/kimi-k2p6-turbo', models: [{ id: 'accounts/fireworks/routers/kimi-k2p6-turbo', name: 'kimi-k2p6-turbo', reasoningEfforts: [] }] },
+  { id: 'openai-codex', name: 'OpenAI Codex subscription', authType: 'oauth', defaultModel: 'gpt-5.4', models: [{ id: 'gpt-5.4', name: 'GPT-5.4', reasoningEfforts: ['minimal', 'xhigh'] }] },
+]
+
 describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('renders provider selector with three options', async () => {
+  it('renders all providers returned by the server catalog', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
     render(
       <MemoryRouter>
@@ -36,9 +43,19 @@ describe('SettingsPage', () => {
       </MemoryRouter>
     )
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
-    expect(screen.getByRole('option', { name: 'OpenAI' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Anthropic' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Fireworks' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'OpenAI API key' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Anthropic API key' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Fireworks API key' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'OpenAI Codex subscription' })).toBeInTheDocument()
+  })
+
+  it('places the 16-choice appearance gallery before LLM and data settings', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: [] }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument())
+    expect(screen.getAllByRole('radio')).toHaveLength(16)
+    expect(screen.getByRole('heading', { name: 'LLM Configuration' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Data Management' })).toBeInTheDocument()
   })
 
   it('shows model selector that updates when provider changes', async () => {
@@ -56,6 +73,35 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('option', { name: 'gpt-4o' })).toBeInTheDocument()
     })
+  })
+
+  it('shows server-supported Codex models and reasoning choices only for Codex', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, envStatus: MOCK_ENV_STATUS }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await screen.findByLabelText(/provider/i)
+    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai-codex' } })
+
+    expect(await screen.findByRole('option', { name: 'GPT-5.4' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/reasoning level/i)).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'xhigh' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Codex subscription sign-in/i })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
+    expect(screen.queryByLabelText(/reasoning level/i)).not.toBeInTheDocument()
+  })
+
+  it('saves the selected Codex reasoning level with the provider settings', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, envStatus: MOCK_ENV_STATUS }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await screen.findByLabelText(/provider/i)
+    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai-codex' } })
+    fireEvent.change(await screen.findByLabelText(/reasoning level/i), { target: { value: 'xhigh' } })
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:3200/api/settings',
+      expect.objectContaining({ body: JSON.stringify({ provider: 'openai-codex', model: 'gpt-5.4', reasoningEffort: 'xhigh' }) }),
+    ))
   })
 
   it('does not render an API key input field', async () => {
@@ -109,7 +155,7 @@ describe('SettingsPage', () => {
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'openai', model: 'gpt-4o' }),
+          body: JSON.stringify({ provider: 'openai', model: 'gpt-4o', reasoningEffort: 'none' }),
         })
       )
     })
