@@ -141,6 +141,9 @@ describe('SettingsPage Data Management', () => {
       fireEvent.change(fileInput, { target: { files: [file] } })
     })
 
+    expect(screen.getByRole('dialog', { name: /replace learning data/i })).toHaveTextContent(/replace your current learning data/i)
+    fireEvent.click(screen.getByRole('button', { name: /replace learning data/i }))
+
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
         'http://localhost:3200/api/data/import',
@@ -150,6 +153,42 @@ describe('SettingsPage Data Management', () => {
         })
       )
     })
+  })
+
+  it('cancels restore without sending the import request', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
+    const fileInput = screen.getByLabelText(/import backup file/i)
+    const file = new File([JSON.stringify({ topics: [] })], 'backup.json', { type: 'application/json' })
+
+    await act(async () => { fireEvent.change(fileInput, { target: { files: [file] } }) })
+    fireEvent.click(screen.getByRole('button', { name: /cancel restore/i }))
+
+    expect(fetch.mock.calls.some(([url]) => url === 'http://localhost:3200/api/data/import')).toBe(false)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps keyboard focus inside restore confirmation and returns it after Escape', async () => {
+    fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
+    const fileInput = screen.getByLabelText(/import backup file/i)
+    const file = new File([JSON.stringify({ topics: [] })], 'backup.json', { type: 'application/json' })
+
+    await act(async () => { fireEvent.change(fileInput, { target: { files: [file] } }) })
+
+    const cancel = screen.getByRole('button', { name: /cancel restore/i })
+    const replace = screen.getByRole('button', { name: /replace learning data/i })
+    expect(cancel).toHaveFocus()
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })
+    expect(replace).toHaveFocus()
+    fireEvent.keyDown(replace, { key: 'Tab' })
+    expect(cancel).toHaveFocus()
+    fireEvent.keyDown(cancel, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toHaveFocus())
+    expect(fetch.mock.calls.some(([url]) => url === 'http://localhost:3200/api/data/import')).toBe(false)
   })
 
   it('shows error when import file is invalid JSON', async () => {
