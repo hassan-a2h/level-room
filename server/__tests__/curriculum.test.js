@@ -5,17 +5,39 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-  vi.mock('../llm/client.js', () => ({
-  streamText: vi.fn(() =>
-    Promise.resolve({
+vi.mock('../llm/client.js', () => ({
+  streamText: vi.fn(() => {
+    const task = {
+      title: 'Local setup',
+      scenario: 'Use a safe local fixture.',
+      goal: 'Create and verify the requested behavior.',
+      constraints: ['Use test data only'],
+      deliverables: ['Commands', 'Observed output'],
+      success_criteria: ['The behavior is observable', 'The result is reproducible'],
+      estimated_time: 10,
+      primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      free_fallback: { kind: 'no_software', description: 'Explain the expected local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      hints: [],
+      safety_notes: ['Use only systems you own.'],
+    }
+    const modules = Array.from({ length: 3 }, (_, moduleIndex) => ({
+      title: `Foundations ${moduleIndex + 1}`,
+      lessons: Array.from({ length: 3 }, (_, lessonIndex) => ({
+        title: `Lesson ${moduleIndex + 1}.${lessonIndex + 1}`,
+        depth: 'Beginner',
+        estimated_time: 10,
+        outcomes: ['Understand basics'],
+        prerequisites: [],
+        task,
+      })),
+    }))
+    const payload = JSON.stringify({ course: { kind: 'core', stage: 0 }, modules })
+    return Promise.resolve({
       textStream: (async function* () {
-        yield '{"modules":['
-        yield '{"title":"Foundations","lessons":['
-        yield '{"title":"Intro","depth":"Beginner","estimated_time":10,"outcomes":["Understand basics"],"prerequisites":[]}'
-        yield ']}]}'
+        yield payload
       })(),
     })
-  ),
+  }),
   generateText: vi.fn((_params) => {
     const content = _params?.messages?.[0]?.content || ''
     if (content.includes('placement assessment')) {
@@ -280,6 +302,8 @@ describe('Curriculum API', () => {
   describe('POST /api/topics/:id/curriculum/confirm', () => {
     it('persists curriculum draft to DB and unlocks first lesson', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
+      const existingModule = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Legacy')
+      dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", existingModule.lastInsertRowid, 0, 'Old intro', 'Beginner', 10, JSON.stringify(['Understand basics']), '[]')
 
       const curriculum = {
         modules: [
@@ -303,6 +327,42 @@ describe('Curriculum API', () => {
       expect(allLessons.length).toBe(1)
       const prog = dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topic.lastInsertRowid, allLessons[0].id)
       expect(prog.state).toBe('not_started')
+    })
+
+    it('rejects a new course draft outside bounded module and lesson counts', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
+      const curriculum = {
+        modules: [{
+          title: 'Foundations',
+          lessons: [{
+            title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: ['Understand basics'], prerequisites: [],
+            task: {
+              title: 'Local task', scenario: 'Local scenario', goal: 'Do the task', constraints: ['Use test data'],
+              deliverables: ['Commands', 'Output'], success_criteria: ['Works', 'Repeatable'], estimated_time: 10,
+              primary_setup: { kind: 'local', description: 'Run locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+              free_fallback: { kind: 'no_software', description: 'Explain the local result', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+              hints: [], safety_notes: [],
+            },
+          }],
+        }],
+      }
+
+      const res = await request(app).post(`/api/topics/${topic.lastInsertRowid}/curriculum/confirm`).send({ curriculum })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/3.*5|bounded|module/i)
+      expect(dbModule.get('SELECT COUNT(*) AS count FROM modules WHERE topic_id = ?', topic.lastInsertRowid).count).toBe(0)
+    })
+
+    it('rejects a started course replacement without deleting its history', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
+      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Foundations")
+      const lesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)", mod.lastInsertRowid, 0, "Intro")
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'practicing')
+
+      const res = await request(app).post(`/api/topics/${topic.lastInsertRowid}/curriculum/confirm`).send({ curriculum: { modules: [{ title: 'New', lessons: [{ title: 'New lesson', depth: 'Beginner', estimated_time: 10, outcomes: ['Learn'], prerequisites: [] }] }] } })
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('CURRICULUM_LOCKED')
+      expect(dbModule.get('SELECT title FROM modules WHERE topic_id = ?', topic.lastInsertRowid).title).toBe('Foundations')
     })
   })
 
