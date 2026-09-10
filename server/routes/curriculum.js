@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import { get, run, all, transaction } from '../db.js'
-import { streamText, generateText, streamToSSE, LlmClientError } from '../llm/client.js'
+import { streamText, generateText, LlmClientError } from '../llm/client.js'
 import { requireLlmConfig } from '../utils/llm-config.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
+import { validateCurriculum as validateCurriculumDraft, collectCurriculumDraft, CurriculumDraftError, writeCurriculumSSE, writeCurriculumSSEError } from '../utils/curriculum-draft.js'
+import { persistCurriculumInTransaction } from '../utils/course-lineage.js'
 
 const router = Router()
 
@@ -17,114 +19,25 @@ const TIME_ALIASES = new Map([
   ['2+ hours', '2+ hours/day'],
 ])
 
-const SETUP_OPTIONS = Object.freeze({
-  levels: Object.freeze([
-    { value: 'Beginner', label: 'Beginner' },
-    { value: 'Intermediate', label: 'Intermediate' },
-    { value: 'Advanced', label: 'Advanced' },
-  ]),
-  timeCommitments: Object.freeze([
-    { value: '15 min/day', label: '15 min/day' },
-    { value: '30 min/day', label: '30 min/day' },
-    { value: '1 hour/day', label: '1 hour/day' },
-    { value: '2+ hours/day', label: '2+ hours/day' },
-  ]),
-})
-
-const PLACEMENT_QUESTION_LIMITS = { min: 4, max: 6 }
-
-function normalizeLevel(value) {
-  if (typeof value !== 'string') return null
-  const match = VALID_LEVELS.find((level) => level.toLowerCase() === value.trim().toLowerCase())
-  return match || null
+/**
+ * Generate setup questions for a topic via LLM.
+ */
+async function generateSetupQuestions(topicTitle, config) {
+  const system = `You are a curriculum designer. Given a learning topic, generate exactly 2 concise setup questions to profile the learner.
+Respond in strict JSON with this shape:
+{
+  "questions": [
+    { "text": "...", "options": ["...", "..."] },
+    { "text": "...", "options": ["...", "..."] }
+  ]
 }
+The first question should assess current experience level. The second should assess time commitment.
+Keep each option to 1-4 words. Do not include markdown formatting.`
 
-function normalizeTimeCommitment(value) {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  const canonical = VALID_TIME_COMMITMENTS.find((option) => option.toLowerCase() === trimmed.toLowerCase())
-  if (canonical) return canonical
-  return TIME_ALIASES.get(trimmed.toLowerCase()) || null
-}
-
-function setupQuestions(topicTitle) {
-  const title = typeof topicTitle === 'string' && topicTitle.trim() ? topicTitle.trim() : 'this topic'
-  return {
-    questions: [
-      {
-        id: 'level',
-        text: `How familiar are you with ${title}?`,
-        options: SETUP_OPTIONS.levels.map((option) => ({ ...option })),
-      },
-      {
-        id: 'timeCommitment',
-        text: 'How much time can you study most days?',
-        options: SETUP_OPTIONS.timeCommitments.map((option) => ({ ...option })),
-      },
-    ],
-  }
-}
-
-function placementPublicQuestions(questions) {
-  return questions.map(({ id, text, type, options }) => ({
-    id,
-    text,
-    type,
-    ...(type === 'multiple_choice' ? { options } : {}),
-  }))
-}
-
-function normalizePlacementQuestions(parsed) {
-  if (!parsed || !Array.isArray(parsed.questions)) {
-    throw new Error('Invalid placement assessment format')
-  }
-  if (parsed.questions.length < PLACEMENT_QUESTION_LIMITS.min || parsed.questions.length > PLACEMENT_QUESTION_LIMITS.max) {
-    throw new Error('Placement assessment must contain 4-6 questions')
-  }
-
-  const ids = new Set()
-  const questions = parsed.questions.map((question, index) => {
-    const id = typeof question?.id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(question.id)
-      ? question.id
-      : `q${index + 1}`
-    if (ids.has(id)) throw new Error('Placement assessment contains duplicate question ids')
-    ids.add(id)
-
-    const text = typeof question?.text === 'string' ? question.text.trim() : ''
-    if (text.length < 10 || text.length > 500) throw new Error('Placement assessment contains invalid question text')
-
-    const type = question?.type === 'multiple_choice' || question?.type === 'multiple-choice'
-      ? 'multiple_choice'
-      : question?.type === 'objective' || question?.type === 'open'
-        ? 'objective'
-        : null
-    if (!type) throw new Error('Placement assessment contains an invalid question type')
-
-    if (type === 'multiple_choice') {
-      if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 5) {
-        throw new Error('Placement assessment contains invalid multiple-choice options')
-      }
-      const optionValues = new Set()
-      const options = question.options.map((option) => {
-        const value = typeof option === 'string' ? option.trim() : option?.value?.toString().trim()
-        const label = typeof option === 'string' ? option.trim() : option?.label?.toString().trim()
-        if (!value || !label || value.length > 100 || label.length > 200) {
-          throw new Error('Placement assessment contains an invalid option')
-        }
-        if (optionValues.has(value)) throw new Error('Placement assessment contains duplicate options')
-        optionValues.add(value)
-        return { value, label }
-      })
-      const correctAnswer = typeof question.correct_answer === 'string' ? question.correct_answer.trim() : ''
-      if (!correctAnswer || !options.some((option) => option.value === correctAnswer)) {
-        throw new Error('Placement assessment is missing a valid answer key')
-      }
-      return { id, text, type, options, correct_answer: correctAnswer }
-    }
-
-    const rubric = typeof question.rubric === 'string' ? question.rubric.trim() : ''
-    if (!rubric || rubric.length > 1000) throw new Error('Placement assessment is missing an objective rubric')
-    return { id, text, type, rubric }
+  const result = await generateText({
+    ...llmRequestOptions(config),
+    system,
+    messages: [{ role: 'user', content: `Topic: ${topicTitle}` }],
   })
 
   const multipleChoiceCount = questions.filter((question) => question.type === 'multiple_choice').length
@@ -166,24 +79,41 @@ async function generateCurriculum(topicTitle, level, timeCommitment, config, sig
   const system = `You are an expert curriculum designer. Generate an adaptive learning curriculum.
 Respond as a stream of JSON text representing a single object with this exact structure:
 {
+  "course": { "kind": "core", "stage": 0, "scope": "80/20 foundation" },
   "modules": [
     {
       "title": "Module Name",
+      "summary": "The practical capability this module builds.",
+      "skill_outcomes": ["..."],
       "lessons": [
         {
           "title": "Lesson Name",
           "depth": "Beginner|Intermediate|Advanced",
           "estimated_time": 15,
           "outcomes": ["By the end of this lesson, the learner can..."],
-          "prerequisites": ["Lesson Name"]
+          "prerequisites": ["Lesson Name"],
+          "task": {
+            "title": "Build and verify a small local setup",
+            "scenario": "A safe local scenario.",
+            "goal": "Create and verify the requested behavior.",
+            "constraints": ["Use test data only"],
+            "deliverables": ["Commands or configuration", "Observed output"],
+            "success_criteria": ["The behavior is observable", "The result is reproducible"],
+            "estimated_time": 25,
+            "primary_setup": { "kind": "local", "description": "Use a local installation or container.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false },
+            "free_fallback": { "kind": "no_software", "description": "Explain the expected local result with sample data.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false },
+            "hints": [],
+            "safety_notes": ["Use only systems you own or an isolated local environment."]
+          }
         }
       ]
     }
   ]
 }
 Rules:
-- 3-8 modules total.
-- Each module has 3-7 lessons.
+- 3-5 modules total.
+- Each module has 3-5 lessons.
+- This is a finite 80/20 foundation course, not an endless syllabus.
 - Every lesson must have depth, estimated_time (minutes), outcomes (1-3 strings), and prerequisites (names of other lessons in the curriculum; empty for foundation lessons).
 - Prerequisites must reference lesson titles that exist in the curriculum.
 - No circular prerequisites. No lesson may list itself as a prerequisite.
@@ -203,7 +133,7 @@ Rules:
 
 /**
  * Parse streamed JSON chunks into a curriculum object.
- * We accumulate the raw text and try JSON.parse when we see a complete object.
+ * Kept for compatibility with older route consumers; new generation uses the buffered validator.
  */
 async function parseStreamedCurriculum(textStream) {
   let buffer = ''
@@ -220,7 +150,7 @@ async function parseStreamedCurriculum(textStream) {
  * Validate a curriculum structure.
  * Returns { valid: true } or { valid: false, error: string }.
  */
-function validateCurriculum(curriculum) {
+function validateLegacyCurriculum(curriculum) {
   if (!curriculum || typeof curriculum !== 'object') {
     return { valid: false, error: 'Curriculum must be an object.' }
   }
@@ -304,91 +234,49 @@ function validateCurriculum(curriculum) {
   return { valid: true }
 }
 
-/**
- * Persist a validated curriculum to SQLite for a topic.
- * Replaces any existing modules/lessons for the topic.
- */
 function persistCurriculum(topicId, curriculum) {
-  const tx = transaction((cur) => {
-    // Delete existing modules (cascades to lessons via FK)
+  return transaction(() => {
     run('DELETE FROM modules WHERE topic_id = ?', topicId)
-
-    const lessonIdMap = new Map() // title -> lesson_db_id
-
-    for (let mi = 0; mi < cur.modules.length; mi++) {
-      const mod = cur.modules[mi]
-      const modResult = run(
-        'INSERT INTO modules (topic_id, module_index, title, summary, skill_outcomes) VALUES (?, ?, ?, ?, ?)',
+    const firstLessonId = persistCurriculumInTransaction(topicId, curriculum)
+    if (curriculum.course) {
+      run(
+        `UPDATE topics SET course_kind = ?, course_stage = ?, course_focus = ? WHERE id = ?`,
+        curriculum.course.kind,
+        curriculum.course.stage,
+        curriculum.course.focus || '',
         topicId,
-        mi,
-        mod.title,
-        mod.summary || '',
-        mod.skill_outcomes || ''
       )
-      const moduleId = modResult.lastInsertRowid
-
-      for (let li = 0; li < mod.lessons.length; li++) {
-        const lesson = mod.lessons[li]
-        const lessonResult = run(
-          'INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type, artifact_rubric) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          moduleId,
-          li,
-          lesson.title,
-          lesson.depth,
-          lesson.estimated_time,
-          JSON.stringify(lesson.outcomes),
-          JSON.stringify(lesson.prerequisites || []),
-          lesson.artifact_required ? 1 : 0,
-          lesson.artifact_type || '',
-          lesson.artifact_rubric || ''
-        )
-        lessonIdMap.set(lesson.title, lessonResult.lastInsertRowid)
-      }
     }
+    return firstLessonId
+  })()
+}
 
-    // Update prerequisites from lesson titles to lesson IDs
-    for (let mi = 0; mi < cur.modules.length; mi++) {
-      const mod = cur.modules[mi]
-      const dbModules = all('SELECT id FROM modules WHERE topic_id = ? ORDER BY module_index', topicId)
-      const dbModuleId = dbModules[mi].id
-      const dbLessons = all('SELECT id, title FROM lessons WHERE module_id = ? ORDER BY lesson_index', dbModuleId)
+function curriculumMutationError(message = 'This course can no longer be replaced after learning has started.') {
+  const error = new Error(message)
+  error.code = 'CURRICULUM_LOCKED'
+  error.status = 409
+  return error
+}
 
-      for (let li = 0; li < mod.lessons.length; li++) {
-        const lesson = mod.lessons[li]
-        const prereqIds = (lesson.prerequisites || []).map((prTitle) => {
-          const pid = lessonIdMap.get(prTitle)
-          return pid || null
-        }).filter(Boolean)
-
-        run(
-          'UPDATE lessons SET prerequisites = ? WHERE id = ?',
-          JSON.stringify(prereqIds.map((id) => ({ lessonId: id, title: '' }))),
-          dbLessons[li].id
-        )
-      }
-    }
-
-    // Create progress rows for all lessons as not_started
-    const allLessons = all(
-      `SELECT l.id FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE m.topic_id = ?`,
-      topicId
-    )
-    for (const lesson of allLessons) {
-      const existing = get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lesson.id)
-      if (!existing) {
-        run(
-          'INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)',
-          topicId,
-          lesson.id,
-          'not_started'
-        )
-      }
-    }
+function assertCurriculumMutable(topicId) {
+  const topic = get('SELECT id, status FROM topics WHERE id = ?', topicId)
+  if (!topic) return { ok: false, error: curriculumMutationError('Topic not found.') }
+  if (topic.status === 'completed') return { ok: false, error: curriculumMutationError('Completed courses cannot be replaced.') }
+  const started = get(
+    `SELECT 1 FROM progress WHERE topic_id = ? AND (state <> 'not_started' OR coalesce(current_chunk, 0) > 0 OR coalesce(quiz_attempts, 0) > 0 OR artifact_passed = 1) LIMIT 1`,
+    topicId,
+  )
+  const persisted = [
+    ['messages', 'topic_id'],
+    ['artifacts', 'progress_id'],
+    ['quiz_attempts', 'topic_id'],
+    ['exam_attempts', 'topic_id'],
+  ].some(([table, column]) => {
+    if (column === 'progress_id') return get(`SELECT 1 FROM ${table} a JOIN progress p ON p.id = a.progress_id WHERE p.topic_id = ? LIMIT 1`, topicId)
+    return get(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`, topicId)
   })
-
-  tx(curriculum)
+  if (started || persisted) return { ok: false, error: curriculumMutationError() }
+  return { ok: true }
 }
 
 /**
@@ -469,7 +357,9 @@ router.get('/topics/:id/setup-questions', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
-    return res.json(setupQuestions(topic.title))
+    const config = requireLlmConfig()
+    const questions = await generateSetupQuestions(topic.title, config)
+    return res.json(questions)
   } catch (err) {
     console.error('GET /api/topics/:id/setup-questions error:', err.message)
     if (err instanceof LlmClientError) {
@@ -637,10 +527,13 @@ ${JSON.stringify(answers)}`
 router.post('/topics/:id/curriculum/generate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT title, level, time_per_week FROM topics WHERE id = ?', topicId)
+    const topic = get('SELECT id, title, level, time_per_week FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
+
+    const mutable = assertCurriculumMutable(topicId)
+    if (!mutable.ok) return res.status(mutable.error.status).json({ error: mutable.error.message, code: mutable.error.code })
 
     if (!topic.level || !topic.time_per_week) {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
@@ -648,8 +541,18 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
 
     const config = requireLlmConfig()
     const request = createRequestAbortSignal(req, res)
-    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
-    await streamToSSE(streamResult, res)
+    let lastError
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
+      try {
+        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
+        return writeCurriculumSSE(res, curriculum)
+      } catch (error) {
+        lastError = error
+        if (!(error.code === 'INVALID_CURRICULUM' && error.retryable && attempt < 2)) throw error
+      }
+    }
+    throw lastError
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/generate error:', err.message)
     if (!res.headersSent) {
@@ -658,10 +561,7 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
       }
       return res.status(500).json({ error: 'Failed to generate curriculum.' })
     }
-    // If headers already sent (SSE started), we can't send JSON error
-    res.write(`event: error\n`)
-    res.write(`data: ${JSON.stringify({ message: err.message })}\n\n`)
-    res.end()
+    writeCurriculumSSEError(res, err)
   }
 })
 
@@ -672,22 +572,39 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
 router.post('/topics/:id/curriculum/confirm', (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT id FROM topics WHERE id = ?', topicId)
+    const topic = get('SELECT id, course_kind, course_stage FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
+
+    const mutable = assertCurriculumMutable(topicId)
+    if (!mutable.ok) return res.status(mutable.error.status).json({ error: mutable.error.message, code: mutable.error.code })
 
     const { curriculum } = req.body
     if (!curriculum || typeof curriculum !== 'object') {
       return res.status(400).json({ error: 'Curriculum object is required.' })
     }
 
-    const validation = validateCurriculum(curriculum)
+    const existingModules = get('SELECT COUNT(*) AS count FROM modules WHERE topic_id = ?', topicId)?.count || 0
+    const existingTask = get("SELECT 1 FROM lessons l JOIN modules m ON l.module_id = m.id WHERE m.topic_id = ? AND COALESCE(l.task_spec, '') <> '' LIMIT 1", topicId)
+    const boundedCourse = existingModules === 0 || Boolean(existingTask) || curriculum.course !== undefined
+    const validation = validateCurriculumDraft(curriculum, { enforceBounds: boundedCourse, requireTasks: boundedCourse })
     if (!validation.valid) {
       return res.status(400).json({ error: validation.error })
     }
 
-    persistCurriculum(topicId, curriculum)
+    const normalizedCurriculum = boundedCourse
+      ? {
+          ...validation.value,
+          course: {
+            ...(validation.value.course || {}),
+            kind: topic.course_kind === 'advanced' ? 'advanced' : 'core',
+            stage: Number.isInteger(topic.course_stage) && topic.course_stage >= 0 ? topic.course_stage : 0,
+          },
+        }
+      : validation.value
+
+    const firstLessonId = persistCurriculum(topicId, normalizedCurriculum)
 
     // Unlock the first lesson (foundation lessons with no prerequisites)
     const firstLessons = all(
@@ -700,9 +617,7 @@ router.post('/topics/:id/curriculum/confirm', (req, res) => {
 
     // The first foundation lesson stays not_started but is "available"
     // We don't need to change state; not_started with no prerequisites means available
-    const firstLessonId = firstLessons[0]?.id || null
-
-    return res.json({ ok: true, firstLessonId })
+    return res.json({ ok: true, firstLessonId: firstLessonId || firstLessons[0]?.id || null })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/confirm error:', err.message)
     return res.status(500).json({ error: 'Failed to confirm curriculum.' })
@@ -728,7 +643,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
 
     const modulesWithLessons = modules.map((mod) => {
       const lessons = all(
-        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required
+        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.task_spec
          FROM lessons l
          WHERE l.module_id = ?
          ORDER BY l.lesson_index`,
@@ -752,6 +667,12 @@ router.get('/topics/:id/curriculum', (req, res) => {
         } catch {
           outcomes = []
         }
+        let taskSpec = null
+        try {
+          taskSpec = lesson.task_spec ? JSON.parse(lesson.task_spec) : null
+        } catch {
+          taskSpec = null
+        }
 
         return {
           id: lesson.id,
@@ -761,6 +682,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
           outcomes,
           prerequisites,
           artifact_required: !!lesson.artifact_required,
+          task_spec: taskSpec,
           state: prog?.state || 'not_started',
           quiz_score: prog?.quiz_score ?? null,
           quiz_attempts: prog?.quiz_attempts ?? 0,
@@ -797,6 +719,9 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
+    const mutable = assertCurriculumMutable(topicId)
+    if (!mutable.ok) return res.status(mutable.error.status).json({ error: mutable.error.message, code: mutable.error.code })
+
     if (!tweakRequest || typeof tweakRequest !== 'string' || tweakRequest.trim().length === 0) {
       return res.status(400).json({ error: 'Tweak request is required.' })
     }
@@ -807,19 +732,24 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
     const existingModules = all('SELECT * FROM modules WHERE topic_id = ? ORDER BY module_index', topicId)
     const existingLessons = []
     for (const mod of existingModules) {
-      const lessons = all('SELECT title, depth, estimated_time, outcomes, prerequisites FROM lessons WHERE module_id = ? ORDER BY lesson_index', mod.id)
+      const lessons = all('SELECT title, depth, estimated_time, outcomes, prerequisites, task_spec FROM lessons WHERE module_id = ? ORDER BY lesson_index', mod.id)
       existingLessons.push(...lessons.map((l) => ({
         moduleTitle: mod.title,
         ...l,
         outcomes: JSON.parse(l.outcomes || '[]'),
         prerequisites: JSON.parse(l.prerequisites || '[]'),
+        task: l.task_spec ? JSON.parse(l.task_spec) : undefined,
       })))
     }
 
+    const taskBackedCourse = existingModules.length === 0 || existingLessons.some((lesson) => lesson.task)
+
     const system = `You are a curriculum designer. Modify an existing curriculum based on a user's natural-language request.
 Return the full updated curriculum as plain JSON (no markdown fences) with the same structure as the original.
+${taskBackedCourse ? 'This is a finite task-backed course. Preserve course metadata and include a validated practical task on every lesson.' : ''}
 Structure:
 {
+  ${taskBackedCourse ? '"course": { "kind": "core", "stage": 0, "scope": "80/20 foundation" },' : ''}
   "modules": [
     {
       "title": "Module Name",
@@ -829,18 +759,19 @@ Structure:
           "depth": "Beginner|Intermediate|Advanced",
           "estimated_time": 15,
           "outcomes": ["..."],
-          "prerequisites": ["Lesson Name"]
+          "prerequisites": ["Lesson Name"]${taskBackedCourse ? ',\n          "task": { "title": "Build and verify a small local setup", "scenario": "A safe local scenario.", "goal": "Create and verify the requested behavior.", "constraints": ["Use test data only"], "deliverables": ["Commands or configuration", "Observed output"], "success_criteria": ["The behavior is observable", "The result is reproducible"], "estimated_time": 25, "primary_setup": { "kind": "local", "description": "Use a local installation or container.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "free_fallback": { "kind": "no_software", "description": "Explain the expected local result with sample data.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "hints": [], "safety_notes": ["Use only systems you own or an isolated local environment."] }' : ''}
         }
       ]
     }
   ]
 }
 Rules:
-- Maintain 3-8 modules, 3-7 lessons per module.
+- Maintain ${taskBackedCourse ? '3-5 modules, 3-5 lessons per module' : '3-8 modules, 3-7 lessons per module'}.
 - Every lesson must have depth, estimated_time, outcomes, and prerequisites.
 - Prerequisites must reference actual lesson titles in the curriculum.
 - No circular prerequisites. No self-references.
-- Preserve as much of the existing structure as possible; only change what the user requested.`
+- Preserve as much of the existing structure as possible; only change what the user requested.
+${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or no-software path and provide an account-free fallback.' : ''}`
 
     const userContent = `Topic: ${topic.title}\nLearner level: ${topic.level || 'Beginner'}\nTime commitment: ${topic.time_per_week || '30 min/day'}\n\nExisting curriculum:\n${JSON.stringify(existingLessons, null, 2)}\n\nUser request: ${tweakRequest.trim()}\n\nReturn the updated full curriculum.`
 
@@ -850,16 +781,17 @@ Rules:
       messages: [{ role: 'user', content: userContent }],
     })
 
-    const raw = result.text.replace(/```json/g, '').replace(/```/g, '').trim()
-    const updated = JSON.parse(raw)
-    const validation = validateCurriculum(updated)
-    if (!validation.valid) {
-      return res.status(400).json({ error: `Tweak produced an invalid curriculum: ${validation.error}` })
-    }
+    const updated = await collectCurriculumDraft(
+      (async function* () { yield result.text || '' })(),
+      { enforceBounds: taskBackedCourse, requireTasks: taskBackedCourse },
+    )
 
-    return res.json({ ok: true, modules: updated.modules })
+    return res.json({ ok: true, modules: updated.modules, course: updated.course })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/tweak error:', err.message)
+    if (err instanceof CurriculumDraftError) {
+      return res.status(400).json({ error: `Tweak produced an invalid curriculum: ${err.message}`, code: err.code, retryable: err.retryable })
+    }
     if (err instanceof LlmClientError) {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
@@ -879,14 +811,27 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
+    const mutable = assertCurriculumMutable(topicId)
+    if (!mutable.ok) return res.status(mutable.error.status).json({ error: mutable.error.message, code: mutable.error.code })
+
     if (!topic.level || !topic.time_per_week) {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
     const config = requireLlmConfig()
     const request = createRequestAbortSignal(req, res)
-    const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
-    await streamToSSE(streamResult, res)
+    let lastError
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
+      try {
+        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
+        return writeCurriculumSSE(res, curriculum)
+      } catch (error) {
+        lastError = error
+        if (!(error.code === 'INVALID_CURRICULUM' && error.retryable && attempt < 2)) throw error
+      }
+    }
+    throw lastError
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/regenerate error:', err.message)
     if (!res.headersSent) {
@@ -895,9 +840,7 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       }
       return res.status(500).json({ error: 'Failed to regenerate curriculum.' })
     }
-    res.write(`event: error\n`)
-    res.write(`data: ${JSON.stringify({ message: err.message })}\n\n`)
-    res.end()
+    writeCurriculumSSEError(res, err)
   }
 })
 
@@ -916,7 +859,7 @@ router.get('/topics/:id/lessons/:lid/test-out', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.title, l.outcomes FROM lessons l
+      `SELECT l.title, l.outcomes, l.task_spec FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
       lessonId, topicId
@@ -924,6 +867,7 @@ router.get('/topics/:id/lessons/:lid/test-out', async (req, res) => {
     if (!lesson) {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
+    if (lesson.task_spec) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
 
     const config = requireLlmConfig()
 
@@ -976,7 +920,7 @@ router.post('/topics/:id/lessons/:lid/test-out', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.title, l.outcomes FROM lessons l
+      `SELECT l.title, l.outcomes, l.task_spec FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
       lessonId, topicId
@@ -984,6 +928,7 @@ router.post('/topics/:id/lessons/:lid/test-out', async (req, res) => {
     if (!lesson) {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
+    if (lesson.task_spec) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
 
     if (!Array.isArray(answers) || answers.length === 0) {
       return res.status(400).json({ error: 'Answers are required.' })
