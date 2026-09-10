@@ -334,29 +334,55 @@ export function initSchema() {
     })()
   }
 
-  const migration012 = '012_add_placement_assessments'
+  const migration012 = '012_add_course_lineage_and_task_assessment'
   const check012 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration012)
   if (!check012) {
     db.transaction(() => {
+      const addColumn = (sql) => {
+        try {
+          db.exec(sql)
+        } catch (err) {
+          if (!/duplicate column name/i.test(err.message)) throw err
+        }
+      }
+
+      addColumn("ALTER TABLE topics ADD COLUMN course_kind TEXT NOT NULL DEFAULT 'core'")
+      addColumn('ALTER TABLE topics ADD COLUMN course_stage INTEGER NOT NULL DEFAULT 0')
+      addColumn("ALTER TABLE topics ADD COLUMN course_focus TEXT NOT NULL DEFAULT ''")
+      addColumn("ALTER TABLE topics ADD COLUMN course_summary TEXT NOT NULL DEFAULT ''")
+      addColumn('ALTER TABLE topics ADD COLUMN course_completed_at DATETIME')
+      addColumn("ALTER TABLE lessons ADD COLUMN task_spec TEXT NOT NULL DEFAULT ''")
+      addColumn('ALTER TABLE quiz_attempts ADD COLUMN answer_key TEXT')
+      addColumn('ALTER TABLE quiz_attempts ADD COLUMN format_version INTEGER NOT NULL DEFAULT 1')
+
       db.exec(`
-        CREATE TABLE IF NOT EXISTS placement_assessments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          topic_id INTEGER NOT NULL,
-          requested_level TEXT NOT NULL,
-          questions TEXT NOT NULL,
-          answers TEXT,
-          status TEXT NOT NULL DEFAULT 'pending',
-          score INTEGER,
-          recommended_level TEXT,
-          feedback TEXT,
-          gaps TEXT,
+        CREATE TABLE IF NOT EXISTS course_links (
+          child_topic_id INTEGER PRIMARY KEY,
+          parent_topic_id INTEGER NOT NULL,
+          lane TEXT NOT NULL,
+          normalized_lane TEXT NOT NULL,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          completed_at DATETIME,
-          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+          CHECK (child_topic_id <> parent_topic_id),
+          UNIQUE (parent_topic_id, normalized_lane),
+          FOREIGN KEY (child_topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+          FOREIGN KEY (parent_topic_id) REFERENCES topics(id) ON DELETE RESTRICT
         );
-        CREATE INDEX IF NOT EXISTS idx_placement_assessments_topic
-          ON placement_assessments(topic_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_course_links_parent ON course_links(parent_topic_id);
       `)
+
+      db.exec(`
+        UPDATE topics
+        SET status = 'completed',
+            course_completed_at = COALESCE(course_completed_at, CURRENT_TIMESTAMP)
+        WHERE status = 'active'
+          AND EXISTS (SELECT 1 FROM modules WHERE modules.topic_id = topics.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM modules
+            WHERE modules.topic_id = topics.id
+              AND COALESCE(modules.status, 'active') <> 'completed'
+          )
+      `)
+
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration012)
     })()
   }
