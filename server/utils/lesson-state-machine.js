@@ -292,7 +292,7 @@ export function startPracticing({ topicId, lessonId, currentChunk = 1, totalChun
 export function startQuiz({ topicId, lessonId }) {
   const tx = transaction((_topicId, _lessonId) => {
     const progress = get(
-      'SELECT id, state FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT id, state, current_chunk, total_chunks, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?',
       _topicId,
       _lessonId,
     )
@@ -301,6 +301,10 @@ export function startQuiz({ topicId, lessonId }) {
         'Lesson must be in practicing state to start a quiz',
         'INVALID_STATE',
       )
+    }
+    const artifactReq = getArtifactRequirement(_lessonId)
+    if (artifactReq.taskBacked && (!progress.total_chunks || progress.current_chunk < progress.total_chunks || !progress.artifact_passed)) {
+      throw new StateMachineError('Complete all teaching chunks and pass the practical task before starting the quiz.', 'TASK_REQUIRED')
     }
     run('UPDATE progress SET state = ? WHERE id = ?', STATES.QUIZ_PENDING, progress.id)
     return { fromState: progress.state, toState: STATES.QUIZ_PENDING, progressId: progress.id }
@@ -315,10 +319,12 @@ export function startQuiz({ topicId, lessonId }) {
  * @returns {{ required: boolean, type: string|null }}
  */
 export function getArtifactRequirement(lessonId) {
-  const lesson = get('SELECT artifact_required, artifact_type FROM lessons WHERE id = ?', lessonId)
+  const lesson = get('SELECT artifact_required, artifact_type, task_spec FROM lessons WHERE id = ?', lessonId)
+  const taskBacked = typeof lesson?.task_spec === 'string' && lesson.task_spec.trim().length > 0
   return {
-    required: !!lesson?.artifact_required,
+    required: !!lesson?.artifact_required || taskBacked,
     type: lesson?.artifact_type || null,
+    taskBacked,
   }
 }
 
@@ -511,6 +517,9 @@ export function skipLesson({ topicId, lessonId }) {
  */
 export function startTestOut({ topicId, lessonId }) {
   const tx = transaction((_topicId, _lessonId) => {
+    if (getArtifactRequirement(_lessonId).taskBacked) {
+      throw new StateMachineError('Task-backed lessons cannot be tested out.', 'TASK_REQUIRED')
+    }
     const prereq = checkPrerequisites(_topicId, _lessonId)
     if (prereq.locked) {
       throw new StateMachineError('Prerequisites not met', 'PREREQUISITES_NOT_MET')
@@ -544,6 +553,9 @@ export function startTestOut({ topicId, lessonId }) {
  */
 export function finishTestOut({ topicId, lessonId, passed, quizScore, answers, evaluation, attemptId }) {
   const tx = transaction((_topicId, _lessonId, _passed, _quizScore, _answers, _evaluation, _attemptId) => {
+    if (getArtifactRequirement(_lessonId).taskBacked) {
+      throw new StateMachineError('Task-backed lessons cannot be tested out.', 'TASK_REQUIRED')
+    }
     const progress = get(
       'SELECT id, state, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?',
       _topicId,
