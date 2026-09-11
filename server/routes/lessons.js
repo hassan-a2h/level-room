@@ -18,11 +18,110 @@ import {
   recordArtifactResult,
 } from '../utils/lesson-state-machine.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
+import {
+  aggregateMixedScore,
+  normalizeQuizQuestions,
+  sanitizeQuizQuestions,
+  scoreChoiceAnswers,
+  validateAnswerSubmission,
+  validatePersistedQuiz,
+  validateWrittenEvaluation,
+} from '../utils/mixed-quiz.js'
 
 const router = Router()
 
 const MAX_MESSAGE_LENGTH = 2000
 const DEFAULT_TOTAL_CHUNKS = 3
+const MAX_TASK_EVIDENCE_FIELD = 16 * 1024
+const MAX_TASK_EVIDENCE = 64 * 1024
+
+function parseTaskSpec(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null
+  try {
+    const parsed = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Stored task specification is invalid.')
+    return parsed
+  } catch {
+    throw new Error('Stored task specification is invalid.')
+  }
+}
+
+function taskError(message, code = 'TASK_REQUIRED') {
+  const error = new Error(message)
+  error.status = 409
+  error.code = code
+  return error
+}
+
+function getTaskEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    throw new Error('Structured task evidence is required.')
+  }
+  const values = {
+    setup: evidence.setup,
+    actions: evidence.actions ?? evidence.steps,
+    result: evidence.result ?? evidence.observations,
+    reflection: evidence.reflection,
+  }
+  for (const [field, value] of Object.entries(values)) {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(`Task evidence field "${field}" is required.`)
+    if (Buffer.byteLength(value, 'utf8') > MAX_TASK_EVIDENCE_FIELD) throw new Error(`Task evidence field "${field}" is too long.`)
+  }
+  const canonical = [
+    `Setup:\n${values.setup.trim()}`,
+    `Actions:\n${values.actions.trim()}`,
+    `Result:\n${values.result.trim()}`,
+    `Reflection:\n${values.reflection.trim()}`,
+  ].join('\n\n')
+  if (Buffer.byteLength(canonical, 'utf8') > MAX_TASK_EVIDENCE) throw new Error('Task evidence is too large.')
+  return canonical
+}
+
+async function streamReply(streamResult, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  })
+
+  let text = ''
+  try {
+    for await (const chunk of streamResult.textStream) {
+      const value = typeof chunk === 'string' ? chunk : ''
+      text += value
+      res.write(`data: ${JSON.stringify(value)}\n\n`)
+    }
+    if (!text.trim()) {
+      writeStreamError(res, new LlmClientError('The model returned no response. Please retry.', { code: 'EMPTY_RESPONSE' }))
+      if (!res.destroyed && !res.writableEnded) res.end()
+      return { ok: false, text }
+    }
+    return { ok: true, text }
+  } catch (error) {
+    writeStreamError(res, error)
+    if (!res.destroyed && !res.writableEnded) res.end()
+    return { ok: false, text }
+  }
+}
+
+function writeStreamError(res, error) {
+  const known = error instanceof LlmClientError
+  const body = known
+    ? { message: error.message, code: error.code, retryable: error.retryable }
+    : { message: 'The response could not be completed. Please retry.', code: 'STREAM_ERROR', retryable: true }
+  try {
+    if (!res.destroyed) {
+      res.write('event: error\n')
+      res.write(`data: ${JSON.stringify(body)}\n\n`)
+    }
+  } catch {}
+}
+
+function finishStream(res) {
+  if (res.destroyed || res.writableEnded) return
+  res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
+  res.end()
+}
 
 async function streamReply(streamResult, res) {
   res.writeHead(200, {
@@ -169,7 +268,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type,
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type, l.task_spec,
               m.title as module_title, m.id as module_id
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
@@ -220,6 +319,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
     }
 
     const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
+    const taskSpec = parseTaskSpec(lesson.task_spec)
 
     return res.json({
       lesson: {
@@ -231,6 +331,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
         module_title: lesson.module_title,
         artifact_required: !!lesson.artifact_required,
         artifact_type: lesson.artifact_type,
+        task_spec: taskSpec,
       },
       progress,
       messages,
@@ -266,7 +367,7 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -369,7 +470,7 @@ router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -485,6 +586,40 @@ Generate a JSON object with a "questions" array. Each question must have:
 All questions must be free-text (no multiple choice). Make them context-aware and related to the lesson content. Return ONLY valid JSON.`
 }
 
+function buildMixedQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficultyInstruction = '', mode = 'regular' }) {
+  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
+  const counts = mode === 'retest' ? 'exactly one multiple_choice and one written question' : 'exactly two multiple_choice and two written questions'
+  return `You are an expert tutor. Generate ${counts} for the lesson "${lessonTitle}" based only on the material below.
+
+Lesson outcomes: ${lessonOutcomes.join('; ')}${adaptive}
+
+Conversation context:
+${context}
+
+Return ONLY valid JSON with a "questions" array. Each multiple_choice question must have:
+{"id":"unique-id","format":"multiple_choice","category":"Recall|Apply|Diagnose","prompt":"...","options":[{"id":"a","text":"..."},{"id":"b","text":"..."},{"id":"c","text":"..."},{"id":"d","text":"..."}],"correct_option":"a","weight":1}
+Each written question must have:
+{"id":"unique-id","format":"written","category":"Explain|Transfer|Apply","prompt":"...","max_words":80,"weight":2}
+Choice options must be plausible and have exactly one correct_option. Written answers must be answerable in at most 80 words and 2,000 characters. Do not include secrets, answer keys outside correct_option, or markdown.`
+}
+
+function buildMixedEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, answers, messages }) {
+  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
+  const written = questions.filter((question) => question.format === 'written')
+    .map((question) => `Question ${question.id}: ${question.prompt}\nAnswer: ${answers[question.id]}`)
+    .join('\n\n')
+  return `Evaluate only the written answers below for the lesson "${lessonTitle}". Do not evaluate or infer multiple-choice answers.
+Lesson outcomes: ${lessonOutcomes.join('; ')}
+Conversation context:
+${context}
+
+Written questions and answers:
+${written}
+
+Return ONLY JSON in this shape: {"written":{"question-id":{"score":0,"explanation":"..."}}}. Score each answer from 0 to 100. Keep explanations concise and identify a gap when the answer is incomplete.`
+}
+
 /**
  * Build retest quiz prompt focused only on missed gaps.
  */
@@ -567,7 +702,7 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -580,6 +715,14 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
+    }
+
+    const taskSpec = parseTaskSpec(lesson.task_spec)
+    if (taskSpec) {
+      const progress = get('SELECT state, current_chunk, total_chunks, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      if (!progress || progress.state !== 'practicing' || !progress.total_chunks || progress.current_chunk < progress.total_chunks || !progress.artifact_passed) {
+        return res.status(409).json({ error: 'Complete all teaching chunks and pass the practical task before starting the quiz.', code: 'TASK_REQUIRED' })
+      }
     }
 
     const config = requireLlmConfig()
@@ -597,13 +740,11 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     )
 
     const difficultyInstruction = buildDifficultyInstruction(topicId)
+    const mixedQuiz = Boolean(taskSpec)
 
-    const system = buildQuizPrompt({
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      messages,
-      difficultyInstruction,
-    })
+    const system = mixedQuiz
+      ? buildMixedQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction })
+      : buildQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction })
 
     const result = await generateText({
       ...llmRequestOptions(config),
@@ -620,24 +761,36 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
     }
 
     const questions = Array.isArray(parsed.questions) ? parsed.questions : []
-    if (questions.length === 0) {
-      return res.status(500).json({ error: 'LLM returned no quiz questions. Please try again.' })
-    }
+    if (questions.length === 0) return res.status(500).json({ error: 'LLM returned no quiz questions. Please try again.' })
 
-    // Validate question structure
-    const validQuestions = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
-    if (validQuestions.length === 0) {
-      return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
+    let validQuestions = questions
+    let answerKey = null
+    let formatVersion = 1
+    if (mixedQuiz) {
+      try {
+        const normalized = normalizeQuizQuestions(questions, { mode: 'regular' })
+        validQuestions = normalized.questions
+        answerKey = normalized.answerKey
+        formatVersion = 2
+      } catch (error) {
+        return res.status(500).json({ error: `LLM returned an invalid mixed quiz: ${error.message}`, retryable: true })
+      }
+    } else {
+      const valid = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
+      if (valid.length === 0) return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
+      validQuestions = valid
     }
 
     const questionsJson = JSON.stringify(validQuestions)
+    let attemptId
     try {
       transaction(() => {
         startQuiz({ topicId, lessonId })
-        run(
-          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-          topicId, lessonId, questionsJson,
+        const inserted = run(
+          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answer_key, format_version) VALUES (?, ?, ?, ?, ?)',
+          topicId, lessonId, questionsJson, answerKey ? JSON.stringify(answerKey) : null, formatVersion,
         )
+        attemptId = Number(inserted.lastInsertRowid)
       })()
     } catch (smErr) {
       if (smErr instanceof StateMachineError) {
@@ -646,7 +799,7 @@ router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
       throw smErr
     }
 
-    return res.json({ questions: validQuestions })
+    return res.json({ attemptId, formatVersion, questions: validQuestions })
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/quiz error:', err.message)
     if (err instanceof LlmClientError) {
@@ -666,7 +819,7 @@ router.get('/topics/:id/lessons/:lid/quiz', (req, res) => {
     const lessonId = Number(req.params.lid)
 
     const attempt = get(
-      'SELECT questions, answers, evaluation FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
+      'SELECT id, questions, answers, evaluation, format_version FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
       topicId, lessonId
     )
 
@@ -687,7 +840,7 @@ router.get('/topics/:id/lessons/:lid/quiz', (req, res) => {
       evaluation = attempt.evaluation ? JSON.parse(attempt.evaluation) : null
     } catch {}
 
-    return res.json({ questions, answers, evaluation })
+    return res.json({ attemptId: attempt.id, formatVersion: attempt.format_version || 1, questions, answers, evaluation })
   } catch (err) {
     console.error('GET /api/topics/:id/lessons/:lid/quiz error:', err.message)
     return res.status(500).json({ error: 'Failed to load quiz.' })
@@ -702,9 +855,9 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
     const lessonId = Number(req.params.lid)
-    const { answers } = req.body
+    const { answers, attemptId: requestedAttemptId } = req.body
 
-    if (!answers || typeof answers !== 'object' || Object.keys(answers).length === 0) {
+    if (!answers || typeof answers !== 'object' || Array.isArray(answers) || Object.keys(answers).length === 0) {
       return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
     }
 
@@ -714,7 +867,7 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -725,7 +878,7 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
     }
 
     const attempt = get(
-      'SELECT id, questions FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
+      'SELECT id, questions, answers AS stored_answers, evaluation AS stored_evaluation, answer_key, format_version FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
       topicId, lessonId
     )
     if (!attempt) {
@@ -737,6 +890,64 @@ router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
       questions = attempt.questions ? JSON.parse(attempt.questions) : []
     } catch {
       questions = []
+    }
+
+    const latestAttempt = get(
+      'SELECT id FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC LIMIT 1',
+      topicId, lessonId,
+    )
+    const numericAttemptId = requestedAttemptId === undefined || requestedAttemptId === null ? null : Number(requestedAttemptId)
+    if (numericAttemptId !== null && (!Number.isInteger(numericAttemptId) || numericAttemptId !== attempt.id || attempt.id !== latestAttempt?.id)) {
+      return res.status(409).json({ error: 'This quiz attempt is stale. Please load the current attempt.', code: 'STALE_ATTEMPT' })
+    }
+
+    if ((attempt.format_version || 1) === 2) {
+      if (numericAttemptId === null || attempt.id !== latestAttempt?.id) {
+        return res.status(409).json({ error: 'A current quiz attempt id is required.', code: 'STALE_ATTEMPT' })
+      }
+      let answerKey
+      try {
+        answerKey = attempt.answer_key ? JSON.parse(attempt.answer_key) : null
+      } catch {
+        answerKey = null
+      }
+      const storedValidation = validatePersistedQuiz(questions, answerKey, { mode: questions.length === 2 ? 'retest' : 'regular' })
+      if (!storedValidation.valid) return res.status(500).json({ error: 'Stored mixed quiz is invalid. Please start a new quiz.', code: 'INVALID_MIXED_QUIZ' })
+      const answerValidation = validateAnswerSubmission(questions, answerKey, answers)
+      if (!answerValidation.valid) return res.status(400).json({ error: answerValidation.error, code: 'INVALID_QUIZ_ANSWERS' })
+
+      const topicMessages = all(
+        'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
+        topicId, lessonId,
+      )
+      let mixedOutcomes = []
+      try { mixedOutcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : [] } catch { mixedOutcomes = [] }
+      const config = requireLlmConfig()
+      const writtenResult = await generateText({
+        ...llmRequestOptions(config),
+        system: buildMixedEvaluationPrompt({ lessonTitle: lesson.title, lessonOutcomes: mixedOutcomes, questions, answers, messages: topicMessages }),
+        messages: [{ role: 'user', content: 'Evaluate only the written answers and return JSON.' }],
+      })
+      let writtenParsed
+      try {
+        writtenParsed = JSON.parse(writtenResult.text || '{}')
+      } catch {
+        return res.status(500).json({ error: 'Failed to parse written quiz evaluation from LLM. Please try again.', retryable: true })
+      }
+      const writtenValidation = validateWrittenEvaluation(questions, writtenParsed.written || writtenParsed)
+      if (!writtenValidation.valid) return res.status(500).json({ error: writtenValidation.error, retryable: true })
+      const evaluation = aggregateMixedScore(questions, scoreChoiceAnswers(questions, answers, answerKey), writtenValidation.value)
+      evaluation.formatVersion = 2
+      try {
+        recordQuizResult({ topicId, lessonId, passed: evaluation.passed, quizScore: evaluation.overallScore, answers, evaluation, attemptId: attempt.id })
+      } catch (smErr) {
+        if (smErr instanceof StateMachineError) return res.status(400).json({ error: smErr.message, code: smErr.code })
+        throw smErr
+      }
+      if (evaluation.passed) {
+        try { recordMasteryEvent(req.body.localDate || new Date().toISOString().split('T')[0]) } catch (streakErr) { console.error('Streak record error on quiz pass:', streakErr.message) }
+      }
+      return res.json(evaluation)
     }
 
     const config = requireLlmConfig()
@@ -882,6 +1093,9 @@ router.post('/topics/:id/lessons/:lid/test-out/start', (req, res) => {
     const topicId = Number(req.params.id)
     const lessonId = Number(req.params.lid)
 
+    const task = get('SELECT l.task_spec FROM lessons l JOIN modules m ON l.module_id = m.id WHERE l.id = ? AND m.topic_id = ?', lessonId, topicId)
+    if (parseTaskSpec(task?.task_spec)) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
+
     try {
       const result = startTestOut({ topicId, lessonId })
       return res.json(result)
@@ -917,7 +1131,7 @@ router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -926,6 +1140,7 @@ router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
     if (!lesson) {
       return res.status(404).json({ error: 'Lesson not found.' })
     }
+    if (parseTaskSpec(lesson.task_spec)) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
 
     try {
       const result = finishTestOut({
@@ -1019,7 +1234,7 @@ router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -1111,7 +1326,7 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -1153,6 +1368,35 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
 
     const difficultyInstruction = buildDifficultyInstruction(topicId)
 
+    if (parseTaskSpec(lesson.task_spec)) {
+      const system = `${buildMixedQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction, mode: 'retest' })}
+This is a targeted retest. Focus the two questions on these previously identified gaps:\n${gaps.map((gap) => `- ${gap}`).join('\n')}`
+      const result = await generateText({
+        ...llmRequestOptions(config),
+        system,
+        messages: [{ role: 'user', content: 'Generate the targeted mixed retest as JSON.' }],
+      })
+      let parsed
+      try { parsed = JSON.parse(result.text || '{}') } catch { return res.status(500).json({ error: 'Failed to parse retest questions from LLM. Please try again.', retryable: true }) }
+      let normalized
+      try { normalized = normalizeQuizQuestions(parsed.questions, { mode: 'retest' }) } catch (error) { return res.status(500).json({ error: `LLM returned an invalid mixed retest: ${error.message}`, retryable: true }) }
+      let attemptId
+      try {
+        transaction(() => {
+          startRetest({ topicId, lessonId })
+          const inserted = run(
+            'INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answer_key, format_version) VALUES (?, ?, ?, ?, ?)',
+            topicId, lessonId, JSON.stringify(normalized.questions), JSON.stringify(normalized.answerKey), 2,
+          )
+          attemptId = Number(inserted.lastInsertRowid)
+        })()
+      } catch (smErr) {
+        if (smErr instanceof StateMachineError) return res.status(400).json({ error: smErr.message, code: smErr.code })
+        throw smErr
+      }
+      return res.json({ attemptId, formatVersion: 2, questions: normalized.questions })
+    }
+
     const system = buildRetestPrompt({
       lessonTitle: lesson.title,
       lessonOutcomes: outcomes,
@@ -1186,13 +1430,15 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
     }
 
     const questionsJson = JSON.stringify(validQuestions)
+    let attemptId
     try {
       transaction(() => {
         startRetest({ topicId, lessonId })
-        run(
+        const inserted = run(
           'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
           topicId, lessonId, questionsJson,
         )
+        attemptId = Number(inserted.lastInsertRowid)
       })()
     } catch (smErr) {
       if (smErr instanceof StateMachineError) {
@@ -1201,7 +1447,7 @@ router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
       throw smErr
     }
 
-    return res.json({ questions: validQuestions })
+    return res.json({ attemptId, formatVersion: 1, questions: validQuestions })
   } catch (err) {
     console.error('POST /api/topics/:id/lessons/:lid/remediate/retest error:', err.message)
     if (err instanceof LlmClientError) {
@@ -1238,10 +1484,23 @@ router.post('/topics/:id/lessons/:lid/remediate/defer', (req, res) => {
 /**
  * Build artifact evaluation prompt.
  */
-function buildArtifactEvaluationPrompt({ lessonTitle, lessonOutcomes, artifactContent, artifactType }) {
+function buildArtifactEvaluationPrompt({ lessonTitle, lessonOutcomes, artifactContent, artifactType, taskSpec }) {
+  const taskContext = taskSpec
+    ? `\nPractical task:\n${JSON.stringify({
+      scenario: taskSpec.scenario,
+      goal: taskSpec.goal,
+      constraints: taskSpec.constraints,
+      deliverables: taskSpec.deliverables,
+      success_criteria: taskSpec.success_criteria,
+      primary_setup: taskSpec.primary_setup,
+      free_fallback: taskSpec.free_fallback,
+      safety_notes: taskSpec.safety_notes,
+    })}\nThe submission is text evidence only. Do not assume commands were executed; judge the evidence and explanation provided.`
+    : ''
   return `You are an expert reviewer evaluating a learner's artifact for the lesson "${lessonTitle}".
 
 Lesson outcomes: ${lessonOutcomes.join('; ')}
+${taskContext}
 
 Artifact type: ${artifactType || 'code/text'}
 Artifact content:
@@ -1284,13 +1543,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
     const lessonId = Number(req.params.lid)
-    const { content, fileData } = req.body
-
-    // Validate content presence
-    const artifactText = content || fileData || ''
-    if (!artifactText || typeof artifactText !== 'string' || artifactText.trim().length === 0) {
-      return res.status(400).json({ error: 'Artifact content is empty. Please enter or upload your solution before submitting.' })
-    }
+    const { content, fileData, evidence } = req.body
 
     // File size validation
     if (fileData && Buffer.byteLength(fileData, 'utf8') > MAX_FILE_SIZE_MB * 1024 * 1024) {
@@ -1303,7 +1556,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
     }
 
     const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type
+      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type, l.task_spec
        FROM lessons l
        JOIN modules m ON l.module_id = m.id
        WHERE l.id = ? AND m.topic_id = ?`,
@@ -1316,6 +1569,25 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
     const prereqCheck = buildPrereqCheck(topicId, lesson)
     if (prereqCheck.locked) {
       return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
+    }
+
+    const taskSpec = parseTaskSpec(lesson.task_spec)
+    let artifactText = content || fileData || ''
+    if (taskSpec) {
+      const progress = get('SELECT state, current_chunk, total_chunks, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      if (!progress || progress.state !== 'practicing' || !progress.total_chunks || progress.current_chunk < progress.total_chunks) {
+        return res.status(409).json({ error: 'Complete all teaching chunks before submitting practical evidence.', code: 'TASK_NOT_READY' })
+      }
+      try {
+        artifactText = getTaskEvidence(evidence)
+      } catch (error) {
+        return res.status(400).json({ error: error.message, code: 'INVALID_TASK_EVIDENCE' })
+      }
+    } else if (!artifactText || typeof artifactText !== 'string' || artifactText.trim().length === 0) {
+      return res.status(400).json({ error: 'Artifact content is empty. Please enter or upload your solution before submitting.' })
+    }
+    if (!taskSpec && typeof artifactText === 'string' && Buffer.byteLength(artifactText, 'utf8') > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      return res.status(400).json({ error: `Artifact too large (max ${MAX_FILE_SIZE_MB}MB). Please submit a smaller artifact.` })
     }
 
     const config = requireLlmConfig()
@@ -1332,6 +1604,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       lessonOutcomes: outcomes,
       artifactContent: artifactText.trim(),
       artifactType: lesson.artifact_type,
+      taskSpec,
     })
 
     const result = await generateText({
@@ -1386,7 +1659,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
           topicId,
           lessonId,
           artifactPassed: passed,
-          quizScore: progress ? progress.quiz_score : null,
+          quizScore: taskSpec ? null : (progress ? progress.quiz_score : null),
         })
         if (progress) {
           const countRow = get('SELECT COUNT(*) as count FROM artifacts WHERE progress_id = ?', progress.id)
