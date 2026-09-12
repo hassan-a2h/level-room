@@ -313,6 +313,10 @@ describe('Exams API', () => {
       const mod = dbModule.get('SELECT status, completed_at FROM modules WHERE id = ?', moduleId)
       expect(mod.status).toBe('completed')
       expect(mod.completed_at).toBeTruthy()
+      const topic = dbModule.get('SELECT status, course_completed_at, course_summary FROM topics WHERE id = ?', topicId)
+      expect(topic.status).toBe('completed')
+      expect(topic.course_completed_at).toBeTruthy()
+      expect(JSON.parse(topic.course_summary).topicId).toBe(topicId)
     })
 
     it('unlocks next module on pass', async () => {
@@ -335,6 +339,7 @@ describe('Exams API', () => {
       expect(res.status).toBe(200)
       expect(res.body.passed).toBe(true)
       expect(res.body.nextModuleUnlocked).toBe(true)
+      expect(dbModule.get('SELECT status FROM topics WHERE id = ?', ids.topicId).status).toBe('active')
     })
 
     it('returns fail result with weak lessons identified', async () => {
@@ -478,6 +483,8 @@ describe('Exams API', () => {
       expect(res.status).toBe(200)
       expect(res.body.passed).toBe(true)
       expect(res.body.partialPass).toBe(true)
+      expect(dbModule.get('SELECT status, course_completed_at FROM topics WHERE id = ?', topicId)).toMatchObject({ status: 'completed' })
+      expect(dbModule.get('SELECT course_completed_at FROM topics WHERE id = ?', topicId).course_completed_at).toBeTruthy()
     })
   })
 
