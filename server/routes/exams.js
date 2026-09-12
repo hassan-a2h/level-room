@@ -6,6 +6,7 @@ import { llmRequestOptions } from '../llm/request-options.js'
 import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
+import { completeCourseIfEligibleInTransaction } from '../utils/course-lineage.js'
 
 const router = Router()
 
@@ -520,6 +521,7 @@ router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
           topicId, moduleId,
         )
         nextUnlocked = Boolean(nextModule)
+        completeCourseIfEligibleInTransaction(topicId)
       }
       return { nextModuleUnlocked: nextUnlocked }
     })()
@@ -888,6 +890,7 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
           topicId, moduleId,
         )
         nextUnlocked = Boolean(nextModule)
+        completeCourseIfEligibleInTransaction(topicId)
       }
       return { nextModuleUnlocked: nextUnlocked }
     })()
