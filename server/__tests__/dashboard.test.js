@@ -39,7 +39,7 @@ describe('Dashboard API', () => {
     it('returns empty array when no topics exist', async () => {
       const res = await request(app).get('/api/topics')
       expect(res.status).toBe(200)
-      expect(res.body).toEqual({ topics: [] })
+      expect(res.body).toMatchObject({ topics: [], activeTopics: [], completedTopics: [] })
     })
 
     it('returns topics with progress stats', async () => {
@@ -62,6 +62,27 @@ describe('Dashboard API', () => {
       expect(res.body.topics[0].progress).toBe(50) // 1 of 2 passed = 50%
       expect(res.body.topics[0].totalLessons).toBe(2)
       expect(res.body.topics[0].passedLessons).toBe(1)
+      expect(res.body.activeTopics).toHaveLength(1)
+      expect(res.body.completedTopics).toHaveLength(0)
+    })
+
+    it('exposes course metadata and keeps completed courses in the list', async () => {
+      const topic = dbModule.run(
+        "INSERT INTO topics (title, status, course_kind, course_stage, course_focus, course_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
+        'Cloud Security', 'completed', 'advanced', 2, 'Cloud Security', new Date().toISOString(),
+      )
+
+      const res = await request(app).get('/api/topics')
+      expect(res.status).toBe(200)
+      expect(res.body.topics[0]).toMatchObject({
+        id: topic.lastInsertRowid,
+        status: 'completed',
+        courseKind: 'advanced',
+        courseStage: 2,
+        courseFocus: 'Cloud Security',
+      })
+      expect(res.body.activeTopics).toHaveLength(0)
+      expect(res.body.completedTopics).toHaveLength(1)
     })
   })
 
@@ -92,6 +113,19 @@ describe('Dashboard API', () => {
       expect(res.body.modules[0].lessons[0].state).toBe("passed")
       expect(res.body.modules[0].lessons[1].state).toBe("not_started")
       expect(res.body.modules[0].lessons[1].prerequisites).toHaveLength(1)
+    })
+
+    it('returns immediate lineage and child course references', async () => {
+      const parent = dbModule.run("INSERT INTO topics (title, status, course_completed_at) VALUES (?, ?, ?)", 'DevOps', 'completed', new Date().toISOString())
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage, course_focus) VALUES (?, ?, ?, ?, ?)", 'Cloud Security', 'active', 'advanced', 1, 'Cloud Security')
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'Cloud Security', 'cloud security')
+
+      const res = await request(app).get(`/api/topics/${parent.lastInsertRowid}/dashboard`)
+      expect(res.status).toBe(200)
+      expect(res.body.topic.lineage.map((entry) => entry.id)).toEqual([parent.lastInsertRowid])
+      expect(res.body.topic.children).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: child.lastInsertRowid, lane: 'Cloud Security' }),
+      ]))
     })
   })
 
@@ -189,6 +223,17 @@ describe('Dashboard API', () => {
       const mistakes = dbModule.all("SELECT * FROM mistakes_log WHERE topic_id = ?", topic.lastInsertRowid)
       expect(mistakes).toHaveLength(0)
     })
+
+    it('protects prerequisite courses that have linked children', async () => {
+      const parent = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'DevOps', 'completed')
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES (?, ?, ?, ?)", 'Cloud Security', 'active', 'advanced', 1)
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'Cloud Security', 'cloud security')
+
+      const res = await request(app).delete(`/api/topics/${parent.lastInsertRowid}`)
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('COURSE_HAS_CHILDREN')
+      expect(dbModule.get('SELECT id FROM topics WHERE id = ?', parent.lastInsertRowid)).toBeTruthy()
+    })
   })
 
   describe('GET /api/topics/default', () => {
@@ -204,6 +249,16 @@ describe('Dashboard API', () => {
       const res = await request(app).get('/api/topics/default')
       expect(res.status).toBe(200)
       expect(res.body.topic.id).toBe(t2.lastInsertRowid)
+    })
+
+    it('prefers an active topic over a newer completed prerequisite', async () => {
+      const completed = dbModule.run("INSERT INTO topics (title, status, last_active_at) VALUES (?, ?, ?)", 'Completed', 'completed', '2026-09-15T12:00:00Z')
+      const active = dbModule.run("INSERT INTO topics (title, status, last_active_at) VALUES (?, ?, ?)", 'Active child', 'active', '2026-09-15T10:00:00Z')
+
+      const res = await request(app).get('/api/topics/default')
+      expect(res.status).toBe(200)
+      expect(res.body.topic.id).toBe(active.lastInsertRowid)
+      expect(res.body.topic.id).not.toBe(completed.lastInsertRowid)
     })
 
     it('returns any topic when none have last_active_at', async () => {
