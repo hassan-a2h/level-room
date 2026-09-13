@@ -1,9 +1,60 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
+import { getLineage, CourseLineageError } from '../utils/course-lineage.js'
 
 const router = Router()
 
 const MAX_ACTIVE_TOPICS = 3
+
+function getTopicLineageRefs(topicId) {
+  let lineage = []
+  try {
+    lineage = getLineage(topicId).map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      courseKind: entry.course_kind || 'core',
+      courseStage: entry.course_stage || 0,
+      courseFocus: entry.course_focus || '',
+    }))
+  } catch {
+    lineage = []
+  }
+  const parent = get(
+    `SELECT t.id, t.title, cl.lane
+     FROM course_links cl JOIN topics t ON t.id = cl.parent_topic_id
+     WHERE cl.child_topic_id = ?`,
+    topicId,
+  )
+  const children = all(
+    `SELECT t.id, t.title, t.status, t.course_kind, t.course_stage, t.course_focus, cl.lane
+     FROM course_links cl JOIN topics t ON t.id = cl.child_topic_id
+     WHERE cl.parent_topic_id = ? ORDER BY t.created_at, t.id`,
+    topicId,
+  ).map((child) => ({
+    id: child.id,
+    title: child.title,
+    status: child.status,
+    courseKind: child.course_kind || 'advanced',
+    courseStage: child.course_stage || 0,
+    courseFocus: child.course_focus || '',
+    lane: child.lane,
+  }))
+  return {
+    lineage,
+    parent: parent ? { id: parent.id, title: parent.title, lane: parent.lane } : null,
+    children,
+  }
+}
+
+function serializeCourseFields(topic) {
+  return {
+    courseKind: topic.course_kind || 'core',
+    courseStage: topic.course_stage || 0,
+    courseFocus: topic.course_focus || '',
+    courseSummary: topic.course_summary || '',
+    courseCompletedAt: topic.course_completed_at || null,
+  }
+}
 
 /**
  * Compute progress stats for a topic.
@@ -59,10 +110,13 @@ router.get('/topics', (_req, res) => {
         difficulty: topic.difficulty || 'normal',
         consecutivePasses: topic.consecutive_passes || 0,
         consecutiveFails: topic.consecutive_fails || 0,
+        ...serializeCourseFields(topic),
         ...stats,
       }
     })
-    return res.json({ topics: enriched })
+    const activeTopics = enriched.filter((topic) => topic.status === 'active')
+    const completedTopics = enriched.filter((topic) => topic.status === 'completed')
+    return res.json({ topics: enriched, activeTopics, completedTopics })
   } catch (err) {
     console.error('GET /api/topics error:', err.message)
     return res.status(500).json({ error: 'Failed to load topics.' })
@@ -75,12 +129,12 @@ router.get('/topics', (_req, res) => {
  */
 router.get('/topics/default', (_req, res) => {
   try {
-    const topic = get('SELECT * FROM topics ORDER BY last_active_at DESC, created_at DESC LIMIT 1')
+    const topic = get("SELECT * FROM topics ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_active_at DESC, created_at DESC LIMIT 1")
     if (!topic) {
       return res.status(404).json({ error: 'No topics found.' })
     }
     const stats = getTopicProgress(topic.id)
-    return res.json({ topic: { ...topic, ...stats } })
+    return res.json({ topic: { ...topic, ...serializeCourseFields(topic), ...stats, ...getTopicLineageRefs(topic.id) } })
   } catch (err) {
     console.error('GET /api/topics/default error:', err.message)
     return res.status(500).json({ error: 'Failed to load default topic.' })
@@ -103,7 +157,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
 
     const modulesWithLessons = modules.map((mod) => {
       const lessons = all(
-        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites
+        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
          FROM lessons l
          WHERE l.module_id = ?
          ORDER BY l.lesson_index`,
@@ -125,6 +179,12 @@ router.get('/topics/:id/dashboard', (req, res) => {
         } catch {
           prerequisites = []
         }
+        let taskSpec = null
+        try {
+          taskSpec = lesson.task_spec ? JSON.parse(lesson.task_spec) : null
+        } catch {
+          taskSpec = null
+        }
 
         // Determine if lesson is locked (prerequisites not met)
         const locked = prerequisites.some((pr) => {
@@ -142,6 +202,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
           estimated_time: lesson.estimated_time,
           outcomes: lesson.outcomes,
           prerequisites,
+          task_spec: taskSpec,
           state,
           locked,
           quiz_score: prog?.quiz_score ?? null,
@@ -189,6 +250,8 @@ router.get('/topics/:id/dashboard', (req, res) => {
         difficulty,
         consecutivePasses,
         consecutiveFails,
+        ...serializeCourseFields(topic),
+        ...getTopicLineageRefs(topic.id),
         ...stats,
       },
       modules: modulesWithLessons,
@@ -270,68 +333,22 @@ router.delete('/topics/:id', (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
+    const children = get('SELECT 1 FROM course_links WHERE parent_topic_id = ? LIMIT 1', topicId)
+    if (children) {
+      return res.status(409).json({ error: 'Cannot delete a prerequisite course with linked children.', code: 'COURSE_HAS_CHILDREN' })
+    }
+
     run('DELETE FROM topics WHERE id = ?', topicId)
     return res.json({ ok: true })
   } catch (err) {
     console.error('DELETE /api/topics/:id error:', err.message)
+    if (err instanceof CourseLineageError) {
+      return res.status(err.status).json({ error: err.message, code: err.code })
+    }
+    if (/FOREIGN KEY constraint failed/i.test(err.message)) {
+      return res.status(409).json({ error: 'Cannot delete a prerequisite course with linked children.', code: 'COURSE_HAS_CHILDREN' })
+    }
     return res.status(500).json({ error: 'Failed to delete topic.' })
-  }
-})
-
-/**
- * PUT /api/topics/:id/lessons/:lid/state
- * Update a lesson's state (for testing / demo / graph updates).
- */
-router.put('/topics/:id/lessons/:lid/state', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { state } = req.body
-
-    const VALID_STATES = ['not_started', 'practicing', 'passed', 'skipped', 'tested_out', 'quiz_pending', 'remediating']
-    if (!VALID_STATES.includes(state)) {
-      return res.status(400).json({ error: `Invalid state. Must be one of: ${VALID_STATES.join(', ')}` })
-    }
-
-    const topic = get('SELECT id FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get('SELECT id FROM lessons WHERE id = ?', lessonId)
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    // Upsert progress row
-    const existing = get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (existing) {
-      run(
-        'UPDATE progress SET state = ?, completed_at = ? WHERE id = ?',
-        state,
-        ['passed', 'tested_out'].includes(state) ? new Date().toISOString() : null,
-        existing.id
-      )
-    } else {
-      run(
-        'INSERT INTO progress (topic_id, lesson_id, state, started_at, completed_at) VALUES (?, ?, ?, ?, ?)',
-        topicId,
-        lessonId,
-        state,
-        ['practicing', 'quiz_pending', 'remediating'].includes(state) ? new Date().toISOString() : null,
-        ['passed', 'tested_out'].includes(state) ? new Date().toISOString() : null
-      )
-    }
-
-    const updated = get(
-      'SELECT state, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?',
-      topicId, lessonId
-    )
-
-    return res.json({ ok: true, lessonId, state: updated.state })
-  } catch (err) {
-    console.error('PUT /api/topics/:id/lessons/:lid/state error:', err.message)
-    return res.status(500).json({ error: 'Failed to update lesson state.' })
   }
 })
 
