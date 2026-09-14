@@ -15,6 +15,23 @@ vi.mock('../llm/client.js', () => ({
   }),
   generateText: vi.fn((_params) => {
     const system = _params?.system || ''
+    if (system.includes('multiple_choice') && system.includes('exactly two')) {
+      return Promise.resolve({
+        text: JSON.stringify({
+          questions: [
+            { id: 'mc1', format: 'multiple_choice', category: 'Recall', prompt: 'Which command lists files?', options: [{ id: 'a', text: 'ls' }, { id: 'b', text: 'pwd' }], correct_option: 'a', weight: 1 },
+            { id: 'mc2', format: 'multiple_choice', category: 'Apply', prompt: 'Which command prints the directory?', options: [{ id: 'a', text: 'pwd' }, { id: 'b', text: 'cd' }], correct_option: 'a', weight: 1 },
+            { id: 'wr1', format: 'written', category: 'Explain', prompt: 'Explain why the command is useful.', max_words: 80, weight: 2 },
+            { id: 'wr2', format: 'written', category: 'Transfer', prompt: 'Describe how you would verify the result.', max_words: 80, weight: 2 },
+          ],
+        }),
+      })
+    }
+    if (system.includes('Evaluate only the written answers')) {
+      return Promise.resolve({
+        text: JSON.stringify({ written: { wr1: { score: 100, explanation: 'Clear.' }, wr2: { score: 100, explanation: 'Clear.' } } }),
+      })
+    }
     if (system.toLowerCase().includes('generate 3-8 free-text quiz questions')) {
       return Promise.resolve({
         text: JSON.stringify({
@@ -126,7 +143,38 @@ describe('Quiz API', () => {
     return { topicId: topic.lastInsertRowid, lessonId: lesson.lastInsertRowid }
   }
 
+  function seedTaskLesson() {
+    const ids = seedTopicAndLesson('DevOps', 'Local practice')
+    const task = {
+      title: 'Local task', scenario: 'Use a safe local fixture.', goal: 'Verify the behavior.',
+      constraints: ['Use test data only'], deliverables: ['Commands', 'Observed output'],
+      success_criteria: ['The behavior is observable', 'The result is repeatable'], estimated_time: 10,
+      primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      free_fallback: { kind: 'no_software', description: 'Explain the local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      hints: [], safety_notes: [],
+    }
+    dbModule.run('UPDATE lessons SET task_spec = ?, artifact_required = 1 WHERE id = ?', JSON.stringify(task), ids.lessonId)
+    dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks, artifact_passed) VALUES (?, ?, ?, ?, ?, ?)", ids.topicId, ids.lessonId, 'practicing', 3, 3, 1)
+    return ids
+  }
+
   describe('POST /api/topics/:id/lessons/:lid/quiz', () => {
+    it('generates a mixed quiz with a private answer key for task-backed lessons', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`).send({})
+
+      expect(res.status).toBe(200)
+      expect(res.body.formatVersion).toBe(2)
+      expect(res.body.attemptId).toBeTypeOf('number')
+      expect(res.body.questions).toHaveLength(4)
+      expect(res.body).not.toHaveProperty('answerKey')
+      expect(res.body.questions[0]).not.toHaveProperty('correct_option')
+      const stored = dbModule.get('SELECT answer_key, format_version, questions FROM quiz_attempts WHERE id = ?', res.body.attemptId)
+      expect(stored.format_version).toBe(2)
+      expect(JSON.parse(stored.answer_key)).toEqual({ mc1: 'a', mc2: 'a' })
+      expect(JSON.parse(stored.questions)[0]).not.toHaveProperty('correct_option')
+    })
+
     it('generates 3-8 free-text quiz questions', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
@@ -196,6 +244,17 @@ describe('Quiz API', () => {
   })
 
   describe('GET /api/topics/:id/lessons/:lid/quiz', () => {
+    it('returns the mixed attempt id without exposing its answer key', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      const started = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`).send({})
+      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}/quiz`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.attemptId).toBe(started.body.attemptId)
+      expect(res.body).not.toHaveProperty('answerKey')
+      expect(res.body).not.toHaveProperty('answer_key')
+    })
+
     it('returns existing quiz questions', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
@@ -221,6 +280,48 @@ describe('Quiz API', () => {
   })
 
   describe('POST /api/topics/:id/lessons/:lid/quiz/submit', () => {
+    it('scores choices locally, evaluates written answers, and completes a mixed lesson', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      const started = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`).send({})
+      const answers = { mc1: 'a', mc2: 'a', wr1: 'Explain the command clearly.', wr2: 'Verify the output locally.' }
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`).send({ attemptId: started.body.attemptId, answers })
+
+      expect(res.status).toBe(200)
+      expect(res.body.formatVersion).toBe(2)
+      expect(res.body.overallScore).toBe(100)
+      expect(res.body.passed).toBe(true)
+      expect(dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).state).toBe('passed')
+    })
+
+    it('rejects stale mixed attempt ids without changing the pending attempt', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      const started = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`).send({})
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`).send({
+        attemptId: started.body.attemptId + 999,
+        answers: { mc1: 'a', mc2: 'a', wr1: 'ok', wr2: 'ok' },
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('STALE_ATTEMPT')
+      const attempt = dbModule.get('SELECT answers, evaluation FROM quiz_attempts WHERE id = ?', started.body.attemptId)
+      expect(attempt.answers).toBeNull()
+      expect(attempt.evaluation).toBeNull()
+    })
+
+    it('rejects invalid mixed answers before invoking evaluation', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      const started = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`).send({})
+      const { generateText } = await import('../llm/client.js')
+      const callsBefore = generateText.mock.calls.length
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`).send({
+        attemptId: started.body.attemptId,
+        answers: { mc1: 'invalid', mc2: 'a', wr1: 'ok', wr2: 'ok' },
+      })
+      expect(res.status).toBe(400)
+      expect(res.body.code).toBe('INVALID_QUIZ_ANSWERS')
+      expect(generateText.mock.calls.length).toBe(callsBefore)
+    })
+
     it('evaluates answers and returns pass/fail result', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 3, 3)
