@@ -15,6 +15,16 @@ vi.mock('../llm/client.js', () => ({
   }),
   generateText: vi.fn((_params) => {
     const system = _params?.system || ''
+    if (system.includes('multiple_choice') && system.includes('retest')) {
+      return Promise.resolve({
+        text: JSON.stringify({
+          questions: [
+            { id: 'mc1', format: 'multiple_choice', category: 'Recall', prompt: 'Which command lists files?', options: [{ id: 'a', text: 'ls' }, { id: 'b', text: 'pwd' }], correct_option: 'a', weight: 1 },
+            { id: 'wr1', format: 'written', category: 'Explain', prompt: 'Explain the missed concept.', max_words: 80, weight: 2 },
+          ],
+        }),
+      })
+    }
     if (system.toLowerCase().includes('retest') || system.toLowerCase().includes('focused on the gaps')) {
       return Promise.resolve({
         text: JSON.stringify({
@@ -101,6 +111,20 @@ describe('Remediation API', () => {
     return { topicId: topic.lastInsertRowid, lessonId: lesson.lastInsertRowid }
   }
 
+  function seedTaskLesson() {
+    const ids = seedTopicAndLesson('DevOps', 'Local practice')
+    const task = {
+      title: 'Local task', scenario: 'Use a safe local fixture.', goal: 'Verify the behavior.',
+      constraints: ['Use test data only'], deliverables: ['Commands', 'Observed output'],
+      success_criteria: ['The behavior is observable', 'The result is repeatable'], estimated_time: 10,
+      primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      free_fallback: { kind: 'no_software', description: 'Explain the local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+      hints: [], safety_notes: [],
+    }
+    dbModule.run('UPDATE lessons SET task_spec = ?, artifact_required = 1 WHERE id = ?', JSON.stringify(task), ids.lessonId)
+    return ids
+  }
+
   describe('POST /api/topics/:id/lessons/:lid/remediate/chat', () => {
     it('streams re-teach content when lesson is remediating', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
@@ -132,6 +156,20 @@ describe('Remediation API', () => {
   })
 
   describe('POST /api/topics/:id/lessons/:lid/remediate/retest', () => {
+    it('generates a mixed one-choice one-written retest for task-backed lessons', async () => {
+      const { topicId, lessonId } = seedTaskLesson()
+      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, remediation_attempts, last_gaps) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'remediating', 1, JSON.stringify(['Missed the local command']))
+
+      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/remediate/retest`).send({})
+
+      expect(res.status).toBe(200)
+      expect(res.body.formatVersion).toBe(2)
+      expect(res.body.attemptId).toBeTypeOf('number')
+      expect(res.body.questions.filter((question) => question.format === 'multiple_choice')).toHaveLength(1)
+      expect(res.body.questions.filter((question) => question.format === 'written')).toHaveLength(1)
+      expect(res.body).not.toHaveProperty('answerKey')
+    })
+
     it('transitions to quiz_pending and generates 1-3 retest questions', async () => {
       const { topicId, lessonId } = seedTopicAndLesson()
       dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, remediation_attempts, last_gaps) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'remediating', 1, JSON.stringify(['Confused JSX with HTML']))
