@@ -1,7 +1,8 @@
 import { Router } from 'express'
-import { get, run, all } from '../db.js'
-import { resolveLlmConfig, requireLlmConfig } from '../utils/llm-config.js'
+import { get, run, all, transaction } from '../db.js'
+import { requireLlmConfig } from '../utils/llm-config.js'
 import { generateText, LlmClientError } from '../llm/client.js'
+import { llmRequestOptions } from '../llm/request-options.js'
 import {
   getDueItems,
   getDueCounts,
@@ -124,9 +125,7 @@ async function generateLessonReviewQuestions({ settings: config, lessonId, topic
   })
 
   const result = await generateText({
-    provider: config.provider,
-    apiKey: config.apiKey,
-    model: config.model,
+    ...llmRequestOptions(config),
     system,
     messages: [{ role: 'user', content: 'Generate review questions as JSON.' }],
   })
@@ -172,9 +171,7 @@ async function generateCumulativeReviewQuestions({ settings: config, moduleId, t
   })
 
   const result = await generateText({
-    provider: config.provider,
-    apiKey: config.apiKey,
-    model: config.model,
+    ...llmRequestOptions(config),
     system,
     messages: [{ role: 'user', content: 'Generate cumulative review questions as JSON.' }],
   })
@@ -263,9 +260,6 @@ router.get('/reviews/count', (_req, res) => {
 router.post('/reviews/start', async (req, res) => {
   try {
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     const items = getDueItems()
     // Filter out skipped lessons
@@ -394,9 +388,6 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
     }
 
     const config = requireLlmConfig()
-    if (!config.apiKeySet) {
-      return res.status(400).json({ error: 'LLM settings not configured. Please add an API key in Settings.' })
-    }
 
     // Validate all questions have answers
     const questions = session.questions
@@ -411,9 +402,7 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
 
     const system = buildReviewEvaluationPrompt({ questions, answers })
     const result = await generateText({
-      provider: config.provider,
-      apiKey: config.apiKey,
-      model: config.model,
+      ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Evaluate the review answers and return JSON.' }],
     })
@@ -458,42 +447,38 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
     let globalAccelerated = false
     let globalRegressed = false
 
+    transaction(() => {
     for (const [, entry] of itemResults) {
       const itemScore = entry.totalCount > 0 ? Math.round((entry.correctCount / entry.totalCount) * 100) : 0
       let srsUpdate
-      try {
-        if (entry.reviewType === 'lesson' && entry.lessonId) {
-          srsUpdate = updateSrsAfterReview(entry.topicId, entry.lessonId, itemScore)
-        } else if (entry.reviewType === 'cumulative' && entry.moduleId) {
-          // For cumulative reviews, update the cumulative SRS row directly
-          const existing = get(
-            'SELECT id, interval_index FROM srs_queue WHERE topic_id = ? AND module_id = ? AND review_type = ? AND status = ?',
-            entry.topicId, entry.moduleId, 'cumulative', 'pending',
-          )
-          if (existing) {
-            let nextIndex = existing.interval_index
-            let accel = false
-            let regr = false
-            if (itemScore >= 95) {
-              nextIndex = Math.min(nextIndex + 2, 4)
-              accel = true
-            } else if (itemScore >= 80) {
-              nextIndex = Math.min(nextIndex + 1, 4)
-            } else {
-              nextIndex = Math.max(nextIndex - 1, 0)
-              regr = true
-            }
-            const dueDate = new Date()
-            dueDate.setDate(dueDate.getDate() + [1, 3, 7, 14, 30][nextIndex])
-            run(
-              'UPDATE srs_queue SET interval_index = ?, due_date = ?, last_reviewed = ?, score = ? WHERE id = ?',
-              nextIndex, dueDate.toISOString().split('T')[0], new Date().toISOString(), itemScore, existing.id,
-            )
-            srsUpdate = { intervalIndex: nextIndex, dueDate: dueDate.toISOString().split('T')[0], accelerated: accel, regressed: regr }
+      if (entry.reviewType === 'lesson' && entry.lessonId) {
+        srsUpdate = updateSrsAfterReview(entry.topicId, entry.lessonId, itemScore)
+      } else if (entry.reviewType === 'cumulative' && entry.moduleId) {
+        const existing = get(
+          'SELECT id, interval_index FROM srs_queue WHERE topic_id = ? AND module_id = ? AND review_type = ? AND status = ?',
+          entry.topicId, entry.moduleId, 'cumulative', 'pending',
+        )
+        if (existing) {
+          let nextIndex = existing.interval_index
+          let accel = false
+          let regr = false
+          if (itemScore >= 95) {
+            nextIndex = Math.min(nextIndex + 2, 4)
+            accel = true
+          } else if (itemScore >= 80) {
+            nextIndex = Math.min(nextIndex + 1, 4)
+          } else {
+            nextIndex = Math.max(nextIndex - 1, 0)
+            regr = true
           }
+          const dueDate = new Date()
+          dueDate.setDate(dueDate.getDate() + [1, 3, 7, 14, 30][nextIndex])
+          run(
+            'UPDATE srs_queue SET interval_index = ?, due_date = ?, last_reviewed = ?, score = ? WHERE id = ?',
+            nextIndex, dueDate.toISOString().split('T')[0], new Date().toISOString(), itemScore, existing.id,
+          )
+          srsUpdate = { intervalIndex: nextIndex, dueDate: dueDate.toISOString().split('T')[0], accelerated: accel, regressed: regr }
         }
-      } catch (err) {
-        console.error('SRS update error:', err.message)
       }
 
       if (srsUpdate) {
@@ -513,6 +498,7 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
         ...srsUpdate,
       })
     }
+    })()
 
     // Record streak on review pass (≥80%)
     if (passed) {
