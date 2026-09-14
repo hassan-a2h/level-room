@@ -239,8 +239,23 @@ describe('Data Export and Import API', () => {
       const res = await request(app).get('/api/data/export')
       expect(res.status).toBe(200)
       expect(res.body).toHaveProperty('version')
-      expect(typeof res.body.version).toBe('string')
+      expect(res.body.version).toBe('1.1.0')
       expect(res.body).toHaveProperty('exported_at')
+    })
+
+    it('exports course lineage and public quiz fields without private answer keys', async () => {
+      const { topicId } = seedDatabase()
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage, course_focus) VALUES ('React Security', 'active', 'advanced', 1, 'Security')")
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, topicId, 'Security', 'security')
+      dbModule.run('INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answers, evaluation, answer_key, format_version) VALUES (?, ?, ?, ?, ?, ?, ?)', topicId, dbModule.get('SELECT id FROM lessons LIMIT 1').id, '[]', '{}', '{"overall":90}', '{"q1":"a"}', 2)
+
+      const res = await request(app).get('/api/data/export')
+      expect(res.status).toBe(200)
+      expect(res.body.course_links).toHaveLength(1)
+      expect(res.body.course_links[0]).toMatchObject({ child_topic_id: child.lastInsertRowid, parent_topic_id: topicId, normalized_lane: 'security' })
+      expect(res.body.quiz_attempts[0].format_version).toBe(2)
+      expect(res.body.quiz_attempts[0].answer_key).toBeUndefined()
+      expect(res.body.topics[0]).toHaveProperty('course_kind')
     })
 
     it('restores llm_settings without api_key if not present', async () => {
@@ -284,6 +299,84 @@ describe('Data Export and Import API', () => {
         model: 'gpt-4o',
         reasoning_effort: 'none',
       })
+    })
+
+    it('imports a 1.0.0 backup without course lineage or new assessment fields', async () => {
+      seedDatabase()
+      const exported = (await request(app).get('/api/data/export')).body
+      const legacy = JSON.parse(JSON.stringify(exported))
+      legacy.version = '1.0.0'
+      delete legacy.course_links
+      legacy.topics = legacy.topics.map(({ course_kind, course_stage, course_focus, course_summary, course_completed_at, ...topic }) => topic)
+      legacy.lessons = legacy.lessons.map(({ task_spec, ...lesson }) => lesson)
+      legacy.quiz_attempts = legacy.quiz_attempts.map(({ answer_key, format_version, ...attempt }) => attempt)
+
+      const res = await request(app).post('/api/data/import').send(legacy)
+      expect(res.status).toBe(200)
+      expect(dbModule.get('SELECT course_kind, course_stage, course_focus FROM topics')).toMatchObject({ course_kind: 'core', course_stage: 0, course_focus: '' })
+      expect(dbModule.get('SELECT COUNT(*) AS count FROM course_links').count).toBe(0)
+    })
+
+    it('rejects answer keys and invalid lineage before replacing existing data', async () => {
+      const { topicId } = seedDatabase()
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Child', 'active', 'advanced', 1)")
+      const backup = (await request(app).get('/api/data/export')).body
+      backup.quiz_attempts = [{ topic_id: topicId, lesson_id: backup.lessons[0].id, questions: '[]', answers: '{}', evaluation: null, answer_key: '{"secret":"a"}', format_version: 2 }]
+      backup.course_links = [{ child_topic_id: child.lastInsertRowid, parent_topic_id: topicId, lane: 'Security', normalized_lane: 'wrong' }]
+
+      const res = await request(app).post('/api/data/import').send(backup)
+      expect(res.status).toBe(400)
+      expect(res.text).not.toContain('secret')
+      expect(dbModule.get('SELECT title FROM topics WHERE id = ?', topicId).title).toBe('React')
+    })
+
+    it('rejects missing, duplicate, self, cyclic, and stage-invalid links without mutation', async () => {
+      const { topicId } = seedDatabase()
+      const childOne = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Child one', 'active', 'advanced', 1)")
+      const childTwo = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Child two', 'active', 'advanced', 1)")
+      const exported = (await request(app).get('/api/data/export')).body
+      const cases = [
+        (backup) => { backup.course_links = [{ child_topic_id: childOne.lastInsertRowid, parent_topic_id: 99999, lane: 'Missing', normalized_lane: 'missing' }] },
+        (backup) => { backup.course_links = [{ child_topic_id: childOne.lastInsertRowid, parent_topic_id: topicId, lane: 'Security', normalized_lane: 'security' }, { child_topic_id: childTwo.lastInsertRowid, parent_topic_id: topicId, lane: 'SECURITY', normalized_lane: 'security' }] },
+        (backup) => { backup.course_links = [{ child_topic_id: topicId, parent_topic_id: topicId, lane: 'Self', normalized_lane: 'self' }] },
+        (backup) => { backup.course_links = [{ child_topic_id: childOne.lastInsertRowid, parent_topic_id: topicId, lane: 'Security', normalized_lane: 'security' }, { child_topic_id: topicId, parent_topic_id: childOne.lastInsertRowid, lane: 'Cycle', normalized_lane: 'cycle' }] },
+        (backup) => { backup.topics.find((topic) => topic.id === childOne.lastInsertRowid).course_stage = 3; backup.course_links = [{ child_topic_id: childOne.lastInsertRowid, parent_topic_id: topicId, lane: 'Security', normalized_lane: 'security' }] },
+      ]
+      for (const mutate of cases) {
+        const backup = JSON.parse(JSON.stringify(exported))
+        mutate(backup)
+        const res = await request(app).post('/api/data/import').send(backup)
+        expect(res.status).toBe(400)
+        expect(dbModule.get('SELECT title FROM topics WHERE id = ?', topicId).title).toBe('React')
+      }
+    })
+
+    it('discards unresolved mixed attempts and returns pending progress to practice', async () => {
+      const { topicId, lessonId } = seedDatabase()
+      dbModule.run("UPDATE progress SET state = 'quiz_pending' WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
+      dbModule.run('INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answers, evaluation, format_version) VALUES (?, ?, ?, ?, ?, ?)', topicId, lessonId, '[]', '{}', null, 2)
+      const backup = (await request(app).get('/api/data/export')).body
+
+      const res = await request(app).post('/api/data/import').send(backup)
+      expect(res.status).toBe(200)
+      expect(dbModule.get('SELECT COUNT(*) AS count FROM quiz_attempts').count).toBe(0)
+      expect(dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).state).toBe('practicing')
+    })
+
+    it('round-trips branches and task evidence', async () => {
+      const { topicId, lessonId } = seedDatabase()
+      const progress = dbModule.get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      dbModule.run('INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback) VALUES (?, ?, ?, ?, ?)', progress.id, '{"commands":"echo ok"}', '{"reproducible":true}', 1, 'Good evidence')
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage, course_focus) VALUES ('Child', 'active', 'advanced', 1, 'Security')")
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, topicId, 'Security', 'security')
+      const backup = (await request(app).get('/api/data/export')).body
+
+      const res = await request(app).post('/api/data/import').send(backup)
+      expect(res.status).toBe(200)
+      expect(res.body.counts.course_links).toBe(1)
+      expect(res.body.counts.artifacts).toBe(1)
+      expect(dbModule.get('SELECT course_focus FROM topics WHERE id = ?', child.lastInsertRowid).course_focus).toBe('Security')
+      expect(dbModule.get('SELECT feedback FROM artifacts').feedback).toBe('Good evidence')
     })
 
     it('drops legacy api_key fields but rejects OAuth credentials before replacing any data', async () => {
