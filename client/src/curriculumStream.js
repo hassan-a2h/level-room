@@ -11,6 +11,7 @@ export async function readCurriculumStream(response) {
   const decoder = new TextDecoder()
   let buffer = ''
   let fullText = ''
+  let curriculumPayload = null
   let completed = false
 
   const consumeEvent = (block) => {
@@ -40,6 +41,15 @@ export async function readCurriculumStream(response) {
       completed = true
       return
     }
+    if (event === 'curriculum') {
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        curriculumPayload = payload
+        return
+      }
+      if (typeof payload !== 'string') {
+        throw new Error('The learning path stream returned an unexpected curriculum event.')
+      }
+    }
     if (typeof payload !== 'string') {
       throw new Error('The learning path stream returned an unexpected event.')
     }
@@ -61,6 +71,8 @@ export async function readCurriculumStream(response) {
   buffer += decoder.decode()
   if (buffer.trim()) consumeEvent(buffer)
   if (!completed) throw new Error('The learning path stream ended before completion.')
+
+  if (curriculumPayload) return curriculumPayload
 
   const json = fullText.replace(/```json/gi, '').replace(/```/g, '').trim()
   try {
