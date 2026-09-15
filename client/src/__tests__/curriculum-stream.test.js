@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { readCurriculumStream } from '../curriculumStream.js'
 
 describe('curriculum event stream reader', () => {
+  it('accepts the validated named curriculum event emitted by the server', async () => {
+    const curriculum = { course: { kind: 'core', stage: 0 }, modules: [{ title: 'Basics' }] }
+    const response = streamResponse([
+      `event: curriculum\ndata: ${JSON.stringify(curriculum)}\n\n`,
+      `data: ${JSON.stringify('[DONE]')}\n\n`,
+    ])
+
+    await expect(readCurriculumStream(response)).resolves.toEqual(curriculum)
+  })
+
   it('assembles text deltas across chunk and event boundaries until completion', async () => {
     const firstDelta = `data: ${JSON.stringify('{"modules":[')}\r\n\r\n`
     const secondDelta = `data: ${JSON.stringify('{"title":"Basics"}]}')}\r\n\r\n`
