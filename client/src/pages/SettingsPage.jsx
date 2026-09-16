@@ -1,35 +1,17 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { getSettings, saveSettings, exportData, importData } from '../api.js'
 import { SkeletonSettings } from '../components/Skeleton.jsx'
-
-const PROVIDER_MODELS = {
-  openai: [
-    { value: 'gpt-4o', label: 'gpt-4o' },
-    { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
-    { value: 'o3-mini', label: 'o3-mini' },
-  ],
-  anthropic: [
-    { value: 'claude-3-5-sonnet-20241022', label: 'claude-3-5-sonnet-20241022' },
-    { value: 'claude-3-opus-20240229', label: 'claude-3-opus-20240229' },
-    { value: 'claude-3-haiku-20240307', label: 'claude-3-haiku-20240307' },
-  ],
-  fireworks: [
-    { value: 'accounts/fireworks/routers/kimi-k2p6-turbo', label: 'kimi-k2p6-turbo' },
-    { value: 'accounts/fireworks/models/llama-v3p1-70b-instruct', label: 'llama-v3p1-70b-instruct' },
-    { value: 'accounts/fireworks/models/llama-v3p1-8b-instruct', label: 'llama-v3p1-8b-instruct' },
-  ],
-}
-
-const DEFAULT_MODEL = {
-  openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-20241022',
-  fireworks: 'accounts/fireworks/routers/kimi-k2p6-turbo',
-}
+import AppHeader from '../components/AppHeader.jsx'
+import ThemePicker from '../components/ThemePicker.jsx'
+import CodexConnection from '../components/CodexConnection.jsx'
 
 function SettingsPage() {
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
+  const [reasoningEffort, setReasoningEffort] = useState('none')
+  const [providers, setProviders] = useState([])
   const [apiKeySet, setApiKeySet] = useState(false)
+  const [ready, setReady] = useState(false)
   const [envStatus, setEnvStatus] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -40,7 +22,22 @@ function SettingsPage() {
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
+  const [pendingBackup, setPendingBackup] = useState(undefined)
   const fileInputRef = useRef(null)
+  const cancelImportRef = useRef(null)
+  const replaceImportRef = useRef(null)
+  const importButtonRef = useRef(null)
+  const hadPendingImport = useRef(false)
+
+  useEffect(() => {
+    if (pendingBackup !== undefined) {
+      cancelImportRef.current?.focus()
+      hadPendingImport.current = true
+    } else if (hadPendingImport.current && !importing) {
+      importButtonRef.current?.focus()
+      hadPendingImport.current = false
+    }
+  }, [pendingBackup, importing])
 
   useEffect(() => {
     async function load() {
@@ -48,8 +45,13 @@ function SettingsPage() {
         const data = await getSettings()
         const p = data.provider || ''
         setProvider(p)
-        setModel(data.model || (p ? DEFAULT_MODEL[p] : ''))
+        const catalog = data.providers || []
+        setProviders(catalog)
+        const definition = catalog.find((entry) => entry.id === p)
+        setModel(data.model || definition?.defaultModel || definition?.models?.[0]?.id || '')
+        setReasoningEffort(data.reasoningEffort || 'none')
         setApiKeySet(data.apiKeySet || false)
+        setReady(Boolean(data.ready))
         setEnvStatus(data.envStatus || [])
       } catch (err) {
         setError('Failed to load settings.')
@@ -63,14 +65,20 @@ function SettingsPage() {
   function handleProviderChange(e) {
     const p = e.target.value
     setProvider(p)
-    const models = PROVIDER_MODELS[p] || []
-    setModel(models[0]?.value || DEFAULT_MODEL[p] || '')
+    const definition = providers.find((entry) => entry.id === p)
+    const selectedModel = definition?.models?.find((entry) => entry.id === definition.defaultModel) || definition?.models?.[0]
+    setModel(selectedModel?.id || '')
+    setReasoningEffort(selectedModel?.reasoningEfforts?.[0] || 'none')
+    setReady(definition?.authType === 'api_key' && Boolean(envStatus.find((entry) => entry.provider === p)?.configured))
     setError(null)
     setSuccess(false)
   }
 
   function handleModelChange(e) {
-    setModel(e.target.value)
+    const nextModel = e.target.value
+    setModel(nextModel)
+    const selectedModel = currentModels.find((entry) => entry.id === nextModel)
+    setReasoningEffort(selectedModel?.reasoningEfforts?.[0] || 'none')
     setError(null)
     setSuccess(false)
   }
@@ -91,8 +99,9 @@ function SettingsPage() {
 
     setSaving(true)
     try {
-      const result = await saveSettings({ provider, model })
+      const result = await saveSettings({ provider, model, reasoningEffort })
       setApiKeySet(result.apiKeySet || false)
+      setReady(Boolean(result.ready))
       setEnvStatus(result.envStatus || [])
       setSuccess(true)
     } catch (err) {
@@ -135,23 +144,36 @@ function SettingsPage() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    setError(null)
-    setSuccess(false)
-    setImporting(true)
-    setImportProgress(10)
-
     try {
       const text = await file.text()
-      setImportProgress(30)
-
       let backup
       try {
         backup = JSON.parse(text)
       } catch {
         throw new Error('Invalid backup file: not valid JSON.')
       }
-      setImportProgress(50)
+      setError(null)
+      setSuccess(false)
+      setPendingBackup(backup)
+    } catch (err) {
+      setError(err.message || 'Failed to import data.')
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
 
+  async function handleConfirmImport() {
+    if (pendingBackup === undefined) return
+    setError(null)
+    setSuccess(false)
+    setImporting(true)
+    setImportProgress(10)
+    const backup = pendingBackup
+    setPendingBackup(undefined)
+    try {
+      setImportProgress(50)
       const result = await importData(backup)
       setImportProgress(100)
       setSuccess(`Import complete. Restored ${Object.entries(result.counts || {})
@@ -162,56 +184,68 @@ function SettingsPage() {
     } finally {
       setImporting(false)
       setImportProgress(0)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
     }
   }
+
+  const onCodexConnectionChange = useCallback((connected) => {
+    if (provider === 'openai-codex') setReady(connected)
+  }, [provider])
 
   if (loading) {
     return <SkeletonSettings />
   }
 
-  const currentModels = PROVIDER_MODELS[provider] || []
+  const currentProvider = providers.find((entry) => entry.id === provider)
+  const currentModels = currentProvider?.models || []
+  const currentModel = currentModels.find((entry) => entry.id === model)
+  const currentReasoningEfforts = currentModel?.reasoningEfforts || []
+  const selectedApiKeySet = envStatus.find((entry) => entry.provider === provider)?.configured ?? apiKeySet
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-xl mx-auto space-y-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
+    <>
+    <AppHeader />
+    <div className="ui-page px-4 py-6 sm:px-6">
+      <main className="ui-container max-w-3xl space-y-6">
+        <h1 className="text-3xl font-bold ui-text">Settings</h1>
+
+        <section id="appearance" className="ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
+          <h2 id="appearance-heading" className="text-xl font-semibold ui-text mb-4">Appearance</h2>
+          <ThemePicker />
+        </section>
+
+        <section className="ui-panel p-5 sm:p-6" aria-labelledby="llm-heading">
+          <h2 id="llm-heading" className="text-xl font-semibold ui-text mb-5">LLM Configuration</h2>
 
           {success && (
-            <div className="mb-4 rounded-md bg-green-50 p-3 text-green-800 text-sm" role="alert">
+            <div className="ui-alert ui-alert-success mb-4" role="alert">
               {typeof success === 'string' ? success : 'Settings saved successfully.'}
             </div>
           )}
 
           {error && (
-            <div className="mb-4 rounded-md bg-red-50 p-3 text-red-800 text-sm" role="alert">
+            <div className="ui-alert ui-alert-danger mb-4" role="alert">
               {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label htmlFor="provider" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="provider" className="ui-field-label">
                 LLM Provider
               </label>
               <select
                 id="provider"
                 value={provider}
                 onChange={handleProviderChange}
-                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border"
+                className="ui-field w-full"
               >
                 <option value="">Select a provider</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="fireworks">Fireworks</option>
+                {providers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
               </select>
             </div>
 
             <div>
-              <label htmlFor="model" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="model" className="ui-field-label">
                 Model
               </label>
               <select
@@ -219,70 +253,82 @@ function SettingsPage() {
                 value={model}
                 onChange={handleModelChange}
                 disabled={!provider}
-                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border disabled:bg-gray-100"
+                className="ui-field w-full"
               >
                 {currentModels.length === 0 && <option value="">Select a provider first</option>}
                 {currentModels.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
+                  <option key={m.id} value={m.id}>
+                    {m.name}
                   </option>
                 ))}
               </select>
             </div>
 
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">Environment Configuration</h3>
-              <p className="text-xs text-gray-500 mb-3">
+            {currentReasoningEfforts.length > 0 && (
+              <div>
+                <label htmlFor="reasoning-effort" className="ui-field-label">Reasoning level</label>
+                <select id="reasoning-effort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)} className="ui-field w-full">
+                  {currentReasoningEfforts.map((effort) => (
+                    <option key={effort} value={effort}>{effort}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {currentProvider?.authType === 'api_key' && <div>
+              <h3 className="text-sm font-semibold ui-text mb-2">Environment Configuration</h3>
+              <p className="text-xs ui-text-muted mb-3">
                 API keys are read from your <code>.env</code> file at server startup. Restart the server after editing <code>.env</code>.
               </p>
               <div className="space-y-2">
                 {envStatus.map((status) => (
                   <div
                     key={status.provider}
-                    className="flex items-center justify-between rounded-md border px-3 py-2"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border ui-border bg-[var(--ui-surface-alt)] px-3 py-2"
                   >
-                    <span className="text-sm capitalize text-gray-700">{status.provider}</span>
+                    <span className="text-sm capitalize ui-text-secondary">{status.provider}</span>
                     <div className="flex items-center gap-2">
-                      <code className="text-xs bg-gray-100 px-1 rounded">{status.envVar}</code>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                          status.configured
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}
-                      >
+                      <code className="text-xs ui-text-secondary bg-[var(--ui-surface)] px-1 rounded">{status.envVar}</code>
+                      <span className={`ui-status ${status.configured ? 'ui-status-success' : 'ui-status-danger'}`}>
                         {status.configured ? 'Configured' : 'Not configured'}
                       </span>
                     </div>
                   </div>
                 ))}
               </div>
-              {!apiKeySet && (
-                <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded p-2">
+              {!selectedApiKeySet && provider && (
+                <p className="ui-alert ui-alert-warning mt-3 text-sm">
                   No API key is configured for the selected provider. Set it in <code>.env</code> and restart the server.
                 </p>
               )}
-            </div>
+            </div>}
+
+            {provider === 'openai-codex' && (
+              <div className="space-y-3">
+                <CodexConnection onConnectionChange={onCodexConnectionChange} />
+                {ready && <p className="text-sm ui-status ui-status-success" role="status">The selected Codex provider is ready for learning actions.</p>}
+                <p className="text-xs ui-text-muted">Codex subscription sign-in is experimental and depends on an unofficial integration. OpenAI API-key usage is billed separately.</p>
+              </div>
+            )}
 
             <div className="pt-2">
               <button
                 type="submit"
                 disabled={saving || !provider || !model}
-                className="inline-flex justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="ui-button ui-button-primary"
               >
                 {saving ? 'Saving…' : 'Save Settings'}
               </button>
             </div>
           </form>
-        </div>
+        </section>
 
-        {/* Data Management Section */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Data Management</h2>
-          <p className="text-sm text-gray-600 mb-4">
+        <section className="ui-panel p-5 sm:p-6" aria-labelledby="data-heading">
+          <h2 id="data-heading" className="text-xl font-semibold ui-text mb-4">Data Management</h2>
+          <p className="text-sm ui-text-secondary mb-4">
             Export your learning data as a JSON backup, or restore from a previous backup.
             <br />
-            <span className="text-xs text-gray-500">Note: API keys are not included in exports for security.</span>
+            <span className="text-xs ui-text-muted">Note: API keys are not included in exports for security.</span>
           </p>
 
           <div className="flex flex-wrap gap-3 items-center">
@@ -290,16 +336,17 @@ function SettingsPage() {
               type="button"
               onClick={handleExport}
               disabled={exporting}
-              className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ui-button ui-button-secondary"
             >
               {exporting ? 'Exporting…' : 'Export Data'}
             </button>
 
             <button
               type="button"
+              ref={importButtonRef}
               onClick={handleImportClick}
               disabled={importing}
-              className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ui-button ui-button-primary"
             >
               {importing ? 'Importing…' : 'Import Data'}
             </button>
@@ -316,18 +363,60 @@ function SettingsPage() {
 
           {importing && (
             <div className="mt-4">
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                  className="bg-indigo-600 h-2.5 rounded-full transition-all"
+                <div className="ui-progress-track w-full">
+                  <div
+                  className="ui-progress-value"
                   style={{ width: `${importProgress}%` }}
                 />
               </div>
-              <p className="mt-1 text-xs text-gray-500">{importProgress}% — please wait</p>
+              <p className="mt-1 text-xs ui-text-muted">{importProgress}% — please wait</p>
             </div>
           )}
+        </section>
+      </main>
+    </div>
+    {pendingBackup !== undefined && (
+      <div className="ui-dialog-backdrop">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="restore-title"
+          aria-describedby="restore-description"
+          className="ui-panel ui-dialog"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setPendingBackup(undefined)
+              return
+            }
+            if (event.key === 'Tab') {
+              const first = cancelImportRef.current
+              const last = replaceImportRef.current
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault()
+                last?.focus()
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault()
+                first?.focus()
+              }
+            }
+          }}
+        >
+          <h2 id="restore-title" className="text-xl font-semibold ui-text">Replace learning data?</h2>
+          <p id="restore-description" className="ui-text-secondary mt-2 mb-5">
+            Restoring this backup will replace your current learning data. You can cancel now and nothing will be changed.
+          </p>
+          <div className="flex flex-wrap justify-end gap-3">
+            <button ref={cancelImportRef} type="button" className="ui-button ui-button-secondary" onClick={() => setPendingBackup(undefined)}>
+              Cancel restore
+            </button>
+            <button ref={replaceImportRef} type="button" className="ui-button ui-button-primary" onClick={handleConfirmImport}>
+              Replace learning data
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    )}
+    </>
   )
 }
 
