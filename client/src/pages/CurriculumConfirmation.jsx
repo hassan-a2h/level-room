@@ -74,11 +74,18 @@ export default function CurriculumConfirmation({
   }, [tweakText, onTweak])
 
   const modules = curriculum?.modules || []
+  const isAdvanced = curriculum?.course?.kind === 'advanced'
+  const stage = Number(curriculum?.course?.stage || 0)
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold ui-text">Your Learning Path</h1>
+        <div>
+          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">
+            {isAdvanced ? `Advanced lane · Stage ${stage}` : 'Core course · 80/20 foundation'}
+          </p>
+          <h1 className="mt-1 text-2xl font-bold ui-text">{isAdvanced ? 'Review your next specialization' : 'Your 80/20 Learning Foundation'}</h1>
+        </div>
         <button
           onClick={onBack}
           className="text-sm text-gray-500 hover:text-gray-700 underline"
@@ -90,6 +97,12 @@ export default function CurriculumConfirmation({
       {error && (
         <div className="ui-alert ui-alert-danger" role="alert">
           {error}
+        </div>
+      )}
+
+      {!isAdvanced && (
+        <div className="ui-alert ui-alert-neutral" role="note">
+          This is a finite first course: complete each module checkpoint to reach the end milestone. You can then start a separate advanced lane.
         </div>
       )}
 
