@@ -386,6 +386,33 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration012)
     })()
   }
+
+  const migration013 = '013_add_placement_assessments'
+  const check013 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration013)
+  if (!check013) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS placement_assessments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          topic_id INTEGER NOT NULL,
+          requested_level TEXT NOT NULL,
+          questions TEXT NOT NULL,
+          answers TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          score INTEGER,
+          recommended_level TEXT,
+          feedback TEXT,
+          gaps TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          completed_at DATETIME,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_placement_assessments_topic
+          ON placement_assessments(topic_id, created_at DESC);
+      `)
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration013)
+    })()
+  }
 }
 
 /**
