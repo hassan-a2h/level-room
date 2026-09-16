@@ -123,52 +123,6 @@ function finishStream(res) {
   res.end()
 }
 
-async function streamReply(streamResult, res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-  })
-
-  let text = ''
-  try {
-    for await (const chunk of streamResult.textStream) {
-      const value = typeof chunk === 'string' ? chunk : ''
-      text += value
-      res.write(`data: ${JSON.stringify(value)}\n\n`)
-    }
-    if (!text.trim()) {
-      writeStreamError(res, new LlmClientError('The model returned no response. Please retry.', { code: 'EMPTY_RESPONSE' }))
-      if (!res.destroyed && !res.writableEnded) res.end()
-      return { ok: false, text }
-    }
-    return { ok: true, text }
-  } catch (error) {
-    writeStreamError(res, error)
-    if (!res.destroyed && !res.writableEnded) res.end()
-    return { ok: false, text }
-  }
-}
-
-function writeStreamError(res, error) {
-  const known = error instanceof LlmClientError
-  const body = known
-    ? { message: error.message, code: error.code, retryable: error.retryable }
-    : { message: 'The response could not be completed. Please retry.', code: 'STREAM_ERROR', retryable: true }
-  try {
-    if (!res.destroyed) {
-      res.write('event: error\n')
-      res.write(`data: ${JSON.stringify(body)}\n\n`)
-    }
-  } catch {}
-}
-
-function finishStream(res) {
-  if (res.destroyed || res.writableEnded) return
-  res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-  res.end()
-}
-
 /**
  * Technical topic keywords for mode inference.
  */
