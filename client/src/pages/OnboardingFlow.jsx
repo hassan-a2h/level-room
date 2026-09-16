@@ -12,6 +12,7 @@ import {
   submitPlacementAssessment,
 } from '../api.js'
 import { readCurriculumStream } from '../curriculumStream.js'
+import { normalizeSetupQuestions } from '../setupQuestions.js'
 import CurriculumConfirmation from './CurriculumConfirmation.jsx'
 import { SkeletonOnboarding } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
@@ -403,18 +404,18 @@ export default function OnboardingFlow() {
                   <div className="flex flex-wrap gap-2" role="group" aria-label={q.text}>
                     {q.options.map((opt) => (
                       <button
-                        key={opt}
+                        key={opt.value}
                         type="button"
-                        onClick={() => handleAnswerChange(i, opt)}
-                        aria-pressed={answers[i] === opt}
+                        onClick={() => handleAnswerChange(i, opt.value)}
+                        aria-pressed={answers[i] === opt.value}
                         className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                          answers[i] === opt
+                          answers[i] === opt.value
                             ? 'ui-choice is-selected'
                             : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                         }`}
                       >
-                        {opt}
-                        {answers[i] === opt && <span className="ml-2" aria-hidden="true">✓</span>}
+                        {opt.label}
+                        {answers[i] === opt.value && <span className="ml-2" aria-hidden="true">✓</span>}
                       </button>
                     ))}
                   </div>
