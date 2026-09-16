@@ -19,25 +19,114 @@ const TIME_ALIASES = new Map([
   ['2+ hours', '2+ hours/day'],
 ])
 
-/**
- * Generate setup questions for a topic via LLM.
- */
-async function generateSetupQuestions(topicTitle, config) {
-  const system = `You are a curriculum designer. Given a learning topic, generate exactly 2 concise setup questions to profile the learner.
-Respond in strict JSON with this shape:
-{
-  "questions": [
-    { "text": "...", "options": ["...", "..."] },
-    { "text": "...", "options": ["...", "..."] }
-  ]
-}
-The first question should assess current experience level. The second should assess time commitment.
-Keep each option to 1-4 words. Do not include markdown formatting.`
+const SETUP_OPTIONS = Object.freeze({
+  levels: Object.freeze([
+    { value: 'Beginner', label: 'Beginner' },
+    { value: 'Intermediate', label: 'Intermediate' },
+    { value: 'Advanced', label: 'Advanced' },
+  ]),
+  timeCommitments: Object.freeze([
+    { value: '15 min/day', label: '15 min/day' },
+    { value: '30 min/day', label: '30 min/day' },
+    { value: '1 hour/day', label: '1 hour/day' },
+    { value: '2+ hours/day', label: '2+ hours/day' },
+  ]),
+})
 
-  const result = await generateText({
-    ...llmRequestOptions(config),
-    system,
-    messages: [{ role: 'user', content: `Topic: ${topicTitle}` }],
+const PLACEMENT_QUESTION_LIMITS = { min: 4, max: 6 }
+
+function normalizeLevel(value) {
+  if (typeof value !== 'string') return null
+  const match = VALID_LEVELS.find((level) => level.toLowerCase() === value.trim().toLowerCase())
+  return match || null
+}
+
+function normalizeTimeCommitment(value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  const canonical = VALID_TIME_COMMITMENTS.find((option) => option.toLowerCase() === trimmed.toLowerCase())
+  if (canonical) return canonical
+  return TIME_ALIASES.get(trimmed.toLowerCase()) || null
+}
+
+function setupQuestions(topicTitle) {
+  const title = typeof topicTitle === 'string' && topicTitle.trim() ? topicTitle.trim() : 'this topic'
+  return {
+    questions: [
+      {
+        id: 'level',
+        text: `How familiar are you with ${title}?`,
+        options: SETUP_OPTIONS.levels.map((option) => ({ ...option })),
+      },
+      {
+        id: 'timeCommitment',
+        text: 'How much time can you study most days?',
+        options: SETUP_OPTIONS.timeCommitments.map((option) => ({ ...option })),
+      },
+    ],
+  }
+}
+
+function placementPublicQuestions(questions) {
+  return questions.map(({ id, text, type, options }) => ({
+    id,
+    text,
+    type,
+    ...(type === 'multiple_choice' ? { options } : {}),
+  }))
+}
+
+function normalizePlacementQuestions(parsed) {
+  if (!parsed || !Array.isArray(parsed.questions)) {
+    throw new Error('Invalid placement assessment format')
+  }
+  if (parsed.questions.length < PLACEMENT_QUESTION_LIMITS.min || parsed.questions.length > PLACEMENT_QUESTION_LIMITS.max) {
+    throw new Error('Placement assessment must contain 4-6 questions')
+  }
+
+  const ids = new Set()
+  const questions = parsed.questions.map((question, index) => {
+    const id = typeof question?.id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(question.id)
+      ? question.id
+      : `q${index + 1}`
+    if (ids.has(id)) throw new Error('Placement assessment contains duplicate question ids')
+    ids.add(id)
+
+    const text = typeof question?.text === 'string' ? question.text.trim() : ''
+    if (text.length < 10 || text.length > 500) throw new Error('Placement assessment contains invalid question text')
+
+    const type = question?.type === 'multiple_choice' || question?.type === 'multiple-choice'
+      ? 'multiple_choice'
+      : question?.type === 'objective' || question?.type === 'open'
+        ? 'objective'
+        : null
+    if (!type) throw new Error('Placement assessment contains an invalid question type')
+
+    if (type === 'multiple_choice') {
+      if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 5) {
+        throw new Error('Placement assessment contains invalid multiple-choice options')
+      }
+      const optionValues = new Set()
+      const options = question.options.map((option) => {
+        const value = typeof option === 'string' ? option.trim() : option?.value?.toString().trim()
+        const label = typeof option === 'string' ? option.trim() : option?.label?.toString().trim()
+        if (!value || !label || value.length > 100 || label.length > 200) {
+          throw new Error('Placement assessment contains an invalid option')
+        }
+        if (optionValues.has(value)) throw new Error('Placement assessment contains duplicate options')
+        optionValues.add(value)
+        return { value, label }
+      })
+      const correctAnswer = typeof question.correct_answer === 'string' ? question.correct_answer.trim() : ''
+      if (!correctAnswer || !options.some((option) => option.value === correctAnswer)) {
+        throw new Error('Placement assessment is missing a valid answer key')
+      }
+      return { id, text, type, options, correct_answer: correctAnswer }
+    }
+
+    const rubric = typeof question.rubric === 'string' ? question.rubric.trim() : ''
+    if (!rubric || rubric.length > 1000) throw new Error('Placement assessment is missing an objective rubric')
+    return { id, text, type, rubric }
   })
 
   const multipleChoiceCount = questions.filter((question) => question.type === 'multiple_choice').length
@@ -357,9 +446,7 @@ router.get('/topics/:id/setup-questions', async (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
-    const config = requireLlmConfig()
-    const questions = await generateSetupQuestions(topic.title, config)
-    return res.json(questions)
+    return res.json(setupQuestions(topic.title))
   } catch (err) {
     console.error('GET /api/topics/:id/setup-questions error:', err.message)
     if (err instanceof LlmClientError) {
