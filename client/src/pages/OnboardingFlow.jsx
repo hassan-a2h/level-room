@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   createTopic,
   getSetupQuestions,
@@ -7,6 +7,8 @@ import {
   generateCurriculum,
   regenerateCurriculum,
   confirmCurriculum,
+  tweakCurriculum,
+  getCurriculumRecovery,
   getSettings,
   startPlacementAssessment,
   submitPlacementAssessment,
@@ -44,7 +46,10 @@ export default function OnboardingFlow() {
   const [generating, setGenerating] = useState(false)
   const [curriculum, setCurriculum] = useState(null)
   const [llmConfigured, setLlmConfigured] = useState(true)
-  const skipAutoGenerationRef = useRef(false)
+  const [generationMode, setGenerationMode] = useState('auto')
+  const [recoveryCanResume, setRecoveryCanResume] = useState(true)
+  const [searchParams] = useSearchParams()
+  const recoveryTopicId = searchParams.get('topicId')
 
   // Check LLM configuration on mount
   useEffect(() => {
@@ -60,6 +65,63 @@ export default function OnboardingFlow() {
     }
     check()
   }, [])
+
+  useEffect(() => {
+    if (!recoveryTopicId) return undefined
+
+    const requestedTopicId = Number(recoveryTopicId)
+    if (!Number.isInteger(requestedTopicId) || requestedTopicId <= 0) {
+      setError('The saved learning topic could not be opened. Please choose it again from the dashboard.')
+      return undefined
+    }
+
+    let active = true
+    setError('')
+    getCurriculumRecovery(requestedTopicId)
+      .then((data) => {
+        if (!active) return
+        const topic = data.topic || {}
+        setTopicId(topic.id || requestedTopicId)
+        setTopicName(topic.title || '')
+        setAnswers({
+          0: topic.level || 'Beginner',
+          1: topic.timeCommitment || '30 min/day',
+        })
+        setRecoveryCanResume(Boolean(data.resumeAvailable))
+
+        if (data.curriculumState === 'draft_ready' && data.curriculum) {
+          setCurriculum(data.curriculum)
+          setStep('confirmation')
+          return
+        }
+
+        if (data.curriculumState === 'setup') {
+          setStep('setup_questions')
+          return
+        }
+
+        setGenerationMode('manual')
+        setError(
+          data.curriculumError
+          || (data.curriculumState === 'generating'
+            ? 'Roadmap generation is still in progress. You can retry when it becomes available.'
+            : 'Your roadmap is ready to resume.'),
+        )
+        setStep('generating')
+      })
+      .catch((err) => {
+        if (!active) return
+        setTopicId(requestedTopicId)
+        setGenerationMode('manual')
+        setRecoveryCanResume(true)
+        setError(err.message || 'Could not load the saved roadmap. Please retry.')
+        setStep('generating')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [recoveryTopicId])
 
   const handleTopicSubmit = useCallback(
     async (e) => {
@@ -161,6 +223,7 @@ export default function OnboardingFlow() {
     setSubmitting(true)
     try {
       await saveProfile(topicId, { level, timeCommitment })
+      setGenerationMode('auto')
       setStep('generating')
     } catch (err) {
       setError(err.message || 'Failed to save profile.')
@@ -203,6 +266,7 @@ export default function OnboardingFlow() {
         timeCommitment: answers[1] || '30 min/day',
         placementAssessmentId: placementResult.assessmentId,
       })
+      setGenerationMode('auto')
       setStep('generating')
     } catch (err) {
       setError(err.message || 'Failed to save your verified profile.')
@@ -222,21 +286,47 @@ export default function OnboardingFlow() {
       setStep('confirmation')
     } catch (err) {
       setError(err.message || 'Failed to generate curriculum. Please check your API key and try again.')
-      setStep('setup_questions')
+      setGenerationMode('manual')
     } finally {
       setGenerating(false)
     }
   }, [topicId])
 
   useEffect(() => {
-    if (step === 'generating') {
-      if (skipAutoGenerationRef.current) {
-        skipAutoGenerationRef.current = false
-        return
-      }
+    if (step === 'generating' && generationMode === 'auto') {
       handleGenerate()
     }
-  }, [step, handleGenerate])
+  }, [step, generationMode, handleGenerate])
+
+  const handleResumeGeneration = useCallback(() => {
+    setError('')
+    setGenerationMode('auto')
+    setStep('generating')
+  }, [])
+
+  const handleRefreshRecovery = useCallback(async () => {
+    if (!topicId) return
+    setSubmitting(true)
+    setError('')
+    try {
+      const data = await getCurriculumRecovery(topicId)
+      setRecoveryCanResume(Boolean(data.resumeAvailable))
+      if (data.curriculumState === 'draft_ready' && data.curriculum) {
+        setCurriculum(data.curriculum)
+        setStep('confirmation')
+      } else if (data.curriculumState === 'setup') {
+        setStep('setup_questions')
+      } else {
+        setGenerationMode('manual')
+        setError(data.curriculumError || 'Roadmap generation is still in progress. Check again shortly.')
+        setStep('generating')
+      }
+    } catch (err) {
+      setError(err.message || 'Could not refresh the saved roadmap status.')
+    } finally {
+      setSubmitting(false)
+    }
+  }, [topicId])
 
   const handleConfirm = useCallback(async () => {
     setSubmitting(true)
@@ -256,15 +346,7 @@ export default function OnboardingFlow() {
       setSubmitting(true)
       setError('')
       try {
-        const res = await fetch(`http://localhost:3200/api/topics/${topicId}/curriculum/tweak`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request }),
-        })
-        const body = await res.json().catch(() => ({}))
-        if (!res.ok) {
-          throw new Error(body.error || `HTTP ${res.status}`)
-        }
+        const body = await tweakCurriculum(topicId, request)
         setCurriculum(body)
       } catch (err) {
         setError(err.message || 'Failed to tweak curriculum.')
@@ -276,7 +358,8 @@ export default function OnboardingFlow() {
   )
 
   const handleRegenerate = useCallback(async () => {
-    skipAutoGenerationRef.current = true
+    setGenerating(true)
+    setGenerationMode('manual')
     setStep('generating')
     setError('')
     try {
@@ -287,6 +370,8 @@ export default function OnboardingFlow() {
     } catch (err) {
       setError(err.message || 'Failed to regenerate curriculum.')
       setStep('confirmation')
+    } finally {
+      setGenerating(false)
     }
   }, [topicId])
 
@@ -336,16 +421,6 @@ export default function OnboardingFlow() {
         {error && step !== 'topic_input' && step !== 'confirmation' && (
           <div className="ui-alert ui-alert-danger mb-6" role="alert">
             {error}
-            {step === 'generating' && (
-              <div className="mt-2">
-                <button
-                  onClick={() => setStep('setup_questions')}
-                  className="text-sm underline font-medium"
-                >
-                  Back to questions
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -587,14 +662,31 @@ export default function OnboardingFlow() {
 
         {/* Step 3: Generating */}
         {step === 'generating' && (
-          <div className="flex flex-col items-center justify-center min-h-[50vh]">
-            <div className="ui-spinner mb-4" role="status" aria-label="Generating your learning path" />
-            <h1 className="text-xl font-bold ui-text mb-2">Designing your learning path...</h1>
-            <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base">
-              Our AI tutor is building a finite 80/20 curriculum with modules, practical tasks, and skill checks.
-              This takes about 30–60 seconds.
-            </p>
-          </div>
+          generating ? (
+            <div className="flex flex-col items-center justify-center min-h-[50vh]">
+              <div className="ui-spinner mb-4" role="status" aria-label="Generating your learning path" />
+              <h1 className="text-xl font-bold ui-text mb-2">Designing your learning path...</h1>
+              <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base">
+                Our AI tutor is building a finite 80/20 curriculum with modules, practical tasks, and skill checks.
+                This takes about 30–60 seconds.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center min-h-[50vh]">
+              <h1 className="text-xl font-bold ui-text mb-2">Resume your roadmap generation</h1>
+              <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base mb-6">
+                The roadmap was not saved completely. Resume the generation step and we will save the draft before showing it for review.
+              </p>
+              <button
+                type="button"
+                onClick={recoveryCanResume ? handleResumeGeneration : handleRefreshRecovery}
+                disabled={submitting}
+                className="ui-button ui-button-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {recoveryCanResume ? 'Resume roadmap generation' : 'Check generation status'}
+              </button>
+            </div>
+          )
         )}
 
         {/* Step 4: Confirmation */}

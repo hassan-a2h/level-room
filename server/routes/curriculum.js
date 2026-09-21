@@ -5,6 +5,15 @@ import { requireLlmConfig } from '../utils/llm-config.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 import { validateCurriculum as validateCurriculumDraft, collectCurriculumDraft, CurriculumDraftError, writeCurriculumSSE, writeCurriculumSSEError } from '../utils/curriculum-draft.js'
 import { persistCurriculumInTransaction } from '../utils/course-lineage.js'
+import { evaluatePlacementScores, normalizePlacementQuestions, placementPublicQuestions } from '../utils/placement-assessment.js'
+import {
+  CurriculumGenerationError,
+  claimCurriculumGeneration,
+  completeCurriculumGeneration,
+  failCurriculumGeneration,
+  getCurriculumRecovery,
+  parseCurriculumDraft,
+} from '../utils/curriculum-recovery.js'
 
 const router = Router()
 
@@ -32,8 +41,6 @@ const SETUP_OPTIONS = Object.freeze({
     { value: '2+ hours/day', label: '2+ hours/day' },
   ]),
 })
-
-const PLACEMENT_QUESTION_LIMITS = { min: 4, max: 6 }
 
 function normalizeLevel(value) {
   if (typeof value !== 'string') return null
@@ -67,83 +74,6 @@ function setupQuestions(topicTitle) {
   }
 }
 
-function placementPublicQuestions(questions) {
-  return questions.map(({ id, text, type, options }) => ({
-    id,
-    text,
-    type,
-    ...(type === 'multiple_choice' ? { options } : {}),
-  }))
-}
-
-function normalizePlacementQuestions(parsed) {
-  if (!parsed || !Array.isArray(parsed.questions)) {
-    throw new Error('Invalid placement assessment format')
-  }
-  if (parsed.questions.length < PLACEMENT_QUESTION_LIMITS.min || parsed.questions.length > PLACEMENT_QUESTION_LIMITS.max) {
-    throw new Error('Placement assessment must contain 4-6 questions')
-  }
-
-  const ids = new Set()
-  const questions = parsed.questions.map((question, index) => {
-    const id = typeof question?.id === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(question.id)
-      ? question.id
-      : `q${index + 1}`
-    if (ids.has(id)) throw new Error('Placement assessment contains duplicate question ids')
-    ids.add(id)
-
-    const text = typeof question?.text === 'string' ? question.text.trim() : ''
-    if (text.length < 10 || text.length > 500) throw new Error('Placement assessment contains invalid question text')
-
-    const type = question?.type === 'multiple_choice' || question?.type === 'multiple-choice'
-      ? 'multiple_choice'
-      : question?.type === 'objective' || question?.type === 'open'
-        ? 'objective'
-        : null
-    if (!type) throw new Error('Placement assessment contains an invalid question type')
-
-    if (type === 'multiple_choice') {
-      if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 5) {
-        throw new Error('Placement assessment contains invalid multiple-choice options')
-      }
-      const optionValues = new Set()
-      const options = question.options.map((option) => {
-        const value = typeof option === 'string' ? option.trim() : option?.value?.toString().trim()
-        const label = typeof option === 'string' ? option.trim() : option?.label?.toString().trim()
-        if (!value || !label || value.length > 100 || label.length > 200) {
-          throw new Error('Placement assessment contains an invalid option')
-        }
-        if (optionValues.has(value)) throw new Error('Placement assessment contains duplicate options')
-        optionValues.add(value)
-        return { value, label }
-      })
-      const correctAnswer = typeof question.correct_answer === 'string' ? question.correct_answer.trim() : ''
-      if (!correctAnswer || !options.some((option) => option.value === correctAnswer)) {
-        throw new Error('Placement assessment is missing a valid answer key')
-      }
-      return { id, text, type, options, correct_answer: correctAnswer }
-    }
-
-    const rubric = typeof question.rubric === 'string' ? question.rubric.trim() : ''
-    if (!rubric || rubric.length > 1000) throw new Error('Placement assessment is missing an objective rubric')
-    return { id, text, type, rubric }
-  })
-
-  const multipleChoiceCount = questions.filter((question) => question.type === 'multiple_choice').length
-  const objectiveCount = questions.filter((question) => question.type === 'objective').length
-  if (multipleChoiceCount < 2 || objectiveCount < 2) {
-    throw new Error('Placement assessment must include multiple-choice and objective questions')
-  }
-  return questions
-}
-
-function recommendedLevel(requestedLevel, score) {
-  if (requestedLevel === 'Intermediate') return score >= 70 ? 'Intermediate' : 'Beginner'
-  if (score >= 85) return 'Advanced'
-  if (score >= 65) return 'Intermediate'
-  return 'Beginner'
-}
-
 function placementResult(assessment) {
   const recommended = assessment.recommended_level || 'Beginner'
   let feedback = []
@@ -154,6 +84,8 @@ function placementResult(assessment) {
     assessmentId: assessment.id,
     requestedLevel: assessment.requested_level,
     score: assessment.score,
+    targetScore: assessment.target_score,
+    stretchScore: assessment.stretch_score,
     passed: recommended === assessment.requested_level,
     recommendedLevel: recommended,
     feedback: Array.isArray(feedback) ? feedback : [],
@@ -218,6 +150,30 @@ Rules:
     system,
     messages: [{ role: 'user', content: userContent }],
   })
+}
+
+async function streamGeneratedCurriculum(topicId, topic, req, res) {
+  const { token } = claimCurriculumGeneration(topicId)
+  try {
+    const config = requireLlmConfig()
+    const request = createRequestAbortSignal(req, res)
+    let lastError
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
+      try {
+        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
+        completeCurriculumGeneration(topicId, token, curriculum)
+        return writeCurriculumSSE(res, curriculum)
+      } catch (error) {
+        lastError = error
+        if (!(error.code === 'INVALID_CURRICULUM' && error.retryable && attempt < 2)) throw error
+      }
+    }
+    throw lastError
+  } catch (error) {
+    failCurriculumGeneration(topicId, token, error)
+    throw error
+  }
 }
 
 /**
@@ -336,6 +292,13 @@ function persistCurriculum(topicId, curriculum) {
         topicId,
       )
     }
+    run(
+      `UPDATE topics
+       SET curriculum_state = 'confirmed', curriculum_draft = NULL, curriculum_error = NULL,
+           curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
+       WHERE id = ?`,
+      topicId,
+    )
     return firstLessonId
   })()
 }
@@ -377,7 +340,12 @@ router.post('/topics/:id/profile', (req, res) => {
     const topicId = Number(req.params.id)
     const { level, selfReportedLevel, timeCommitment, placementAssessmentId } = req.body
 
-    const topic = get('SELECT id FROM topics WHERE id = ?', topicId)
+    const topic = get(
+      `SELECT id, level, time_per_week, curriculum_state,
+              EXISTS (SELECT 1 FROM modules WHERE modules.topic_id = topics.id) AS has_modules
+       FROM topics WHERE id = ?`,
+      topicId,
+    )
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -414,12 +382,21 @@ router.post('/topics/:id/profile', (req, res) => {
       return res.status(400).json({ error: 'The verified level must be Beginner when no placement assessment is provided.' })
     }
 
-    run(
-      'UPDATE topics SET level = ?, time_per_week = ? WHERE id = ?',
-      effectiveLevel,
-      canonicalTimeCommitment,
-      topicId
-    )
+    const profileChanged = topic.level !== effectiveLevel || topic.time_per_week !== canonicalTimeCommitment
+    if (!topic.has_modules && (profileChanged || topic.curriculum_state === 'setup')) {
+      run(
+        `UPDATE topics
+         SET level = ?, time_per_week = ?, curriculum_state = 'ready_to_generate',
+             curriculum_draft = NULL, curriculum_error = NULL,
+             curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
+         WHERE id = ?`,
+        effectiveLevel,
+        canonicalTimeCommitment,
+        topicId,
+      )
+    } else {
+      run('UPDATE topics SET level = ?, time_per_week = ? WHERE id = ?', effectiveLevel, canonicalTimeCommitment, topicId)
+    }
 
     return res.json({
       ok: true,
@@ -472,21 +449,22 @@ router.post('/topics/:id/placement/start', async (req, res) => {
 
     const config = requireLlmConfig()
     const system = `You are designing a placement assessment for the topic "${topic.title}".
-The learner claims ${level} proficiency. Generate exactly 5 concise questions that distinguish that level from the level below.
+The learner claims ${level} proficiency. Generate exactly 6 concise questions: exactly five target questions that assess practical competence at the claimed level, plus exactly one stretch question.
+Target questions must stay within ${level} expectations and must not assume next-level knowledge. For an Intermediate learner, the stretch question may assess Advanced competence. For an Advanced learner, the stretch question must assess deeper Advanced judgment without inventing an Expert level.
 Return strict JSON with this shape:
 {
   "questions": [
-    { "id": "q1", "text": "...", "type": "multiple_choice", "options": [{"value":"A","label":"..."},{"value":"B","label":"..."}], "correct_answer": "A" },
-    { "id": "q2", "text": "...", "type": "objective", "rubric": "What a strong answer must demonstrate" }
+    { "id": "q1", "text": "...", "type": "multiple_choice", "difficulty_band": "target", "options": [{"value":"A","label":"..."},{"value":"B","label":"..."}], "correct_answer": "A" },
+    { "id": "q6", "text": "...", "type": "objective", "difficulty_band": "stretch", "rubric": "What a strong answer must demonstrate" }
   ]
 }
-Include at least 2 multiple_choice and 2 objective questions. Multiple-choice options must have 2-5 choices and one correct_answer value. Objective questions must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
+Include at least 2 multiple_choice and 2 objective questions. Mark exactly five questions difficulty_band target and one difficulty_band stretch. Multiple-choice options must have 2-5 choices and one correct_answer value. Objective questions must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
     const result = await generateText({
       ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate placement assessment questions.' }],
     })
-    const questions = normalizePlacementQuestions(JSON.parse(result.text || '{}'))
+    const questions = normalizePlacementQuestions(JSON.parse(result.text || '{}'), level)
 
     const assessmentId = transaction(() => {
       run('UPDATE placement_assessments SET status = ? WHERE topic_id = ? AND status = ?', 'expired', topicId, 'pending')
@@ -520,7 +498,7 @@ router.post('/topics/:id/placement/submit', async (req, res) => {
       return res.status(400).json({ error: 'A valid placement assessment is required.' })
     }
     const assessment = get(
-      `SELECT id, topic_id, requested_level, questions, answers, status, score, recommended_level, feedback, gaps
+      `SELECT id, topic_id, requested_level, questions, answers, status, score, target_score, stretch_score, recommended_level, feedback, gaps
        FROM placement_assessments
        WHERE id = ? AND topic_id = ?`,
       assessmentId, topicId
@@ -548,8 +526,8 @@ router.post('/topics/:id/placement/submit', async (req, res) => {
 
     const config = requireLlmConfig()
     const evaluationPrompt = `You are evaluating a placement assessment for "${assessment.requested_level}" proficiency in the topic.
-Score the learner from 0 to 100 based on correctness, reasoning, and transfer. Use the question rubrics and answer keys. Be strict but fair.
-Return strict JSON only: {"score": number, "feedback": ["..."], "gaps": ["..."]}.
+Score the five target questions as target_score from 0 to 100, and the one stretch question as stretch_score from 0 to 100. Target-level competence is the placement gate; the stretch score is a capped depth signal and must not independently downgrade target-level mastery. Use the question rubrics and answer keys. Be strict but fair.
+Return strict JSON only: {"target_score": number, "stretch_score": number, "feedback": ["..."], "gaps": ["..."]}.
 
 Questions and answer keys:
 ${JSON.stringify(questions)}
@@ -562,27 +540,28 @@ ${JSON.stringify(answers)}`
       messages: [{ role: 'user', content: 'Evaluate this placement assessment.' }],
     })
     const parsed = JSON.parse(result.text || '{}')
-    const score = Number(parsed.score)
-    if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error('Invalid placement assessment score')
+    const placementScores = evaluatePlacementScores({
+      requestedLevel: assessment.requested_level,
+      targetScore: parsed.target_score,
+      stretchScore: parsed.stretch_score,
+    })
     const feedback = Array.isArray(parsed.feedback)
       ? parsed.feedback.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 500)).slice(0, 8)
       : []
     const gaps = Array.isArray(parsed.gaps)
       ? parsed.gaps.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 500)).slice(0, 8)
       : []
-    const verifiedLevel = recommendedLevel(assessment.requested_level, score)
-
     const update = transaction(() => {
       run(
         `UPDATE placement_assessments
-         SET answers = ?, status = 'completed', score = ?, recommended_level = ?, feedback = ?, gaps = ?, completed_at = CURRENT_TIMESTAMP
+         SET answers = ?, status = 'completed', score = ?, target_score = ?, stretch_score = ?, recommended_level = ?, feedback = ?, gaps = ?, completed_at = CURRENT_TIMESTAMP
          WHERE id = ? AND status = 'pending'`,
-        JSON.stringify(answers), Math.round(score), verifiedLevel, JSON.stringify(feedback), JSON.stringify(gaps), assessment.id
+        JSON.stringify(answers), placementScores.score, placementScores.targetScore, placementScores.stretchScore, placementScores.recommendedLevel, JSON.stringify(feedback), JSON.stringify(gaps), assessment.id
       )
     })()
     if (!update || update.changes !== 1) {
       const completed = get(
-        'SELECT id, requested_level, status, score, recommended_level, feedback, gaps FROM placement_assessments WHERE id = ? AND topic_id = ?',
+        'SELECT id, requested_level, status, score, target_score, stretch_score, recommended_level, feedback, gaps FROM placement_assessments WHERE id = ? AND topic_id = ?',
         assessment.id, topicId
       )
       if (completed?.status === 'completed') return res.json(placementResult(completed))
@@ -592,9 +571,11 @@ ${JSON.stringify(answers)}`
     return res.json({
       assessmentId: assessment.id,
       requestedLevel: assessment.requested_level,
-      score: Math.round(score),
-      passed: verifiedLevel === assessment.requested_level,
-      recommendedLevel: verifiedLevel,
+      score: placementScores.score,
+      targetScore: placementScores.targetScore,
+      stretchScore: placementScores.stretchScore,
+      passed: placementScores.passed,
+      recommendedLevel: placementScores.recommendedLevel,
       feedback,
       gaps,
     })
@@ -614,7 +595,10 @@ ${JSON.stringify(answers)}`
 router.post('/topics/:id/curriculum/generate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT id, title, level, time_per_week FROM topics WHERE id = ?', topicId)
+    const topic = get(
+      'SELECT id, title, level, time_per_week, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
+      topicId,
+    )
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -626,23 +610,13 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const config = requireLlmConfig()
-    const request = createRequestAbortSignal(req, res)
-    let lastError
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
-      try {
-        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
-        return writeCurriculumSSE(res, curriculum)
-      } catch (error) {
-        lastError = error
-        if (!(error.code === 'INVALID_CURRICULUM' && error.retryable && attempt < 2)) throw error
-      }
-    }
-    throw lastError
+    return await streamGeneratedCurriculum(topicId, topic, req, res)
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/generate error:', err.message)
     if (!res.headersSent) {
+      if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
+        return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
+      }
       if (err instanceof LlmClientError) {
         return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
       }
@@ -659,7 +633,7 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
 router.post('/topics/:id/curriculum/confirm', (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT id, course_kind, course_stage FROM topics WHERE id = ?', topicId)
+    const topic = get('SELECT id, course_kind, course_stage, curriculum_draft FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -667,7 +641,7 @@ router.post('/topics/:id/curriculum/confirm', (req, res) => {
     const mutable = assertCurriculumMutable(topicId)
     if (!mutable.ok) return res.status(mutable.error.status).json({ error: mutable.error.message, code: mutable.error.code })
 
-    const { curriculum } = req.body
+    const curriculum = req.body?.curriculum || parseCurriculumDraft(topic.curriculum_draft)
     if (!curriculum || typeof curriculum !== 'object') {
       return res.status(400).json({ error: 'Curriculum object is required.' })
     }
@@ -708,6 +682,22 @@ router.post('/topics/:id/curriculum/confirm', (req, res) => {
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/confirm error:', err.message)
     return res.status(500).json({ error: 'Failed to confirm curriculum.' })
+  }
+})
+
+/**
+ * GET /api/topics/:id/curriculum/recovery
+ * Return durable onboarding state and any validated unconfirmed draft.
+ */
+router.get('/topics/:id/curriculum/recovery', (req, res) => {
+  try {
+    return res.json(getCurriculumRecovery(Number(req.params.id)))
+  } catch (err) {
+    console.error('GET /api/topics/:id/curriculum/recovery error:', err.message)
+    if (err instanceof CurriculumGenerationError) {
+      return res.status(err.status).json({ error: err.message, code: err.code })
+    }
+    return res.status(500).json({ error: 'Failed to load curriculum recovery state.' })
   }
 })
 
@@ -801,7 +791,10 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
     const topicId = Number(req.params.id)
     const { request: tweakRequest } = req.body
 
-    const topic = get('SELECT id, title, level, time_per_week FROM topics WHERE id = ?', topicId)
+    const topic = get(
+      'SELECT id, title, level, time_per_week, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
+      topicId,
+    )
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -827,6 +820,18 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
         prerequisites: JSON.parse(l.prerequisites || '[]'),
         task: l.task_spec ? JSON.parse(l.task_spec) : undefined,
       })))
+    }
+
+    const savedDraft = existingModules.length === 0 ? parseCurriculumDraft(topic.curriculum_draft) : null
+    if (savedDraft?.modules) {
+      for (const mod of savedDraft.modules) {
+        for (const lesson of mod.lessons || []) {
+          existingLessons.push({
+            moduleTitle: mod.title,
+            ...lesson,
+          })
+        }
+      }
     }
 
     const taskBackedCourse = existingModules.length === 0 || existingLessons.some((lesson) => lesson.task)
@@ -873,6 +878,17 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
       { enforceBounds: taskBackedCourse, requireTasks: taskBackedCourse },
     )
 
+    if (existingModules.length === 0) {
+      run(
+        `UPDATE topics
+         SET curriculum_state = 'draft_ready', curriculum_draft = ?, curriculum_error = NULL,
+             curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
+         WHERE id = ? AND curriculum_state <> 'confirmed'`,
+        JSON.stringify(updated),
+        topicId,
+      )
+    }
+
     return res.json({ ok: true, modules: updated.modules, course: updated.course })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/tweak error:', err.message)
@@ -905,23 +921,13 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const config = requireLlmConfig()
-    const request = createRequestAbortSignal(req, res)
-    let lastError
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
-      try {
-        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
-        return writeCurriculumSSE(res, curriculum)
-      } catch (error) {
-        lastError = error
-        if (!(error.code === 'INVALID_CURRICULUM' && error.retryable && attempt < 2)) throw error
-      }
-    }
-    throw lastError
+    return await streamGeneratedCurriculum(topicId, topic, req, res)
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/regenerate error:', err.message)
     if (!res.headersSent) {
+      if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
+        return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
+      }
       if (err instanceof LlmClientError) {
         return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
       }

@@ -84,6 +84,24 @@ describe('Dashboard API', () => {
       expect(res.body.activeTopics).toHaveLength(0)
       expect(res.body.completedTopics).toHaveLength(1)
     })
+
+    it('exposes resumable curriculum state for an incomplete topic', async () => {
+      const topic = dbModule.run(
+        "INSERT INTO topics (title, status, level, time_per_week, curriculum_state, curriculum_error) VALUES (?, ?, ?, ?, ?, ?)",
+        'Interrupted React', 'active', 'Beginner', '30 min/day', 'failed', 'Provider connection lost.',
+      )
+
+      const res = await request(app).get('/api/topics')
+
+      expect(res.status).toBe(200)
+      expect(res.body.topics[0]).toMatchObject({
+        id: topic.lastInsertRowid,
+        curriculumState: 'failed',
+        curriculumError: 'Provider connection lost.',
+        hasCurriculumDraft: false,
+        resumeAvailable: true,
+      })
+    })
   })
 
   describe('GET /api/topics/:id/dashboard', () => {
@@ -113,6 +131,24 @@ describe('Dashboard API', () => {
       expect(res.body.modules[0].lessons[0].state).toBe("passed")
       expect(res.body.modules[0].lessons[1].state).toBe("not_started")
       expect(res.body.modules[0].lessons[1].prerequisites).toHaveLength(1)
+    })
+
+    it('returns recovery metadata when a profiled topic has no roadmap yet', async () => {
+      const topic = dbModule.run(
+        "INSERT INTO topics (title, status, level, time_per_week, curriculum_state, curriculum_error) VALUES (?, ?, ?, ?, ?, ?)",
+        'Interrupted React', 'active', 'Beginner', '30 min/day', 'failed', 'Provider connection lost.',
+      )
+
+      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/dashboard`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.modules).toEqual([])
+      expect(res.body.topic).toMatchObject({
+        curriculumState: 'failed',
+        curriculumError: 'Provider connection lost.',
+        hasCurriculumDraft: false,
+        resumeAvailable: true,
+      })
     })
 
     it('returns immediate lineage and child course references', async () => {
@@ -249,6 +285,20 @@ describe('Dashboard API', () => {
       const res = await request(app).get('/api/topics/default')
       expect(res.status).toBe(200)
       expect(res.body.topic.id).toBe(t2.lastInsertRowid)
+    })
+
+    it('does not expose generation tokens or saved drafts in the default topic response', async () => {
+      dbModule.run(
+        "INSERT INTO topics (title, status, curriculum_state, curriculum_draft, curriculum_generation_token) VALUES (?, ?, ?, ?, ?)",
+        'Recoverable', 'active', 'draft_ready', '{"modules":[]}', 'secret-generation-token',
+      )
+
+      const res = await request(app).get('/api/topics/default')
+
+      expect(res.status).toBe(200)
+      expect(res.body.topic).toMatchObject({ curriculumState: 'draft_ready', hasCurriculumDraft: true, resumeAvailable: true })
+      expect(res.body.topic).not.toHaveProperty('curriculum_draft')
+      expect(res.body.topic).not.toHaveProperty('curriculum_generation_token')
     })
 
     it('prefers an active topic over a newer completed prerequisite', async () => {

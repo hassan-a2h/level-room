@@ -12,6 +12,7 @@ vi.mock('../api.js', () => ({
   generateCurriculum: vi.fn(),
   regenerateCurriculum: vi.fn(),
   confirmCurriculum: vi.fn(),
+  getCurriculumRecovery: vi.fn(),
   tweakCurriculum: vi.fn(),
   startPlacementAssessment: vi.fn(),
   submitPlacementAssessment: vi.fn(),
@@ -25,6 +26,7 @@ import {
   generateCurriculum,
   regenerateCurriculum,
   confirmCurriculum,
+  getCurriculumRecovery,
   tweakCurriculum,
   startPlacementAssessment,
   submitPlacementAssessment,
@@ -138,6 +140,7 @@ describe('OnboardingFlow', () => {
       ],
     })
     saveProfile.mockResolvedValue({ ok: true })
+    generateCurriculum.mockImplementation(() => new Promise(() => {}))
 
     render(
       <MemoryRouter>
@@ -207,6 +210,44 @@ describe('OnboardingFlow', () => {
     expect(screen.getByText('Updated path')).toBeInTheDocument()
     expect(regenerateCurriculum).toHaveBeenCalledTimes(2)
     expect(generateCurriculum).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers an explicit retry for a roadmap generation that failed after leaving the tab', async () => {
+    getCurriculumRecovery.mockResolvedValue({
+      topic: { id: 12, title: 'DevOps', level: 'Beginner', timeCommitment: '30 min/day' },
+      curriculumState: 'failed',
+      curriculumError: 'The provider connection was lost.',
+      curriculum: null,
+      resumeAvailable: true,
+    })
+    generateCurriculum.mockResolvedValue(curriculumResponse({ modules: [{ title: 'Recovered path', lessons: [] }] }))
+
+    render(<MemoryRouter initialEntries={['/onboarding?topicId=12']}><OnboardingFlow /></MemoryRouter>)
+
+    expect(await screen.findByText(/resume your roadmap generation/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/provider connection was lost/i)
+    expect(generateCurriculum).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /resume roadmap generation/i }))
+
+    expect(await screen.findByText('Recovered path')).toBeInTheDocument()
+    expect(generateCurriculum).toHaveBeenCalledWith(12)
+  })
+
+  it('opens a saved roadmap draft for review instead of generating it again', async () => {
+    const draft = { modules: [{ title: 'Saved path', lessons: [] }] }
+    getCurriculumRecovery.mockResolvedValue({
+      topic: { id: 13, title: 'React', level: 'Intermediate', timeCommitment: '1 hour/day' },
+      curriculumState: 'draft_ready',
+      curriculumError: null,
+      curriculum: draft,
+      resumeAvailable: true,
+    })
+
+    render(<MemoryRouter initialEntries={['/onboarding?topicId=13']}><OnboardingFlow /></MemoryRouter>)
+
+    expect(await screen.findByText('Saved path')).toBeInTheDocument()
+    expect(generateCurriculum).not.toHaveBeenCalled()
   })
 })
 

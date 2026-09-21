@@ -186,6 +186,15 @@ export async function getCurriculum(topicId) {
   return res.json()
 }
 
+export async function getCurriculumRecovery(topicId) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/recovery`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function confirmCurriculum(topicId, curriculum) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/confirm`, {
     method: 'POST',

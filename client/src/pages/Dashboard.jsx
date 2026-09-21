@@ -70,11 +70,16 @@ function EmptyState({ onStart }) {
   )
 }
 
-function TopicCard({ topic, isActive, onClick, onDelete }) {
+function TopicCard({ topic, isActive, onClick, onDelete, onResume }) {
   const progress = topic.progress ?? 0
   const courseLabel = topic.courseStage > 0
     ? `Advanced · Stage ${topic.courseStage}`
     : 'Core course'
+  const recoveryAction = topic.curriculumState === 'setup'
+    ? 'Continue setup'
+    : topic.curriculumState === 'draft_ready'
+      ? 'Review roadmap'
+      : 'Resume roadmap generation'
   return (
     <div
       data-testid="topic-card"
@@ -103,7 +108,19 @@ function TopicCard({ topic, isActive, onClick, onDelete }) {
             {topic.passedLessons ?? 0} / {topic.totalLessons ?? 0} lessons
           </span>
           <span className="mt-1 block text-xs ui-text-muted truncate">{courseLabel}{topic.courseFocus ? ` · ${topic.courseFocus}` : ''}</span>
+          {topic.resumeAvailable && onResume && (
+            <span className="mt-2 block text-xs font-semibold text-indigo-700">Roadmap needs attention</span>
+          )}
         </button>
+        {topic.resumeAvailable && onResume && (
+          <button
+            type="button"
+            onClick={() => onResume(topic.id)}
+            className="ui-button ui-button-secondary mt-1 shrink-0 px-2 py-1 text-xs"
+          >
+            {recoveryAction}
+          </button>
+        )}
         {onDelete && (
           <button
             onClick={() => onDelete(topic.id)}
@@ -424,13 +441,13 @@ export default function Dashboard() {
             <aside className="lg:col-span-1 space-y-3">
               <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Active Topics</h2>
               {activeTopics.length > 0 ? activeTopics.map((topic) => (
-                <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+                <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
               )) : <p className="text-sm ui-text-muted">No active courses.</p>}
               {completedTopics.length > 0 && (
                 <div className="mt-6 space-y-3">
                   <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Completed Courses</h2>
                   {completedTopics.map((topic) => (
-                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
                   ))}
                 </div>
               )}
@@ -438,7 +455,7 @@ export default function Dashboard() {
                 <div className="mt-6 space-y-3">
                   <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Archived Topics</h2>
                   {archivedTopics.map((topic) => (
-                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} />
+                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
                   ))}
                 </div>
               )}
@@ -470,7 +487,31 @@ export default function Dashboard() {
                   />
                 </div>
               )}
-              {!examModuleId && dashboard && (
+              {!examModuleId && dashboard && dashboard.topic?.resumeAvailable && dashboard.modules?.length === 0 ? (
+                <div className="ui-surface ui-surface-raised p-6 sm:p-10 min-h-[500px] flex flex-col items-center justify-center text-center">
+                  <h2 className="text-xl sm:text-2xl font-bold ui-text mb-2">
+                    {dashboard.topic.curriculumState === 'setup'
+                      ? 'Continue setting up your roadmap'
+                      : dashboard.topic.curriculumState === 'draft_ready'
+                        ? 'Your roadmap is ready for review'
+                        : 'Resume your roadmap generation'}
+                  </h2>
+                  <p className="ui-text-secondary max-w-md mb-6">
+                    {dashboard.topic.curriculumError || 'This topic was created, but its roadmap was not completed. Resume the setup to continue.'}
+                  </p>
+                  <button
+                    type="button"
+                    className="ui-button ui-button-primary"
+                    onClick={() => navigate(`/onboarding?topicId=${encodeURIComponent(activeTopicId)}`)}
+                  >
+                    {dashboard.topic.curriculumState === 'setup'
+                      ? 'Continue setup'
+                      : dashboard.topic.curriculumState === 'draft_ready'
+                        ? 'Review roadmap'
+                        : 'Resume roadmap generation'}
+                  </button>
+                </div>
+              ) : !examModuleId && dashboard && (
                 <div className="ui-surface ui-surface-raised p-4 sm:p-6 min-h-[500px]">
                   <GlobalStats topics={topics} />
                   <div className="mb-4">

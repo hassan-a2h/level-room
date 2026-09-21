@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
 import { getLineage, CourseLineageError } from '../utils/course-lineage.js'
+import { isGenerationStale } from '../utils/curriculum-recovery.js'
 
 const router = Router()
 
@@ -53,6 +54,18 @@ function serializeCourseFields(topic) {
     courseFocus: topic.course_focus || '',
     courseSummary: topic.course_summary || '',
     courseCompletedAt: topic.course_completed_at || null,
+  }
+}
+
+function serializeCurriculumRecoveryFields(topic) {
+  const hasCurriculum = Boolean(get('SELECT 1 FROM modules WHERE topic_id = ? LIMIT 1', topic.id))
+  const curriculumState = hasCurriculum ? 'confirmed' : (topic.curriculum_state || 'setup')
+  const stale = curriculumState === 'generating' && isGenerationStale(topic.curriculum_generation_started_at)
+  return {
+    curriculumState,
+    curriculumError: topic.curriculum_error || null,
+    hasCurriculumDraft: Boolean(topic.curriculum_draft),
+    resumeAvailable: !hasCurriculum && (['setup', 'ready_to_generate', 'failed', 'draft_ready'].includes(curriculumState) || stale),
   }
 }
 
@@ -111,6 +124,7 @@ router.get('/topics', (_req, res) => {
         consecutivePasses: topic.consecutive_passes || 0,
         consecutiveFails: topic.consecutive_fails || 0,
         ...serializeCourseFields(topic),
+        ...serializeCurriculumRecoveryFields(topic),
         ...stats,
       }
     })
@@ -134,7 +148,20 @@ router.get('/topics/default', (_req, res) => {
       return res.status(404).json({ error: 'No topics found.' })
     }
     const stats = getTopicProgress(topic.id)
-    return res.json({ topic: { ...topic, ...serializeCourseFields(topic), ...stats, ...getTopicLineageRefs(topic.id) } })
+    return res.json({ topic: {
+      id: topic.id,
+      title: topic.title,
+      status: topic.status,
+      last_active_at: topic.last_active_at,
+      created_at: topic.created_at,
+      difficulty: topic.difficulty || 'normal',
+      consecutivePasses: topic.consecutive_passes || 0,
+      consecutiveFails: topic.consecutive_fails || 0,
+      ...serializeCourseFields(topic),
+      ...serializeCurriculumRecoveryFields(topic),
+      ...stats,
+      ...getTopicLineageRefs(topic.id),
+    } })
   } catch (err) {
     console.error('GET /api/topics/default error:', err.message)
     return res.status(500).json({ error: 'Failed to load default topic.' })
@@ -251,6 +278,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
         consecutivePasses,
         consecutiveFails,
         ...serializeCourseFields(topic),
+        ...serializeCurriculumRecoveryFields(topic),
         ...getTopicLineageRefs(topic.id),
         ...stats,
       },

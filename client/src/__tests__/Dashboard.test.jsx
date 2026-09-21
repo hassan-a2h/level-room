@@ -93,6 +93,42 @@ describe('Dashboard', () => {
     expect(screen.getByText('50%')).toBeInTheDocument()
   })
 
+  it('shows a recovery action instead of an empty roadmap', async () => {
+    getTopics.mockResolvedValue({
+      topics: [{
+        id: 9,
+        title: 'Distributed Systems',
+        progress: 0,
+        totalLessons: 0,
+        passedLessons: 0,
+        status: 'active',
+        curriculumState: 'failed',
+        curriculumError: 'Generation stopped before the roadmap was saved.',
+        resumeAvailable: true,
+      }],
+    })
+    getReviewCount.mockResolvedValue({ totalDue: 0 })
+    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start today!' })
+    getDefaultTopic.mockResolvedValue({ topic: { id: 9, title: 'Distributed Systems' } })
+    getDashboard.mockResolvedValue({
+      topic: {
+        id: 9,
+        title: 'Distributed Systems',
+        curriculumState: 'failed',
+        curriculumError: 'Generation stopped before the roadmap was saved.',
+        resumeAvailable: true,
+      },
+      modules: [],
+    })
+
+    renderDashboardWithPath()
+
+    expect(await screen.findByText(/resume your roadmap/i)).toBeInTheDocument()
+    expect(screen.getByText(/generation stopped before/i)).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /resume roadmap generation/i }).at(-1))
+    expect(screen.getByTestId('current-path')).toHaveTextContent('/onboarding')
+  })
+
   it('exposes the active topic and keeps delete keyboard activation separate from topic selection', async () => {
     getTopics.mockResolvedValue({ topics: [
       { id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2 },

@@ -273,6 +273,28 @@ describe('database schema', () => {
     expect(db.prepare("SELECT name FROM migrations WHERE name = '012_add_course_lineage_and_task_assessment'").get()).toBeTruthy()
   })
 
+  it('adds durable curriculum recovery fields with safe defaults', () => {
+    const db = dbModule.default
+    const topicColumns = db.prepare('PRAGMA table_info(topics)').all().map((column) => column.name)
+    const placementColumns = db.prepare('PRAGMA table_info(placement_assessments)').all().map((column) => column.name)
+
+    expect(topicColumns).toEqual(expect.arrayContaining([
+      'curriculum_state',
+      'curriculum_draft',
+      'curriculum_error',
+      'curriculum_generation_started_at',
+      'curriculum_generation_token',
+    ]))
+    expect(placementColumns).toEqual(expect.arrayContaining(['target_score', 'stretch_score']))
+
+    const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Recovery defaults')
+    expect(db.prepare('SELECT curriculum_state, curriculum_draft, curriculum_error FROM topics WHERE id = ?').get(topic.lastInsertRowid)).toEqual({
+      curriculum_state: 'setup',
+      curriculum_draft: null,
+      curriculum_error: null,
+    })
+  })
+
   it('uses safe Core defaults for existing topic and lesson rows', () => {
     const db = dbModule.default
     const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Legacy topic')

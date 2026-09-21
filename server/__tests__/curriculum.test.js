@@ -45,18 +45,20 @@ vi.mock('../llm/client.js', () => ({
         return Promise.resolve({
           text: JSON.stringify({
             questions: [
-              { id: 'q1', text: 'Which approach best explains JSX?', type: 'multiple_choice', options: [{ value: 'A', label: 'A syntax extension' }, { value: 'B', label: 'A database' }], correct_answer: 'A' },
-              { id: 'q2', text: 'Which approach best handles component state?', type: 'multiple_choice', options: [{ value: 'A', label: 'Local state' }, { value: 'B', label: 'Random globals' }], correct_answer: 'A' },
-              { id: 'q3', text: 'Explain how you would debug a render loop.', type: 'objective', rubric: 'Names a reproducible debugging process.' },
-              { id: 'q4', text: 'Describe a maintainable component boundary.', type: 'objective', rubric: 'Connects boundaries to cohesion and change.' },
-              { id: 'q5', text: 'How would you test a user interaction?', type: 'objective', rubric: 'Describes a behavior-focused test.' },
+              { id: 'q1', text: 'Which approach best explains JSX?', type: 'multiple_choice', difficulty_band: 'target', options: [{ value: 'A', label: 'A syntax extension' }, { value: 'B', label: 'A database' }], correct_answer: 'A' },
+              { id: 'q2', text: 'Which approach best handles component state?', type: 'multiple_choice', difficulty_band: 'target', options: [{ value: 'A', label: 'Local state' }, { value: 'B', label: 'Random globals' }], correct_answer: 'A' },
+              { id: 'q3', text: 'Explain how you would debug a render loop.', type: 'objective', difficulty_band: 'target', rubric: 'Names a reproducible debugging process.' },
+              { id: 'q4', text: 'Describe a maintainable component boundary.', type: 'objective', difficulty_band: 'target', rubric: 'Connects boundaries to cohesion and change.' },
+              { id: 'q5', text: 'How would you test a user interaction?', type: 'objective', difficulty_band: 'target', rubric: 'Describes a behavior-focused test.' },
+              { id: 'q6', text: 'How would you optimize a complex rendering bottleneck?', type: 'objective', difficulty_band: 'stretch', rubric: 'Makes a measured tradeoff using profiling evidence.' },
             ],
           }),
         })
       }
       return Promise.resolve({
         text: JSON.stringify({
-          score: 88,
+          target_score: 88,
+          stretch_score: 20,
           feedback: ['Strong grasp of the core concepts.'],
           gaps: [],
         }),
@@ -236,11 +238,14 @@ describe('Curriculum API', () => {
 
       expect(start.status).toBe(200)
       expect(start.body.assessmentId).toBeTypeOf('number')
+      expect(start.body.questions).toHaveLength(6)
       expect(start.body.questions).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: 'multiple_choice', options: expect.any(Array) }),
         expect.objectContaining({ type: 'objective' }),
       ]))
       expect(start.body.questions.every((question) => !question.correct_answer && !question.rubric)).toBe(true)
+      expect(start.body.questions.filter((question) => question.difficultyBand === 'target')).toHaveLength(5)
+      expect(start.body.questions.filter((question) => question.difficultyBand === 'stretch')).toHaveLength(1)
 
       const answers = Object.fromEntries(start.body.questions.map((question) => [
         question.id,
@@ -251,6 +256,9 @@ describe('Curriculum API', () => {
         .send({ assessmentId: start.body.assessmentId, answers })
 
       expect(submit.status).toBe(200)
+      expect(submit.body.targetScore).toBe(88)
+      expect(submit.body.stretchScore).toBe(20)
+      expect(submit.body.score).toBe(74)
       expect(submit.body.recommendedLevel).toBe('Advanced')
       expect(submit.body.passed).toBe(true)
 

@@ -413,6 +413,40 @@ export function initSchema() {
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration013)
     })()
   }
+
+  const migration014 = '014_add_curriculum_recovery_state'
+  const check014 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration014)
+  if (!check014) {
+    db.transaction(() => {
+      const addColumn = (sql) => {
+        try {
+          db.exec(sql)
+        } catch (err) {
+          if (!/duplicate column name/i.test(err.message)) throw err
+        }
+      }
+
+      addColumn("ALTER TABLE topics ADD COLUMN curriculum_state TEXT NOT NULL DEFAULT 'setup'")
+      addColumn('ALTER TABLE topics ADD COLUMN curriculum_draft TEXT')
+      addColumn('ALTER TABLE topics ADD COLUMN curriculum_error TEXT')
+      addColumn('ALTER TABLE topics ADD COLUMN curriculum_generation_started_at DATETIME')
+      addColumn('ALTER TABLE topics ADD COLUMN curriculum_generation_token TEXT')
+      addColumn('ALTER TABLE placement_assessments ADD COLUMN target_score INTEGER')
+      addColumn('ALTER TABLE placement_assessments ADD COLUMN stretch_score INTEGER')
+
+      db.exec(`
+        UPDATE topics
+        SET curriculum_state = CASE
+          WHEN EXISTS (SELECT 1 FROM modules WHERE modules.topic_id = topics.id) THEN 'confirmed'
+          WHEN level IS NOT NULL AND time_per_week IS NOT NULL THEN 'ready_to_generate'
+          ELSE 'setup'
+        END
+        WHERE curriculum_state = 'setup'
+      `)
+
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration014)
+    })()
+  }
 }
 
 /**
