@@ -605,6 +605,7 @@ export default function OnboardingFlow() {
         {step === 'preview' && curriculum && (
           <CurriculumConfirmation
             curriculum={curriculum}
+            isTrackSetup
             topicName={topicName}
             timeCommitment={selectedTime}
             pace={PACE_OPTIONS.find((option) => option.value === pace)?.label || 'Steady pace'}

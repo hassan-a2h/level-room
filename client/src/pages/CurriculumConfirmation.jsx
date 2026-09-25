@@ -80,6 +80,7 @@ export default function CurriculumConfirmation({
   onBack,
   submitting = false,
   error = '',
+  isTrackSetup = false,
 }) {
   const [adjusting, setAdjusting] = useState(false)
   const [adjustment, setAdjustment] = useState('')
@@ -187,18 +188,28 @@ export default function CurriculumConfirmation({
         {!adjusting ? (
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={onConfirm} disabled={submitting} className="ui-button ui-button-primary">
-              {submitting ? 'Adding to your Trail…' : 'Add to my Trail'}
+              {isTrackSetup ? (submitting ? 'Adding to your Trail…' : 'Add to my Trail') : (submitting ? 'Saving...' : 'Accept & Start')}
             </button>
-            <button type="button" onClick={() => setAdjusting(true)} disabled={submitting} className="ui-button ui-button-secondary">Adjust plan</button>
-            <button type="button" onClick={onBack} disabled={submitting} className="ui-button ui-button-quiet">Not now</button>
+            <button type="button" onClick={() => setAdjusting(true)} disabled={submitting} className="ui-button ui-button-secondary">{isTrackSetup ? 'Adjust plan' : 'Tweak'}</button>
+            {isTrackSetup
+              ? <button type="button" onClick={onBack} disabled={submitting} className="ui-button ui-button-quiet">Not now</button>
+              : <button type="button" onClick={onRegenerate} disabled={submitting} className="ui-button ui-button-secondary">Regenerate</button>}
           </div>
         ) : (
           <form className="ui-adjustment-panel space-y-3" onSubmit={handleAdjustmentSubmit}>
-            <label htmlFor="track-adjustment" className="ui-field-label">What would you like to adjust?</label>
-            <textarea id="track-adjustment" value={adjustment} onChange={(event) => setAdjustment(event.target.value)} rows={3} className="ui-field w-full resize-y" disabled={submitting} />
+            <label htmlFor="track-adjustment" className="ui-field-label">{isTrackSetup ? 'What would you like to adjust?' : 'Request changes'}</label>
+            <textarea
+              id="track-adjustment"
+              value={adjustment}
+              onChange={(event) => setAdjustment(event.target.value)}
+              placeholder={isTrackSetup ? '' : "Request changes, e.g., 'Add a module on testing' or 'Make it more beginner-friendly'"}
+              rows={3}
+              className="ui-field w-full resize-y"
+              disabled={submitting}
+            />
             <div className="flex flex-wrap gap-3">
-              <button type="submit" disabled={submitting || !adjustment.trim()} className="ui-button ui-button-primary">Apply adjustments</button>
-              {onRegenerate && <button type="button" onClick={onRegenerate} disabled={submitting} className="ui-button ui-button-secondary">Refresh preview</button>}
+              <button type="submit" disabled={submitting || !adjustment.trim()} className="ui-button ui-button-primary">{isTrackSetup ? 'Apply adjustments' : 'Apply Tweak'}</button>
+              {isTrackSetup && onRegenerate && <button type="button" onClick={onRegenerate} disabled={submitting} className="ui-button ui-button-secondary">Refresh preview</button>}
               <button type="button" onClick={() => setAdjusting(false)} disabled={submitting} className="ui-button ui-button-quiet">Cancel</button>
             </div>
           </form>

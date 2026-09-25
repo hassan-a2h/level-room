@@ -73,5 +73,8 @@ describe('SkeletonSettings', () => {
   it('renders settings placeholder', () => {
     render(<SkeletonSettings />)
     expect(screen.getByRole('status', { name: 'Loading settings' })).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-skeleton-section]')).toHaveLength(5)
+    expect(document.querySelectorAll('[data-skeleton-section="appearance"]')).toHaveLength(1)
+    expect(document.querySelectorAll('.animate-pulse')).toHaveLength(0)
   })
 })

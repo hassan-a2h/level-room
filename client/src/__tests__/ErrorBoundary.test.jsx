@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 
 function BombComponent({ shouldThrow }) {
   if (shouldThrow) {
-    throw new Error('Test explosion')
+    throw new Error(typeof shouldThrow === 'string' ? shouldThrow : 'Test explosion')
   }
   return <div data-testid="safe">Safe content</div>
 }
@@ -35,33 +35,28 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     )
     expect(screen.getByText(/something went wrong/i)).toBeInTheDocument()
-    expect(screen.getByText(/your progress is safely saved/i)).toBeInTheDocument()
+    expect(screen.getByText(/try reloading.*return to your trail/i)).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(/something went wrong/i)
     expect(screen.getByRole('button', { name: /reload page/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /go to dashboard/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /continue trail/i })).toHaveAttribute('href', '/')
   })
 
-  it('shows technical details in a collapsible section', () => {
+  it('does not expose database or technical exception details in the UI', () => {
     render(
       <ErrorBoundary>
-        <BombComponent shouldThrow={true} />
+        <BombComponent shouldThrow="SQLITE_ERROR: constraint failed in user_progress" />
       </ErrorBoundary>
     )
-    const details = screen.getByText(/technical details/i)
-    expect(details).toBeInTheDocument()
+    expect(screen.queryByText(/technical details/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/SQLITE_ERROR|constraint failed|user_progress/i)).not.toBeInTheDocument()
   })
 
-  it('clicking "Go to Dashboard" resets the boundary', () => {
+  it('offers a safe route back to the Trail', () => {
     const { container } = render(
       <ErrorBoundary>
         <BombComponent shouldThrow={true} />
       </ErrorBoundary>
     )
-    // We can't fully test navigation in jsdom, but we can verify the button exists and is clickable
-    const button = screen.getByRole('button', { name: /go to dashboard/i })
-    expect(button).toBeInTheDocument()
-    fireEvent.click(button)
-    // The boundary resets but since we're in jsdom with no navigation,
-    // the error UI may still render. The important part is no crash.
+    expect(screen.getByRole('link', { name: /continue trail/i })).toHaveAttribute('href', '/')
   })
 })

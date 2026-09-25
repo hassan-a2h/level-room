@@ -5,6 +5,14 @@ import AppHeader from '../components/AppHeader.jsx'
 import ThemePicker from '../components/ThemePicker.jsx'
 import CodexConnection from '../components/CodexConnection.jsx'
 
+function safeSettingsError(error, fallback) {
+  const message = typeof error?.message === 'string' ? error.message.trim() : ''
+  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
+    return fallback
+  }
+  return message
+}
+
 function SettingsPage() {
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
@@ -105,7 +113,7 @@ function SettingsPage() {
       setEnvStatus(result.envStatus || [])
       setSuccess(true)
     } catch (err) {
-      setError(err.message || 'Failed to save settings.')
+      setError(safeSettingsError(err, 'Could not save AI connection. Confirm provider setup and try again.'))
     } finally {
       setSaving(false)
     }
@@ -128,7 +136,7 @@ function SettingsPage() {
       URL.revokeObjectURL(url)
       setSuccess(true)
     } catch (err) {
-      setError(err.message || 'Failed to export data.')
+      setError(safeSettingsError(err, 'Could not export your learning data. Try again.'))
     } finally {
       setExporting(false)
     }
@@ -156,7 +164,7 @@ function SettingsPage() {
       setSuccess(false)
       setPendingBackup(backup)
     } catch (err) {
-      setError(err.message || 'Failed to import data.')
+      setError(err.message || 'Could not read that backup file. Check the file and try again.')
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -180,7 +188,7 @@ function SettingsPage() {
         .map(([k, v]) => `${v} ${k}`)
         .join(', ')}.`)
     } catch (err) {
-      setError(err.message || 'Failed to import data.')
+      setError(safeSettingsError(err, 'Could not restore that backup. Check the file and try again.'))
     } finally {
       setImporting(false)
       setImportProgress(0)
@@ -208,25 +216,30 @@ function SettingsPage() {
       <main className="ui-container max-w-3xl space-y-6">
         <h1 className="text-3xl font-bold ui-text">Settings</h1>
 
-        <section id="appearance" className="ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
+        <section id="appearance" className="settings-section settings-appearance ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
           <h2 id="appearance-heading" className="text-xl font-semibold ui-text mb-4">Appearance</h2>
           <ThemePicker />
         </section>
 
-        <section className="ui-panel p-5 sm:p-6" aria-labelledby="llm-heading">
-          <h2 id="llm-heading" className="text-xl font-semibold ui-text mb-5">LLM Configuration</h2>
+        {success && (
+          <div className="ui-alert ui-alert-success" role="alert">
+            {typeof success === 'string' ? success : 'Settings saved successfully.'}
+          </div>
+        )}
 
-          {success && (
-            <div className="ui-alert ui-alert-success mb-4" role="alert">
-              {typeof success === 'string' ? success : 'Settings saved successfully.'}
-            </div>
-          )}
+        {error && (
+          <div className="ui-alert ui-alert-danger" role="alert">
+            {error}
+          </div>
+        )}
 
-          {error && (
-            <div className="ui-alert ui-alert-danger mb-4" role="alert">
-              {error}
-            </div>
-          )}
+        <section className="settings-section settings-learning-preferences ui-panel p-5 sm:p-6" aria-labelledby="learning-preferences-heading">
+          <h2 id="learning-preferences-heading" className="text-xl font-semibold ui-text mb-3">Learning preferences</h2>
+          <p className="text-sm ui-text-secondary">Your chosen weekly rhythm and pace shape each Track when you build it. Review and adjust those choices in the Track preview before adding it to your Trail.</p>
+        </section>
+
+        <section className="settings-section settings-ai-connection ui-panel p-5 sm:p-6" aria-labelledby="ai-connection-heading">
+          <h2 id="ai-connection-heading" className="text-xl font-semibold ui-text mb-5">AI connection</h2>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
@@ -323,24 +336,31 @@ function SettingsPage() {
           </form>
         </section>
 
-        <section className="ui-panel p-5 sm:p-6" aria-labelledby="data-heading">
-          <h2 id="data-heading" className="text-xl font-semibold ui-text mb-4">Data Management</h2>
+        <section className="settings-section settings-data-privacy ui-panel p-5 sm:p-6" aria-labelledby="data-privacy-heading">
+          <h2 id="data-privacy-heading" className="text-xl font-semibold ui-text mb-4">Data and privacy</h2>
+          <div className="mb-4 space-y-2 text-sm ui-text-secondary">
+            <p>Learning data lives in local SQLite on this device.</p>
+            <p>Your theme lives in browser storage.</p>
+            <p>When you use a configured provider, only bounded learning context is sent with that request.</p>
+            <p>Credentials are never included in exports.</p>
+          </div>
+          <p className="text-sm ui-text-secondary mb-4">Export a JSON backup of your learning data to keep a portable copy.</p>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="ui-button ui-button-secondary"
+          >
+            {exporting ? 'Exporting…' : 'Export Data'}
+          </button>
+        </section>
+
+        <section className="settings-section settings-danger-zone ui-panel p-5 sm:p-6" aria-labelledby="danger-zone-heading">
+          <h2 id="danger-zone-heading" className="text-xl font-semibold ui-text mb-4">Danger zone</h2>
           <p className="text-sm ui-text-secondary mb-4">
-            Export your learning data as a JSON backup, or restore from a previous backup.
-            <br />
-            <span className="text-xs ui-text-muted">Note: API keys are not included in exports for security.</span>
+            Restoring a backup replaces your current local learning data. Choose a backup only when you intend to replace it; you will confirm before anything changes.
           </p>
-
           <div className="flex flex-wrap gap-3 items-center">
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={exporting}
-              className="ui-button ui-button-secondary"
-            >
-              {exporting ? 'Exporting…' : 'Export Data'}
-            </button>
-
             <button
               type="button"
               ref={importButtonRef}

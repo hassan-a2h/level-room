@@ -208,7 +208,7 @@ describe('CurriculumConfirmation', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('previews a finite Track with outcome summaries, Chapters, and Build markers', () => {
-    render(<CurriculumConfirmation curriculum={curriculum} topicName="React" timeCommitment="30 min/day" pace="Steady pace" />)
+    render(<CurriculumConfirmation curriculum={curriculum} isTrackSetup topicName="React" timeCommitment="30 min/day" pace="Steady pace" />)
 
     expect(screen.getByRole('heading', { name: 'React Track preview' })).toBeInTheDocument()
     expect(screen.getByText(/3 outcomes · 2 core · 1 breadth/i)).toBeInTheDocument()
@@ -234,14 +234,14 @@ describe('CurriculumConfirmation', () => {
 
   it('confirms the Track when Add to my Trail is selected', async () => {
     const onConfirm = vi.fn()
-    render(<CurriculumConfirmation curriculum={curriculum} onConfirm={onConfirm} />)
+    render(<CurriculumConfirmation curriculum={curriculum} isTrackSetup onConfirm={onConfirm} />)
     fireEvent.click(screen.getByRole('button', { name: 'Add to my Trail' }))
     await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce())
   })
 
   it('applies requested plan adjustments', async () => {
     const onTweak = vi.fn()
-    render(<CurriculumConfirmation curriculum={curriculum} onTweak={onTweak} />)
+    render(<CurriculumConfirmation curriculum={curriculum} isTrackSetup onTweak={onTweak} />)
     fireEvent.click(screen.getByRole('button', { name: 'Adjust plan' }))
     fireEvent.change(screen.getByLabelText('What would you like to adjust?'), { target: { value: 'Add a chapter on testing' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply adjustments' }))
@@ -250,7 +250,7 @@ describe('CurriculumConfirmation', () => {
 
   it('allows refreshing the preview from adjustment options', async () => {
     const onRegenerate = vi.fn()
-    render(<CurriculumConfirmation curriculum={curriculum} onRegenerate={onRegenerate} />)
+    render(<CurriculumConfirmation curriculum={curriculum} isTrackSetup onRegenerate={onRegenerate} />)
     fireEvent.click(screen.getByRole('button', { name: 'Adjust plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Refresh preview' }))
     await waitFor(() => expect(onRegenerate).toHaveBeenCalledOnce())
