@@ -109,7 +109,7 @@ describe('activity document schema', () => {
     ['unknown block type', (doc) => { doc.blocks[0].type = 'video' }],
     ['duplicate block IDs', (doc) => { doc.blocks[1].id = doc.blocks[0].id }],
     ['duplicate lesson outcome IDs', (doc) => { doc.lesson.outcomeIds[1] = doc.lesson.outcomeIds[0] }],
-    ['non-required version one block', (doc) => { doc.blocks[0].required = false }],
+    ['non-boolean required flag', (doc) => { doc.blocks[0].required = 'true' }],
   ])('rejects invalid common document field: %s', (_name, mutate) => {
     const document = makeActivityDocument()
     mutate(document)

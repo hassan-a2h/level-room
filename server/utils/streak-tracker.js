@@ -10,8 +10,11 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 export function isValidDate(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return false
   if (!DATE_RE.test(dateStr)) return false
-  const d = new Date(dateStr + 'T00:00:00')
-  return !Number.isNaN(d.getTime())
+  const [year, month, day] = dateStr.split('-').map(Number)
+  const date = new Date(0)
+  date.setUTCHours(0, 0, 0, 0)
+  date.setUTCFullYear(year, month - 1, day)
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
 }
 
 /**
@@ -20,7 +23,12 @@ export function isValidDate(dateStr) {
  * @returns {number}
  */
 export function parseDate(dateStr) {
-  return new Date(dateStr + 'T00:00:00').getTime()
+  if (!isValidDate(dateStr)) return Number.NaN
+  const [year, month, day] = dateStr.split('-').map(Number)
+  const date = new Date(0)
+  date.setUTCHours(0, 0, 0, 0)
+  date.setUTCFullYear(year, month - 1, day)
+  return date.getTime()
 }
 
 /**
@@ -31,6 +39,7 @@ export function parseDate(dateStr) {
  * @returns {number}
  */
 export function daysBetween(dateA, dateB) {
+  if (!isValidDate(dateA) || !isValidDate(dateB)) return Number.NaN
   const msPerDay = 24 * 60 * 60 * 1000
   return Math.round((parseDate(dateB) - parseDate(dateA)) / msPerDay)
 }

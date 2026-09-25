@@ -157,7 +157,7 @@ function validateBlockFields(block, index) {
   if (idError) return idError
   const titleError = requireString(block.title, `${path}.title`, 3, 120, { plain: true })
   if (titleError) return titleError
-  if (typeof block.required !== 'boolean' || !block.required) return invalid(`${path}.required`, 'Version 1 blocks must be required.')
+  if (typeof block.required !== 'boolean') return invalid(`${path}.required`, 'Required must be a boolean.')
   const timeError = requireInteger(block.estimatedMinutes, `${path}.estimatedMinutes`, 1, 15)
   if (timeError) return timeError
   if (!Array.isArray(block.outcomeIds) || block.outcomeIds.length < 1 || block.outcomeIds.length > 5) return invalid(`${path}.outcomeIds`, 'Outcome IDs must contain 1-5 items.')

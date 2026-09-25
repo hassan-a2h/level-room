@@ -32,6 +32,25 @@ describe('Streak Tracker', () => {
   })
 
   describe('computeStreakUpdate', () => {
+    it('validates real calendar dates including leap days', () => {
+      expect(streakTracker.isValidDate('2024-02-29')).toBe(true)
+      expect(streakTracker.isValidDate('2026-02-31')).toBe(false)
+      expect(streakTracker.isValidDate('2025-02-29')).toBe(false)
+      expect(streakTracker.isValidDate('2026-2-03')).toBe(false)
+    })
+
+    it('parses local dates as timezone-independent calendar days', () => {
+      const priorTz = process.env.TZ
+      process.env.TZ = 'Pacific/Kiritimati'
+      try {
+        expect(streakTracker.parseDate('2024-02-29')).toBe(Date.UTC(2024, 1, 29))
+        expect(streakTracker.daysBetween('2024-02-28', '2024-03-01')).toBe(2)
+      } finally {
+        if (priorTz === undefined) delete process.env.TZ
+        else process.env.TZ = priorTz
+      }
+    })
+
     it('starts streak at 1 when no previous activity', () => {
       const result = streakTracker.computeStreakUpdate(null, '2024-01-15', 0, 0)
       expect(result.currentStreak).toBe(1)
