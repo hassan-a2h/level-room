@@ -101,7 +101,7 @@ describe('activity document schema', () => {
     ['lesson estimated minutes', (doc) => { doc.lesson.estimatedMinutes = 19 }],
     ['block ID', (doc) => { doc.blocks[0].id = 'Not kebab' }],
     ['block title', (doc) => { doc.blocks[0].title = 'x' }],
-    ['block required flag', (doc) => { doc.blocks[0].required = false }],
+    ['missing block required flag', (doc) => { delete doc.blocks[0].required }],
     ['block duration', (doc) => { doc.blocks[0].estimatedMinutes = 0 }],
     ['block outcome IDs', (doc) => { doc.blocks[0].outcomeIds = ['not-declared'] }],
     ['unknown top-level field', (doc) => { doc.secret = true }],

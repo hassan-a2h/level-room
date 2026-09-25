@@ -5,6 +5,40 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
+const curriculumFixtures = vi.hoisted(() => {
+  const taskFallback = {
+    title: 'Local task', scenario: 'Use a local fixture.', goal: 'Verify the behavior.',
+    constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'],
+    estimated_time: 15,
+    primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+    free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+    hints: [], safety_notes: [],
+  }
+  function normalize(draft) {
+    return {
+      ...draft,
+      course: draft.course || { kind: 'advanced', stage: 1 },
+      modules: draft.modules.map((module, moduleIndex) => {
+        const knowledge = { id: `lane-knowledge-${moduleIndex + 1}`, title: `Explain lane ${moduleIndex + 1}`, kind: 'knowledge', role: 'core', evidence: ['activity', 'checkpoint'] }
+        const skill = { id: `lane-skill-${moduleIndex + 1}`, title: `Apply lane ${moduleIndex + 1}`, kind: 'skill', role: 'core', evidence: ['activity', 'checkpoint', 'artifact'] }
+        return {
+          ...module,
+          skill_outcomes: [knowledge, skill],
+          lessons: module.lessons.map((lesson, lessonIndex) => {
+            const requiresBuild = lessonIndex === module.lessons.length - 1
+            const normalized = { ...lesson, outcomes: [lessonIndex === 0 ? knowledge : skill], artifact_required: requiresBuild }
+            delete normalized.task_spec
+            if (requiresBuild) normalized.task = lesson.task || lesson.task_spec || taskFallback
+            else delete normalized.task
+            return normalized
+          }),
+        }
+      }),
+    }
+  }
+  return { normalize, taskFallback }
+})
+
 import { generateText, streamText } from '../llm/client.js'
 
 vi.mock('../llm/client.js', () => ({
@@ -17,7 +51,7 @@ vi.mock('../llm/client.js', () => ({
         { id: 'platform', title: 'Platform', rationale: 'Automate repeatable delivery.', builds_on: ['Core foundations'], target_outcomes: ['Automate a local deployment'], free_stack: { primary: { kind: 'open_source', description: 'Use local open-source tooling.' }, fallback: { kind: 'no_software', description: 'Draft the workflow with fixtures.' } } },
       ] }) })
     }
-    return Promise.resolve({ text: JSON.stringify({ modules: [
+    return Promise.resolve({ text: JSON.stringify(curriculumFixtures.normalize({ modules: [
       { title: 'Advanced foundations', lessons: [
         { title: 'Advanced 1', depth: 'Intermediate', estimated_time: 20, outcomes: ['Apply the lane'], prerequisites: [], task: { title: 'Local task', scenario: 'Use a local fixture.', goal: 'Verify the behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'], estimated_time: 15, primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } },
         { title: 'Advanced 2', depth: 'Intermediate', estimated_time: 20, outcomes: ['Debug the lane'], prerequisites: ['Advanced 1'], task: { title: 'Local task two', scenario: 'Use a local fixture.', goal: 'Verify the behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'], estimated_time: 15, primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } },
@@ -33,12 +67,12 @@ vi.mock('../llm/client.js', () => ({
         { title: 'Advanced 8', depth: 'Advanced', estimated_time: 20, outcomes: ['Measure the lane'], prerequisites: ['Advanced 7'], task: { title: 'Local task eight', scenario: 'Use a local fixture.', goal: 'Verify the behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'], estimated_time: 15, primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } },
         { title: 'Advanced 9', depth: 'Advanced', estimated_time: 20, outcomes: ['Demonstrate mastery'], prerequisites: ['Advanced 8'], task: { title: 'Local task nine', scenario: 'Use a local fixture.', goal: 'Verify the behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'], estimated_time: 15, primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [], free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false } } },
       ] },
-    ], course: { kind: 'advanced', stage: 1, focus: 'Observability' } }) })
+    ], course: { kind: 'advanced', stage: 1, focus: 'Observability' } })) })
   }),
   streamText: vi.fn((_params) => {
     const task = { title: 'Local task', scenario: 'Use a local fixture.', goal: 'Verify the behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Output'], success_criteria: ['It works', 'It repeats'], estimated_time: 15, primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain the expected result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] }
     const modules = Array.from({ length: 3 }, (_, moduleIndex) => ({ title: `Stream module ${moduleIndex + 1}`, lessons: Array.from({ length: 3 }, (_, lessonIndex) => ({ title: `Stream lesson ${moduleIndex + 1}.${lessonIndex + 1}`, depth: 'Advanced', estimated_time: 15, outcomes: ['Apply the lane'], prerequisites: [], task: { ...task, title: `Task ${moduleIndex + 1}.${lessonIndex + 1}` } })) }))
-    return Promise.resolve({ textStream: (async function* () { yield JSON.stringify({ course: { kind: 'advanced', stage: 1 }, modules }) })() })
+    return Promise.resolve({ textStream: (async function* () { yield JSON.stringify(curriculumFixtures.normalize({ course: { kind: 'advanced', stage: 1 }, modules })) })() })
   }),
   LlmClientError: class LlmClientError extends Error {
     constructor(message, { code, retryable = false } = {}) { super(message); this.code = code; this.retryable = retryable }
@@ -193,7 +227,7 @@ describe('Continuation API', () => {
   })
 
   it('atomically confirms one advanced child and rejects a duplicate lane', async () => {
-    const curriculum = { course: { kind: 'advanced', stage: 1 }, modules: Array.from({ length: 3 }, (_, mi) => ({ title: `M${mi}`, lessons: Array.from({ length: 3 }, (_, li) => ({ title: `L${mi}-${li}`, depth: 'Advanced', estimated_time: 10, outcomes: ['Apply'], prerequisites: [], task: { title: `Task ${mi}-${li}`, scenario: 'Local scenario', goal: 'Verify it', constraints: ['Use test data'], deliverables: ['Commands', 'Output'], success_criteria: ['Works', 'Repeatable'], estimated_time: 10, primary_setup: { kind: 'local', description: 'Run locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain it locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } })) })) }
+    const curriculum = curriculumFixtures.normalize({ course: { kind: 'advanced', stage: 1 }, modules: Array.from({ length: 3 }, (_, mi) => ({ title: `M${mi}`, lessons: Array.from({ length: 3 }, (_, li) => ({ title: `L${mi}-${li}`, depth: 'Advanced', estimated_time: 10, outcomes: ['Apply'], prerequisites: [], task: { title: `Task ${mi}-${li}`, scenario: 'Local scenario', goal: 'Verify it', constraints: ['Use test data'], deliverables: ['Commands', 'Output'], success_criteria: ['Works', 'Repeatable'], estimated_time: 10, primary_setup: { kind: 'local', description: 'Run locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain it locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } })) })) })
     const res = await request(app).post(`/api/topics/${parentId}/continuations/confirm`).send({ lane: ' Observability ', level: 'Intermediate', timeCommitment: '30 min/day', curriculum })
     expect(res.status).toBe(200)
     expect(res.body.topic.course_kind).toBe('advanced')
@@ -215,5 +249,5 @@ function optionsWithFreePublicAccount() {
 }
 
 function validCurriculum() {
-  return { course: { kind: 'advanced', stage: 1 }, modules: Array.from({ length: 3 }, (_, mi) => ({ title: `M${mi}`, lessons: Array.from({ length: 3 }, (_, li) => ({ title: `L${mi}-${li}`, depth: 'Advanced', estimated_time: 10, outcomes: ['Apply'], prerequisites: [], task: { title: `Task ${mi}-${li}`, scenario: 'Local scenario', goal: 'Verify it', constraints: ['Use test data'], deliverables: ['Commands', 'Output'], success_criteria: ['Works', 'Repeatable'], estimated_time: 10, primary_setup: { kind: 'local', description: 'Run locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain it locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } })) })) }
+  return curriculumFixtures.normalize({ course: { kind: 'advanced', stage: 1 }, modules: Array.from({ length: 3 }, (_, mi) => ({ title: `M${mi}`, lessons: Array.from({ length: 3 }, (_, li) => ({ title: `L${mi}-${li}`, depth: 'Advanced', estimated_time: 10, outcomes: ['Apply'], prerequisites: [], task: { title: `Task ${mi}-${li}`, scenario: 'Local scenario', goal: 'Verify it', constraints: ['Use test data'], deliverables: ['Commands', 'Output'], success_criteria: ['Works', 'Repeatable'], estimated_time: 10, primary_setup: { kind: 'local', description: 'Run locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, free_fallback: { kind: 'no_software', description: 'Explain it locally', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: [] } })) })) })
 }

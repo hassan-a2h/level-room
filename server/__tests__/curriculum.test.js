@@ -447,46 +447,16 @@ describe('Curriculum API', () => {
     })
   })
 
-  describe('GET /api/topics/:id/lessons/:lid/test-out', () => {
-    it('returns test-out quiz questions', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Basics")
-      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, outcomes) VALUES (?, ?, ?, ?)", mod.lastInsertRowid, 0, "JSX", JSON.stringify(["Write JSX"]))
-
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${l1.lastInsertRowid}/test-out`)
-      expect(res.status).toBe(200)
-      expect(res.body.questions).toBeDefined()
-    })
-
-    it('returns 404 for nonexistent lesson', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/999/test-out`)
-      expect(res.status).toBe(404)
-    })
-  })
-
-  describe('POST /api/topics/:id/lessons/:lid/test-out', () => {
-    it('evaluates test-out answers and marks passed on success', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Basics")
-      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, outcomes) VALUES (?, ?, ?, ?)", mod.lastInsertRowid, 0, "JSX", JSON.stringify(["Write JSX"]))
-
-      const res = await request(app)
-        .post(`/api/topics/${topic.lastInsertRowid}/lessons/${l1.lastInsertRowid}/test-out`)
-        .send({ answers: ['JSX is a syntax extension'] })
-      expect(res.status).toBe(200)
-      expect(res.body.passed).toBeDefined()
-    })
-
-    it('rejects empty answers', async () => {
+  describe('removed lesson test-out routes', () => {
+    it('does not expose duplicate curriculum test-out endpoints', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
       const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Basics")
       const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)", mod.lastInsertRowid, 0, "JSX")
 
-      const res = await request(app)
-        .post(`/api/topics/${topic.lastInsertRowid}/lessons/${l1.lastInsertRowid}/test-out`)
-        .send({ answers: [] })
-      expect(res.status).toBe(400)
+      const read = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${l1.lastInsertRowid}/test-out`)
+      const write = await request(app).post(`/api/topics/${topic.lastInsertRowid}/lessons/${l1.lastInsertRowid}/test-out`).send({ answers: [] })
+      expect(read.status).toBe(404)
+      expect(write.status).toBe(404)
     })
   })
 })

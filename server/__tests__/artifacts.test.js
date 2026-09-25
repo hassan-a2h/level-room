@@ -1,116 +1,85 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import request from 'supertest'
 import express from 'express'
 import fs from 'fs'
-import path from 'path'
 import os from 'os'
+import path from 'path'
 
+const llmMocks = vi.hoisted(() => ({ generateText: vi.fn(), streamText: vi.fn() }))
 vi.mock('../llm/client.js', () => ({
-  streamText: vi.fn((_params) => {
-    return Promise.resolve({
-      textStream: (async function* () { yield 'OK' })(),
-    })
-  }),
-  generateText: vi.fn((_params) => {
-    const system = _params?.system || ''
-    if (system.toLowerCase().includes('artifact') || system.toLowerCase().includes('rubric')) {
-      return Promise.resolve({
-        text: JSON.stringify({
-          overallScore: 75,
-          passed: true,
-          scores: {
-            Correctness: 2,
-            Completeness: 2,
-            Clarity: 1,
-            'Edge Cases': 1,
-          },
-          feedback: {
-            Correctness: 'The solution is correct.',
-            Completeness: 'All required parts are present.',
-            Clarity: 'Could use more comments.',
-            'Edge Cases': 'Handles basic edge cases but not all.',
-          },
-        }),
-      })
-    }
-    if (system.toLowerCase().includes('generate 3-8 free-text quiz questions')) {
-      return Promise.resolve({
-        text: JSON.stringify({
-          questions: [
-            { id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 },
-          ],
-        }),
-      })
-    }
-    if (system.toLowerCase().includes('evaluate the following quiz answers')) {
-      return Promise.resolve({
-        text: JSON.stringify({
-          overallScore: 85,
-          passed: true,
-          criticalGap: false,
-          feedback: [
-            { questionId: 'q1', correctness: 'correct', score: 1, explanation: 'Correct.' },
-          ],
-          gaps: [],
-        }),
-      })
-    }
-    return Promise.resolve({ text: '{}' })
-  }),
-  streamToSSE: vi.fn(async (streamResult, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-    let fullText = ''
-    for await (const chunk of streamResult.textStream) {
-      const text = typeof chunk === 'string' ? chunk : ''
-      fullText += text
-      res.write(`data: ${JSON.stringify(text)}\n\n`)
-    }
-    res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-    res.end()
-  }),
+  generateText: llmMocks.generateText,
+  streamText: llmMocks.streamText,
   LlmClientError: class LlmClientError extends Error {
-    constructor(message, { code, retryable = false } = {}) {
-      super(message)
-      this.name = 'LlmClientError'
-      this.code = code
-      this.retryable = retryable
-    }
+    constructor(message, { code, retryable = false } = {}) { super(message); this.code = code; this.retryable = retryable }
   },
 }))
 
+const OUTCOME_A = { id: 'sql-choose-join', title: 'Choose the correct join', kind: 'skill', role: 'core', evidence: ['activity'] }
+const OUTCOME_B = { id: 'sql-order-query', title: 'Order a SQL query', kind: 'skill', role: 'core', evidence: ['activity'] }
+const LOCAL_DATE = '2024-02-29'
+
 function tempDbPath() {
-  return path.join(os.tmpdir(), `test-artifact-db-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+  return path.join(os.tmpdir(), `test-structured-artifacts-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
 }
 
-describe('Artifact API', () => {
+function makeActivityDocument(lessonId, optionalReflection = false) {
+  const block = (id, type, outcomeIds, fields) => ({ id, type, title: `Practice ${id}`, required: true, estimatedMinutes: 2, outcomeIds, ...fields })
+  const blocks = [
+    block('read-joins', 'read', [OUTCOME_A.id], { content: 'A join combines related rows.' }),
+    block('worked-join', 'worked_example', [OUTCOME_A.id], {
+      problem: 'Which side should remain?', steps: [{ id: 'inspect', title: 'Inspect the rows', content: 'Find the records that must remain.' }, { id: 'choose', title: 'Choose a join', content: 'Choose a join that preserves those records.' }], takeaway: 'Decide which unmatched rows matter.',
+    }),
+    block('choose-join', 'choice', [OUTCOME_A.id], { prompt: 'Which join keeps every left row?', options: [{ id: 'inner', label: 'INNER JOIN' }, { id: 'left', label: 'LEFT JOIN' }] }),
+    block('reflect-query', 'reflection', [OUTCOME_B.id], { prompt: 'What will you inspect first?', maxChars: 100 }),
+    block('order-query', 'ordering', [OUTCOME_B.id], { prompt: 'Order the query stages.', items: [{ id: 'from', label: 'Choose source' }, { id: 'join', label: 'Join tables' }, { id: 'select', label: 'Choose columns' }] }),
+  ]
+  if (optionalReflection) blocks[3].required = false
+  return {
+    schemaVersion: 1,
+    promptVersion: 'session-activities-v1',
+    generator: { provider: 'openai', model: 'test-model', generatedAt: '2026-09-26T00:00:00.000Z' },
+    lesson: { lessonId, outcomeIds: [OUTCOME_A.id, OUTCOME_B.id], estimatedMinutes: 10 },
+    blocks,
+    answerKey: {
+      'choose-join': { kind: 'choice', correctOptionId: 'left', explanation: 'LEFT JOIN retains unmatched left rows.', critical: true },
+      'order-query': { kind: 'ordering', correctOrder: ['from', 'join', 'select'], explanation: 'Choose the source, join, then select columns.', critical: false },
+    },
+  }
+}
+
+function taskSpec() {
+  return JSON.stringify({ title: 'Build a join diagram', goal: 'Show the rows a join preserves.', success_criteria: ['Show unmatched left rows'], deliverables: ['diagram'] })
+}
+
+function evaluation(scores = { Correctness: 2, Completeness: 2, Clarity: 1, 'Edge Cases': 1 }) {
+  return { text: JSON.stringify({ scores, feedback: { Correctness: 'Correct.', Completeness: 'Complete.', Clarity: 'Clear enough.', 'Edge Cases': 'Covers the case.' } }) }
+}
+
+describe('structured Build artifact API', () => {
   let dbPath
-  let dbModule
+  let db
   let app
+  let runtime
 
   beforeEach(async () => {
     dbPath = tempDbPath()
     process.env.DB_PATH = dbPath
     process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
-    dbModule = await import('../db.js')
-    dbModule.initSchema()
-
-    dbModule.run('INSERT INTO llm_settings (provider, model) VALUES (?, ?)', 'openai', 'gpt-4o')
-
-    const { default: lessonsRouter } = await import('../routes/lessons.js')
-    const { default: dashboardRouter } = await import('../routes/dashboard.js')
-    const { default: curriculumRouter } = await import('../routes/curriculum.js')
+    llmMocks.generateText.mockReset()
+    llmMocks.streamText.mockReset()
+    db = await import('../db.js')
+    db.initSchema()
+    db.run('INSERT INTO llm_settings (provider, model) VALUES (?, ?)', 'openai', 'gpt-4o')
+    const lessonsRouter = (await import('../routes/lessons.js')).default
     app = express()
-    app.use(express.json({ limit: '6mb' }))
+    app.use(express.json({ limit: '32mb' }))
     app.use('/api', lessonsRouter)
-    app.use('/api', dashboardRouter)
-    app.use('/api', curriculumRouter)
+    runtime = await import('../utils/activity-runtime.js')
   })
 
   afterEach(() => {
-    if (dbModule && dbModule.default) {
-      try { dbModule.default.close() } catch {}
-    }
+    try { db.default.close() } catch {}
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
     delete process.env.OPENAI_API_KEY
@@ -120,432 +89,133 @@ describe('Artifact API', () => {
     delete process.env.LLM_MODEL
   })
 
-  function seedTopicAndLesson(topicTitle = 'React', lessonTitle = 'JSX', artifactRequired = 1, artifactType = 'code') {
-    const topic = dbModule.run("INSERT INTO topics (title, status, interaction_mode) VALUES (?, ?, ?)", topicTitle, 'active', 'code')
-    const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-    const lesson = dbModule.run(
-      "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type, artifact_rubric) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      mod.lastInsertRowid, 0, lessonTitle, 'Beginner', 10, JSON.stringify(['Understand JSX']), '[]', artifactRequired, artifactType, ''
-    )
-    return { topicId: topic.lastInsertRowid, lessonId: lesson.lastInsertRowid }
+  function seedBuild({ optionalReflection = false } = {}) {
+    const topicId = Number(db.run("INSERT INTO topics (title, status) VALUES ('SQL', 'active')").lastInsertRowid)
+    const moduleId = Number(db.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, 0, 'Joins')", topicId).lastInsertRowid)
+    const lessonId = Number(db.run(
+      'INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type, task_spec, activity_blocks) VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      moduleId,
+      'Build a join diagram',
+      'Beginner',
+      10,
+      JSON.stringify([OUTCOME_A, OUTCOME_B]),
+      '[]',
+      1,
+      'project',
+      taskSpec(),
+      JSON.stringify(makeActivityDocument(Number(db.get('SELECT COALESCE(MAX(id), 0) AS id FROM lessons').id) + 1, optionalReflection)),
+    ).lastInsertRowid)
+    db.run('UPDATE lessons SET activity_blocks = ? WHERE id = ?', JSON.stringify(makeActivityDocument(lessonId, optionalReflection)), lessonId)
+    return { topicId, lessonId }
   }
 
-  function taskSpec() {
-    return JSON.stringify({
-      title: 'Build a local setup',
-      scenario: 'You are preparing a safe local environment.',
-      goal: 'Create and verify the requested behavior.',
-      constraints: ['Use test data only'],
-      deliverables: ['Commands or configuration', 'Observed output'],
-      success_criteria: ['The behavior is observable', 'The result is reproducible'],
-      estimated_time: 15,
-      primary_setup: { kind: 'local', description: 'Use a local installation.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
-      free_fallback: { kind: 'no_software', description: 'Explain the expected local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
-      hints: [],
-      safety_notes: ['Use only systems you own.'],
-    })
+  function completeBlocks({ topicId, lessonId, includeOptionalReflection = true }) {
+    runtime.startActivitySession(topicId, lessonId)
+    runtime.completeInformationalBlock({ topicId, lessonId, blockId: 'read-joins', action: 'continue', localDate: LOCAL_DATE })
+    runtime.completeInformationalBlock({ topicId, lessonId, blockId: 'worked-join', action: 'continue', localDate: LOCAL_DATE })
+    runtime.submitObjectiveBlock({ topicId, lessonId, blockId: 'choose-join', response: 'left', localDate: LOCAL_DATE })
+    if (includeOptionalReflection) runtime.completeInformationalBlock({ topicId, lessonId, blockId: 'reflect-query', action: 'continue', response: 'Check preserved rows.', localDate: LOCAL_DATE })
+    runtime.submitObjectiveBlock({ topicId, lessonId, blockId: 'order-query', response: ['from', 'join', 'select'], localDate: LOCAL_DATE })
   }
 
-  describe('POST /api/topics/:id/lessons/:lid/artifact', () => {
-    it('requires all teaching chunks before task evidence', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 2, 3)
+  it('gates Build submission on required structured blocks but ignores optional activity blocks', async () => {
+    const seeded = seedBuild()
+    runtime.startActivitySession(seeded.topicId, seeded.lessonId)
+    llmMocks.generateText.mockResolvedValueOnce(evaluation())
+    const early = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'showed rows', reflection: 'repeatable' }, localDate: LOCAL_DATE })
+    expect(early.status).toBe(409)
+    expect(early.body.code).toBe('ACTIVITIES_NOT_READY')
+    expect(llmMocks.generateText).not.toHaveBeenCalled()
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts').count).toBe(0)
 
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ evidence: { setup: 'local', actions: 'run', result: 'ok', reflection: 'done' } })
-
-      expect(res.status).toBe(409)
-      expect(res.body.code).toBe('TASK_NOT_READY')
-      expect(dbModule.get('SELECT COUNT(*) AS count FROM artifacts').count).toBe(0)
-    })
-
-    it('accepts structured task evidence only after the final chunk', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ evidence: { setup: 'local fixture', actions: 'ran the command', result: 'expected output', reflection: 'repeatable' } })
-
-      expect(res.status).toBe(200)
-      expect(res.body.evaluation).toBeDefined()
-      expect(dbModule.get('SELECT artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).artifact_passed).toBe(1)
-      expect(dbModule.get('SELECT content FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?)', topicId, lessonId).content).toMatch(/Setup:/)
-    })
-    it('submits a text artifact and returns structured evaluation', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(res.status).toBe(200)
-      expect(res.body.evaluation).toBeDefined()
-      expect(res.body.evaluation.scores).toBeDefined()
-      expect(Object.keys(res.body.evaluation.scores)).toContain('Correctness')
-      expect(Object.keys(res.body.evaluation.scores)).toContain('Completeness')
-      expect(Object.keys(res.body.evaluation.scores)).toContain('Clarity')
-      expect(Object.keys(res.body.evaluation.scores)).toContain('Edge Cases')
-    })
-
-    it('blocks empty or whitespace-only artifact submission', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: '   \n   ' })
-
-      expect(res.status).toBe(400)
-      expect(res.body.error).toMatch(/empty|blank/i)
-    })
-
-    it('blocks missing content field', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({})
-
-      expect(res.status).toBe(400)
-    })
-
-    it('persists artifact and evaluation to the database', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      const artifact = dbModule.get(
-        'SELECT * FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?)',
-        topicId, lessonId
-      )
-      expect(artifact).toBeDefined()
-      expect(artifact.content).toContain('function add')
-      expect(artifact.attempt_number).toBe(1)
-    })
-
-    it('marks artifact_passed=1 when evaluation passes', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)", topicId, lessonId, 'practicing', 85)
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(res.status).toBe(200)
-      const prog = dbModule.get('SELECT artifact_passed, state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(prog.artifact_passed).toBe(1)
-    })
-
-    it('does not transition to passed when quiz is not yet passed', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      const prog = dbModule.get('SELECT state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(prog.state).toBe('practicing')
-      expect(prog.artifact_passed).toBe(1)
-    })
-
-    it('transitions to passed when quiz was already passed and artifact now passes', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 85)
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      const prog = dbModule.get('SELECT state, artifact_passed, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(prog.state).toBe('passed')
-      expect(prog.artifact_passed).toBe(1)
-      expect(prog.completed_at).toBeTruthy()
-    })
-
-    it('returns failure with weak dimensions highlighted when artifact fails', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const { generateText } = await import('../llm/client.js')
-      generateText.mockResolvedValueOnce({
-        text: JSON.stringify({
-          overallScore: 50,
-          passed: false,
-          scores: {
-            Correctness: 0,
-            Completeness: 1,
-            Clarity: 1,
-            'Edge Cases': 0,
-          },
-          feedback: {
-            Correctness: 'The solution has a bug.',
-            Completeness: 'Missing error handling.',
-            Clarity: 'Readable but sparse.',
-            'Edge Cases': 'Does not handle negative numbers.',
-          },
-        }),
-      })
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(res.status).toBe(200)
-      expect(res.body.evaluation.passed).toBe(false)
-      expect(res.body.evaluation.scores.Correctness).toBe(0)
-      expect(res.body.evaluation.scores['Edge Cases']).toBe(0)
-    })
-
-    it('increments attempt_number on resubmission', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      const artifacts = dbModule.all(
-        'SELECT * FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?) ORDER BY attempt_number',
-        topicId, lessonId
-      )
-      expect(artifacts).toHaveLength(2)
-      expect(artifacts[0].attempt_number).toBe(1)
-      expect(artifacts[1].attempt_number).toBe(2)
-    })
-
-    it('rejects malformed LLM evaluation with retryable error', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const { generateText } = await import('../llm/client.js')
-      generateText.mockResolvedValueOnce({
-        text: JSON.stringify({
-          overallScore: 500,
-          passed: true,
-          scores: { Correctness: 5, Completeness: 5, Clarity: 5, 'Edge Cases': 5 },
-          feedback: { Correctness: 'bad' },
-        }),
-      })
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(res.status).toBe(500)
-      expect(res.body.error).toMatch(/invalid|malformed|rubric/i)
-      expect(res.body.retryable).toBe(true)
-    })
-
-    it('accepts file upload with filename', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson('Design', 'Wireframing', 1, 'design')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'Uploaded: wireframe.png' })
-
-      expect(res.status).toBe(200)
-    })
-
-    it('returns 403 for locked lesson', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'React', 'active')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const prereq = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'A', 'Beginner', 10, JSON.stringify(['a']), '[]', 0, '')
-      const lesson = dbModule.run(
-        "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 1, 'B', 'Beginner', 10, JSON.stringify(['b']), JSON.stringify([{ lessonId: prereq.lastInsertRowid, title: 'A' }]), 1, 'code'
-      )
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, prereq.lastInsertRowid, 'not_started')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app)
-        .post(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(res.status).toBe(403)
-    })
+    const optional = seedBuild({ optionalReflection: true })
+    completeBlocks({ ...optional, includeOptionalReflection: false })
+    llmMocks.generateText.mockResolvedValueOnce(evaluation())
+    const ready = await request(app).post(`/api/topics/${optional.topicId}/lessons/${optional.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'showed rows', reflection: 'repeatable' }, localDate: LOCAL_DATE })
+    expect(ready.status).toBe(200)
+    expect(ready.body.session.completed).toBe(true)
+    expect(db.get('SELECT state FROM progress WHERE lesson_id = ?', optional.lessonId).state).toBe('passed')
   })
 
-  describe('GET /api/topics/:id/lessons/:lid/artifact', () => {
-    it('returns the latest artifact submission', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
+  it('keeps a failed rubric attempt practicing and passes the Session atomically with all completion effects', async () => {
+    const seeded = seedBuild()
+    completeBlocks(seeded)
+    llmMocks.generateText.mockResolvedValueOnce(evaluation({ Correctness: 0, Completeness: 2, Clarity: 2, 'Edge Cases': 2 }))
+    const failed = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'missed unmatched rows', reflection: 'fix the relation' }, localDate: LOCAL_DATE })
+    expect(failed.status).toBe(200)
+    expect(failed.body.evaluation.passed).toBe(false)
+    expect(failed.body.state).toBe('practicing')
+    expect(db.get('SELECT state, artifact_passed, completed_at FROM progress WHERE lesson_id = ?', seeded.lessonId)).toMatchObject({ state: 'practicing', artifact_passed: 0, completed_at: null })
 
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
+    llmMocks.generateText.mockResolvedValueOnce(evaluation())
+    const passed = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made fixed diagram', result: 'shows unmatched rows', reflection: 'repeatable' }, localDate: LOCAL_DATE })
+    expect(passed.status).toBe(200)
+    expect(passed.body.session).toMatchObject({ completed: true, requiresArtifact: true })
+    const progress = db.get('SELECT state, artifact_passed, completed_at FROM progress WHERE lesson_id = ?', seeded.lessonId)
+    expect(progress.state).toBe('passed')
+    expect(progress.artifact_passed).toBe(1)
+    expect(progress.completed_at).toBeTruthy()
+    expect(db.get('SELECT due_date FROM srs_queue WHERE lesson_id = ?', seeded.lessonId).due_date).toBe('2024-03-01')
+    expect(db.get('SELECT last_active_date FROM streaks').last_active_date).toBe(LOCAL_DATE)
+    expect(db.get('SELECT last_active_at FROM topics WHERE id = ?', seeded.topicId).last_active_at).toBeTruthy()
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE lesson_id = ?)', seeded.lessonId).count).toBe(2)
 
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-      expect(res.status).toBe(200)
-      expect(res.body.content).toContain('function add')
-      expect(res.body.evaluation).toBeDefined()
-    })
-
-    it('returns 404 when no artifact exists', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-      expect(res.status).toBe(404)
-    })
+    const attempts = llmMocks.generateText.mock.calls.length
+    const duplicate = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'ignored', actions: 'ignored', result: 'ignored', reflection: 'ignored' }, localDate: LOCAL_DATE })
+    expect(duplicate.body.alreadyCompleted).toBe(true)
+    expect(llmMocks.generateText).toHaveBeenCalledTimes(attempts)
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE lesson_id = ?)', seeded.lessonId).count).toBe(2)
   })
 
-  describe('GET /api/topics/:id/lessons/:lid includes artifact metadata', () => {
-    it('returns artifact_required and artifact_type in lesson details', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson('React', 'JSX', 1, 'code')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
+  it('does not write failed provider output, invalid evidence, or invalid local dates', async () => {
+    const seeded = seedBuild()
+    completeBlocks(seeded)
+    const invalidEvidence = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local' }, localDate: LOCAL_DATE })
+    expect(invalidEvidence.status).toBe(400)
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE lesson_id = ?)', seeded.lessonId).count).toBe(0)
 
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
-      expect(res.status).toBe(200)
-      expect(res.body.lesson.artifact_required).toBe(true)
-      expect(res.body.lesson.artifact_type).toBe('code')
-    })
+    llmMocks.generateText.mockResolvedValueOnce({ text: '{bad' })
+    const malformed = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'shows rows', reflection: 'repeatable' }, localDate: LOCAL_DATE })
+    expect(malformed.status).toBe(502)
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE lesson_id = ?)', seeded.lessonId).count).toBe(0)
 
-    it('returns validated task metadata for task-backed lessons', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
-      expect(res.status).toBe(200)
-      expect(res.body.lesson.task_spec.title).toBe('Build a local setup')
-      expect(res.body.lesson.task_spec.free_fallback.kind).toBe('no_software')
-    })
-
-    it('includes artifact_passed in progress response', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson('React', 'JSX', 1, 'code')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, artifact_passed, quiz_score) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 1, 85)
-
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
-      expect(res.status).toBe(200)
-      expect(res.body.progress.artifact_passed).toBe(1)
-    })
+    const invalidDate = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'shows rows', reflection: 'repeatable' }, localDate: '2026-02-31' })
+    expect(invalidDate.status).toBe(400)
+    expect(invalidDate.body.code).toBe('INVALID_LOCAL_DATE')
+    expect(db.get('SELECT artifact_passed FROM progress WHERE lesson_id = ?', seeded.lessonId).artifact_passed).toBe(0)
   })
 
-  describe('Task-backed lesson ordering', () => {
-    it('blocks quiz start until task evidence passes', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 3, 3)
-
-      const res = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/quiz`)
-      expect(res.status).toBe(409)
-      expect(res.body.code).toBe('TASK_REQUIRED')
-    })
-
-    it('rejects task-backed test-out through both legacy route families', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run('UPDATE lessons SET task_spec = ? WHERE id = ?', taskSpec(), lessonId)
-
-      const start = await request(app).post(`/api/topics/${topicId}/lessons/${lessonId}/test-out/start`).send({})
-      const legacy = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}/test-out`)
-      expect(start.status).toBe(409)
-      expect(start.body.code).toBe('TASK_REQUIRED')
-      expect(legacy.status).toBe(409)
-      expect(legacy.body.code).toBe('TASK_REQUIRED')
-    })
+  it('rolls artifact, artifact_passed, and completion side effects back as one transaction', async () => {
+    const seeded = seedBuild()
+    completeBlocks(seeded)
+    db.run("CREATE TRIGGER fail_artifact_streak BEFORE INSERT ON streaks BEGIN SELECT RAISE(ABORT, 'injected'); END")
+    llmMocks.generateText.mockResolvedValueOnce(evaluation())
+    const result = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'shows rows', reflection: 'repeatable' }, localDate: LOCAL_DATE })
+    expect(result.status).toBe(500)
+    expect(db.get('SELECT state, artifact_passed, completed_at FROM progress WHERE lesson_id = ?', seeded.lessonId)).toMatchObject({ state: 'practicing', artifact_passed: 0, completed_at: null })
+    expect(db.get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = (SELECT id FROM progress WHERE lesson_id = ?)', seeded.lessonId).count).toBe(0)
+    expect(db.get('SELECT COUNT(*) AS count FROM srs_queue WHERE lesson_id = ?', seeded.lessonId).count).toBe(0)
   })
 
-  describe('Artifact + Quiz completion ordering', () => {
-    it('completes lesson when artifact submitted first, then quiz passed', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      // Submit artifact first
-      const artRes = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-      expect(artRes.status).toBe(200)
-
-      const progAfterArtifact = dbModule.get('SELECT state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(progAfterArtifact.state).toBe('practicing')
-      expect(progAfterArtifact.artifact_passed).toBe(1)
-
-      // Now take and pass quiz
-      dbModule.run('UPDATE progress SET state = ? WHERE topic_id = ? AND lesson_id = ?', 'quiz_pending', topicId, lessonId)
-      dbModule.run(
-        'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-        topicId, lessonId, JSON.stringify([{ id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 }])
-      )
-
-      const quizRes = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`)
-        .send({ answers: { q1: 'JSX is JavaScript XML.' } })
-
-      expect(quizRes.status).toBe(200)
-      const progAfterQuiz = dbModule.get('SELECT state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(progAfterQuiz.state).toBe('passed')
-      expect(progAfterQuiz.artifact_passed).toBe(1)
-    })
-
-    it('completes lesson when quiz passed first, then artifact submitted', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      // First pass quiz
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 85)
-      dbModule.run(
-        'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-        topicId, lessonId, JSON.stringify([{ id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 }])
-      )
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`)
-        .send({ answers: { q1: 'JSX is JavaScript XML.' } })
-
-      // Since artifact required, state should NOT be passed yet
-      const progAfterQuiz = dbModule.get('SELECT state, artifact_passed, quiz_score FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(progAfterQuiz.quiz_score).toBe(85)
-
-      // Now submit artifact
-      const artRes = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      expect(artRes.status).toBe(200)
-      const progAfterArtifact = dbModule.get('SELECT state, artifact_passed, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(progAfterArtifact.state).toBe('passed')
-      expect(progAfterArtifact.artifact_passed).toBe(1)
-      expect(progAfterArtifact.completed_at).toBeTruthy()
-    })
-
-    it('schedules SRS when both artifact and quiz pass', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)", topicId, lessonId, 'quiz_pending', 85)
-      dbModule.run(
-        'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-        topicId, lessonId, JSON.stringify([{ id: 'q1', text: 'What is JSX?', type: 'Recall', weight: 1 }])
-      )
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/artifact`)
-        .send({ content: 'function add(a, b) { return a + b; }' })
-
-      const srs = dbModule.get('SELECT * FROM srs_queue WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      expect(srs).toBeDefined()
-      expect(srs.interval_index).toBe(0)
-    })
-  })
-
-  describe('Dashboard curriculum indicator', () => {
-    it('includes artifact_required in curriculum lesson data', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson('React', 'JSX', 1, 'code')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-
-      const res = await request(app).get(`/api/topics/${topicId}/curriculum`)
-      expect(res.status).toBe(200)
-      const lesson = res.body.modules[0].lessons[0]
-      expect(lesson.artifact_required).toBe(true)
-    })
+  it('returns the latest scoped artifact attempt', async () => {
+    const seeded = seedBuild()
+    completeBlocks(seeded)
+    llmMocks.generateText.mockResolvedValueOnce(evaluation({ Correctness: 0, Completeness: 2, Clarity: 2, 'Edge Cases': 2 }))
+    await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+      .send({ evidence: { setup: 'local', actions: 'made diagram', result: 'missed rows', reflection: 'revise' }, localDate: LOCAL_DATE })
+    const result = await request(app).get(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/artifact`)
+    expect(result.status).toBe(200)
+    expect(result.body.passed).toBe(false)
+    expect(result.body.attemptNumber).toBe(1)
+    expect(result.body.content).toContain('Result:')
   })
 })

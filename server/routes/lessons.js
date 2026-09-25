@@ -1,107 +1,150 @@
 import { Router } from 'express'
-import { get, run, all, transaction } from '../db.js'
-import { requireLlmConfig } from '../utils/llm-config.js'
+import { all, get, run, transaction } from '../db.js'
 import { streamText, generateText, LlmClientError } from '../llm/client.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
-import { buildDifficultyInstruction, DIFFICULTY_LEVELS } from '../utils/adaptive-difficulty.js'
-import { getActiveMistakes } from '../utils/mistakes-log.js'
-import {
-  startPracticing,
-  startQuiz,
-  startRetest,
-  recordQuizResult,
-  skipLesson,
-  startTestOut,
-  finishTestOut,
-  checkPrerequisites,
-  StateMachineError,
-  recordArtifactResult,
-} from '../utils/lesson-state-machine.js'
-import { recordMasteryEvent } from '../utils/streak-tracker.js'
-import {
-  aggregateMixedScore,
-  normalizeQuizQuestions,
-  sanitizeQuizQuestions,
-  scoreChoiceAnswers,
-  validateAnswerSubmission,
-  validatePersistedQuiz,
-  validateWrittenEvaluation,
-} from '../utils/mixed-quiz.js'
-import { outcomeTitles } from '../utils/outcome-manifest.js'
+import { requireLlmConfig } from '../utils/llm-config.js'
+import { ActivityRuntimeError, completeActivitySessionIfEligible, getActivityProgress, getActivityState } from '../utils/activity-runtime.js'
+import { checkPrerequisites } from '../utils/lesson-state-machine.js'
+import { getBlock, parseActivityDocument, sanitizeActivityDocument, validateActivityDocument } from '../utils/activity-schema.js'
+import { isValidDate } from '../utils/streak-tracker.js'
+import { publicOutcome } from '../utils/outcome-manifest.js'
 
 const router = Router()
-
 const MAX_MESSAGE_LENGTH = 2000
-const DEFAULT_TOTAL_CHUNKS = 3
-const MAX_TASK_EVIDENCE_FIELD = 16 * 1024
-const MAX_TASK_EVIDENCE = 64 * 1024
+const MAX_EVIDENCE_FIELD_BYTES = 16 * 1024
+const MAX_EVIDENCE_BYTES = 64 * 1024
+const MAX_EVIDENCE_CHARS = 5 * 1024 * 1024
+const RUBRIC_DIMENSIONS = ['Correctness', 'Completeness', 'Clarity', 'Edge Cases']
 
-function parseTaskSpec(value) {
-  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null
-  try {
-    const parsed = JSON.parse(value)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Stored task specification is invalid.')
-    return parsed
-  } catch {
-    throw new Error('Stored task specification is invalid.')
-  }
-}
-
-function taskError(message, code = 'TASK_REQUIRED') {
+function routeError(message, status, code) {
   const error = new Error(message)
-  error.status = 409
+  error.status = status
   error.code = code
   return error
 }
 
-function getTaskEvidence(evidence) {
-  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
-    throw new Error('Structured task evidence is required.')
+function sendError(res, error, fallback = 'Request failed.') {
+  if (error instanceof ActivityRuntimeError) {
+    return res.status(error.status).json({ error: error.message, code: error.code, ...(error.latestState ? { latestState: error.latestState } : {}) })
   }
-  const values = {
+  if (error instanceof LlmClientError) {
+    return res.status(400).json({ error: error.message, code: error.code, retryable: error.retryable })
+  }
+  if (Number.isInteger(error?.status)) {
+    return res.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) })
+  }
+  console.error(fallback, error?.message || error)
+  return res.status(500).json({ error: fallback })
+}
+
+function positiveId(value, field) {
+  if (!/^\d+$/.test(String(value)) || !Number.isSafeInteger(Number(value)) || Number(value) < 1) {
+    throw routeError(`${field} must be a positive integer.`, 400, 'INVALID_REQUEST')
+  }
+  return Number(value)
+}
+
+function parseJson(value, fallback) {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+  try { return JSON.parse(value) } catch { return fallback }
+}
+
+function parseTaskSpec(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return null
+  const parsed = parseJson(value, null)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw routeError('Stored Build specification is invalid.', 500, 'TASK_SPEC_INVALID')
+  }
+  return parsed
+}
+
+function getScopedLesson(topicId, lessonId) {
+  const lesson = get(
+    `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites,
+            l.activity_blocks, l.artifact_required, l.artifact_type, l.artifact_rubric, l.task_spec,
+            m.id AS module_id, m.title AS module_title
+     FROM lessons l JOIN modules m ON m.id = l.module_id
+     WHERE l.id = ? AND m.topic_id = ?`,
+    lessonId,
+    topicId,
+  )
+  if (!lesson) throw routeError('Session not found in this Trail.', 404, 'LESSON_NOT_FOUND')
+  return lesson
+}
+
+function getActivityDocument(lesson) {
+  if (typeof lesson.activity_blocks !== 'string' || !lesson.activity_blocks.trim()) return null
+  const parsed = parseActivityDocument(lesson.activity_blocks)
+  if (!parsed.valid) throw routeError(parsed.error, 500, 'ACTIVITY_DOCUMENT_INVALID')
+  const validated = validateActivityDocument(parsed.value, lesson)
+  if (!validated.valid) throw routeError(validated.error, 500, 'ACTIVITY_DOCUMENT_INVALID')
+  return validated.value
+}
+
+function checkAccess(topicId, lesson) {
+  const check = checkPrerequisites(topicId, lesson.id)
+  if (check.lessonNotFound) throw routeError('Session not found in this Trail.', 404, 'LESSON_NOT_FOUND')
+  if (check.invalidPrerequisites) throw routeError('Stored Session prerequisites are invalid.', 500, 'PREREQUISITES_INVALID')
+  if (check.locked) {
+    return {
+      locked: true,
+      prerequisites: parseJson(lesson.prerequisites, []),
+      unmetPrerequisites: check.unmet,
+    }
+  }
+  return { locked: false }
+}
+
+function parseOutcomes(value) {
+  const parsed = parseJson(value, [])
+  return Array.isArray(parsed) ? parsed.map(publicOutcome).filter(Boolean) : []
+}
+
+function buildTaskEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    throw routeError('Structured Build evidence is required.', 400, 'INVALID_TASK_EVIDENCE')
+  }
+  const fields = {
     setup: evidence.setup,
     actions: evidence.actions ?? evidence.steps,
     result: evidence.result ?? evidence.observations,
     reflection: evidence.reflection,
   }
-  for (const [field, value] of Object.entries(values)) {
-    if (typeof value !== 'string' || !value.trim()) throw new Error(`Task evidence field "${field}" is required.`)
-    if (Buffer.byteLength(value, 'utf8') > MAX_TASK_EVIDENCE_FIELD) throw new Error(`Task evidence field "${field}" is too long.`)
+  for (const [field, value] of Object.entries(fields)) {
+    if (typeof value !== 'string' || !value.trim()) throw routeError(`Build evidence field "${field}" is required.`, 400, 'INVALID_TASK_EVIDENCE')
+    if (Buffer.byteLength(value, 'utf8') > MAX_EVIDENCE_FIELD_BYTES) throw routeError(`Build evidence field "${field}" is too long.`, 400, 'INVALID_TASK_EVIDENCE')
   }
-  const canonical = [
-    `Setup:\n${values.setup.trim()}`,
-    `Actions:\n${values.actions.trim()}`,
-    `Result:\n${values.result.trim()}`,
-    `Reflection:\n${values.reflection.trim()}`,
+  const content = [
+    `Setup:\n${fields.setup.trim()}`,
+    `Actions:\n${fields.actions.trim()}`,
+    `Result:\n${fields.result.trim()}`,
+    `Reflection:\n${fields.reflection.trim()}`,
   ].join('\n\n')
-  if (Buffer.byteLength(canonical, 'utf8') > MAX_TASK_EVIDENCE) throw new Error('Task evidence is too large.')
-  return canonical
+  if (Buffer.byteLength(content, 'utf8') > MAX_EVIDENCE_BYTES) throw routeError('Build evidence is too large.', 400, 'INVALID_TASK_EVIDENCE')
+  return content
 }
 
-async function streamReply(streamResult, res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-  })
-
-  let text = ''
-  try {
-    for await (const chunk of streamResult.textStream) {
-      const value = typeof chunk === 'string' ? chunk : ''
-      text += value
-      res.write(`data: ${JSON.stringify(value)}\n\n`)
-    }
-    if (!text.trim()) {
-      writeStreamError(res, new LlmClientError('The model returned no response. Please retry.', { code: 'EMPTY_RESPONSE' }))
-      if (!res.destroyed && !res.writableEnded) res.end()
-      return { ok: false, text }
-    }
-    return { ok: true, text }
-  } catch (error) {
-    writeStreamError(res, error)
-    if (!res.destroyed && !res.writableEnded) res.end()
-    return { ok: false, text }
+function readArtifact(progressId) {
+  const artifact = get(
+    'SELECT id, content, rubric_scores, passed, feedback, attempt_number, created_at FROM artifacts WHERE progress_id = ? ORDER BY id DESC LIMIT 1',
+    progressId,
+  )
+  if (!artifact) return null
+  const scores = parseJson(artifact.rubric_scores, {})
+  const feedback = parseJson(artifact.feedback, {})
+  const total = RUBRIC_DIMENSIONS.reduce((sum, dimension) => sum + (Number.isInteger(scores?.[dimension]) ? scores[dimension] : 0), 0)
+  return {
+    id: artifact.id,
+    content: artifact.content,
+    passed: artifact.passed === 1,
+    attemptNumber: artifact.attempt_number,
+    createdAt: artifact.created_at,
+    evaluation: {
+      overallScore: Math.round(total / (RUBRIC_DIMENSIONS.length * 2) * 100),
+      scores,
+      feedback,
+      passed: artifact.passed === 1,
+    },
   }
 }
 
@@ -111,1603 +154,275 @@ function writeStreamError(res, error) {
     ? { message: error.message, code: error.code, retryable: error.retryable }
     : { message: 'The response could not be completed. Please retry.', code: 'STREAM_ERROR', retryable: true }
   try {
-    if (!res.destroyed) {
+    if (!res.destroyed && !res.writableEnded) {
       res.write('event: error\n')
       res.write(`data: ${JSON.stringify(body)}\n\n`)
     }
   } catch {}
 }
 
-function finishStream(res) {
-  if (res.destroyed || res.writableEnded) return
-  res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-  res.end()
-}
-
-/**
- * Technical topic keywords for mode inference.
- */
-const TECH_KEYWORDS = [
-  'python', 'javascript', 'java', 'c++', 'c#', 'go', 'rust', 'ruby', 'php',
-  'swift', 'kotlin', 'typescript', 'scala', 'r ', 'matlab', 'sql', 'html',
-  'css', 'react', 'angular', 'vue', 'svelte', 'node', 'django', 'flask',
-  'rails', 'spring', 'laravel', 'docker', 'kubernetes', 'aws', 'gcp', 'azure',
-  'linux', 'git', 'api', 'database', 'algorithm', 'data structure',
-  'machine learning', 'deep learning', 'neural network', 'blockchain',
-  'devops', 'frontend', 'backend', 'fullstack', 'web dev', 'mobile dev',
-  'ios', 'android', 'shell', 'bash', 'script', 'programming', 'coding',
-  'software', 'engineering', 'computer science', 'compiler', 'network',
-  'security', 'testing', 'ci/cd', 'microservice', 'architecture',
-]
-
-/**
- * Soft-skill topic keywords for mode inference.
- */
-const SOFT_SKILL_KEYWORDS = [
-  'negotiation', 'leadership', 'communication', 'presentation', 'teamwork',
-  'collaboration', 'empathy', 'conflict resolution', 'coaching', 'mentoring',
-  'public speaking', 'interview', 'networking', 'influence', 'persuasion',
-  'emotional intelligence', 'time management', 'productivity', 'stress',
-  'mindfulness', 'creativity', 'problem solving', 'critical thinking',
-  'decision making', 'adaptability', 'resilience', 'feedback', 'performance',
-  'management', 'supervision', 'delegation', 'motivation', 'culture',
-  'diversity', 'inclusion', 'sales', 'customer service', 'relationship',
-  'nursing', 'caregiving', 'therapy', 'counseling', 'social work',
-]
-
-/**
- * Infer interaction mode from topic title.
- */
-function inferInteractionMode(title) {
-  const lower = (title || '').toLowerCase()
-  if (TECH_KEYWORDS.some((kw) => lower.includes(kw))) {
-    return 'code'
-  }
-  if (SOFT_SKILL_KEYWORDS.some((kw) => lower.includes(kw))) {
-    return 'scenario'
-  }
-  return 'socratic'
-}
-
-/**
- * Build the system prompt for a lesson chunk.
- */
-function buildSystemPrompt({ mode, lessonTitle, lessonOutcomes, chunkNum, totalChunks, isFinal, difficultyInstruction = '' }) {
-  const base = `You are an expert tutor teaching the lesson "${lessonTitle}".
-Learning outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}.
-This is chunk ${chunkNum} of ${totalChunks}.`
-
-  let prompt = base
-  if (difficultyInstruction) {
-    prompt += '\n\n' + difficultyInstruction
-  }
-
-  if (isFinal) {
-    return `${prompt}
-This is the FINAL chunk. Summarize the key concepts and then ask the learner if they're ready to check their understanding with a short quiz. Be encouraging. Keep your response to 1-2 short paragraphs.`
-  }
-
-  switch (mode) {
-    case 'code':
-      return `${prompt}
-You are teaching a technical topic. Provide concise, practical explanations with code examples where helpful. Use markdown code blocks for code. Focus on ONE concept per message. Keep each message under ~500 characters or 3 short paragraphs.`
-    case 'scenario':
-      return `${prompt}
-You are coaching a soft skill. Present a realistic scenario and ask the learner how they would respond. Or if continuing a scenario, give constructive feedback on their previous response and present the next part. Focus on ONE scenario element per message. Keep each message under ~500 characters or 3 short paragraphs.`
-    case 'socratic':
-    default:
-      return `${prompt}
-You are a Socratic tutor. Ask clarifying questions BEFORE giving direct answers. Help the learner discover concepts through guided inquiry. Focus on ONE concept per message. Keep each message under ~500 characters or 3 short paragraphs.`
-  }
-}
-
-/**
- * Prerequisite helper that uses the canonical state-machine function.
- */
-function buildPrereqCheck(topicId, lesson) {
-  return checkPrerequisites(topicId, lesson.id)
-}
-
-/**
- * GET /api/topics/:id/lessons/:lid
- * Get lesson details, messages, and progress.
- */
 router.get('/topics/:id/lessons/:lid', (req, res) => {
   try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
+    const topicId = positiveId(req.params.id, 'topicId')
+    const lessonId = positiveId(req.params.lid, 'lessonId')
     const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type, l.task_spec,
-              m.title as module_title, m.id as module_id
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const progress = get(
-      'SELECT state, current_chunk, total_chunks, quiz_score, quiz_attempts, artifact_passed, started_at, completed_at, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
-      topicId, lessonId
-    ) || { state: 'not_started', current_chunk: 0, total_chunks: 0, quiz_score: null, quiz_attempts: 0, artifact_passed: 0, remediation_attempts: 0, last_gaps: null }
-
-    const prereqCheck = buildPrereqCheck(topicId, lesson)
-    if (prereqCheck.locked) {
-      let prereqList = []
-      try {
-        prereqList = lesson.prerequisites ? JSON.parse(lesson.prerequisites) : []
-      } catch {
-        prereqList = []
-      }
+    if (!topic) return res.status(404).json({ error: 'Topic not found.' })
+    const lesson = getScopedLesson(topicId, lessonId)
+    const access = checkAccess(topicId, lesson)
+    if (access.locked) {
       return res.status(403).json({
         locked: true,
-        prerequisites: prereqList,
-        unmetPrerequisites: prereqCheck.unmet,
-        lesson: {
-          id: lesson.id,
-          title: lesson.title,
-          depth: lesson.depth,
-          estimated_time: lesson.estimated_time,
-          module_title: lesson.module_title,
-        },
+        prerequisites: access.prerequisites,
+        unmetPrerequisites: access.unmetPrerequisites,
+        lesson: { id: lesson.id, title: lesson.title, depth: lesson.depth, estimated_time: lesson.estimated_time, module_title: lesson.module_title },
       })
     }
 
+    const document = getActivityDocument(lesson)
+    const progress = get(
+      'SELECT state, artifact_passed, started_at, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      topicId,
+      lessonId,
+    ) || { state: 'not_started', artifact_passed: 0, started_at: null, completed_at: null }
+    const activityState = document ? getActivityState(topicId, lessonId) : null
+    const activityProgress = document ? getActivityProgress(topicId, lessonId) : null
     const messages = all(
       'SELECT id, role, content, created_at FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
+      topicId,
+      lessonId,
     )
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
-    const taskSpec = parseTaskSpec(lesson.task_spec)
-
     return res.json({
       lesson: {
         id: lesson.id,
         title: lesson.title,
         depth: lesson.depth,
         estimated_time: lesson.estimated_time,
-        outcomes,
+        outcomes: parseOutcomes(lesson.outcomes),
         module_title: lesson.module_title,
-        artifact_required: !!lesson.artifact_required,
+        artifact_required: lesson.artifact_required === 1,
         artifact_type: lesson.artifact_type,
-        task_spec: taskSpec,
+        task_spec: parseTaskSpec(lesson.task_spec),
       },
       progress,
       messages,
-      interactionMode,
+      interactionMode: topic.interaction_mode || 'socratic',
+      activityDocument: document ? sanitizeActivityDocument(document) : null,
+      activityState,
+      activityProgress,
       locked: false,
     })
-  } catch (err) {
-    console.error('GET /api/topics/:id/lessons/:lid error:', err.message)
-    return res.status(500).json({ error: 'Failed to load lesson.' })
+  } catch (error) {
+    return sendError(res, error, 'Failed to load Session.')
   }
 })
 
-/**
- * POST /api/topics/:id/lessons/:lid/chat
- * Send a user message and stream the tutor response via SSE.
- */
 router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
+  let abortRequest
   try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { content } = req.body
-
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      return res.status(400).json({ error: 'Message content is required.' })
-    }
-    if (content.length > MAX_MESSAGE_LENGTH) {
-      return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} character limit.` })
+    const topicId = positiveId(req.params.id, 'topicId')
+    const lessonId = positiveId(req.params.lid, 'lessonId')
+    const body = req.body || {}
+    if (typeof body.content !== 'string' || !body.content.trim()) return res.status(400).json({ error: 'Message content is required.' })
+    if (body.content.length > MAX_MESSAGE_LENGTH) return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} character limit.` })
+    if (body.activityBlockId !== undefined && (typeof body.activityBlockId !== 'string' || !body.activityBlockId.trim() || body.activityBlockId.length > 80)) {
+      return res.status(400).json({ error: 'activityBlockId must be a valid public activity block ID.', code: 'ACTIVITY_BLOCK_INVALID' })
     }
 
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
+    const topic = get('SELECT id FROM topics WHERE id = ?', topicId)
+    if (!topic) return res.status(404).json({ error: 'Topic not found.' })
+    const lesson = getScopedLesson(topicId, lessonId)
+    const access = checkAccess(topicId, lesson)
+    if (access.locked) return res.status(403).json({ error: 'This Session is locked. Complete the prerequisites first.', code: 'PREREQUISITES_NOT_MET' })
+
+    let block = null
+    let state = null
+    if (body.activityBlockId !== undefined) {
+      const document = getActivityDocument(lesson)
+      if (!document) return res.status(409).json({ error: 'This Session does not have an activity document.', code: 'ACTIVITY_DOCUMENT_MISSING' })
+      block = getBlock(document, body.activityBlockId)
+      if (!block) return res.status(404).json({ error: 'Activity block was not found in this Session.', code: 'ACTIVITY_BLOCK_NOT_FOUND' })
+      state = getActivityState(topicId, lessonId)
+    } else if (lesson.activity_blocks) {
+      const document = getActivityDocument(lesson)
+      state = getActivityState(topicId, lessonId)
+      block = document.blocks.find((item) => item.id === state.currentBlockId) || null
     }
 
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const prereqCheck = buildPrereqCheck(topicId, lesson)
-    if (prereqCheck.locked) {
-      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
-    }
-
+    const outcomes = parseOutcomes(lesson.outcomes)
+    const relevantOutcomeIds = new Set(block ? block.outcomeIds : outcomes.map((outcome) => outcome.id))
+    const relevantOutcomes = outcomes.filter((outcome) => relevantOutcomeIds.has(outcome.id))
+    const entry = block && state ? state.blocks[block.id] : null
+    const tutorContext = block
+      ? `Current public activity block: ${JSON.stringify({ id: block.id, type: block.type, title: block.title, prompt: block.prompt, content: block.content, problem: block.problem, steps: block.steps, takeaway: block.takeaway, outcomeIds: block.outcomeIds })}\nCurrent block status: ${entry?.status || 'not_started'}\nCurrent attempt feedback: ${entry?.feedback || 'No feedback has been recorded yet.'}\nNext step: ${entry?.nextStep || 'Ask the learner what they notice first.'}`
+      : 'No activity block context was requested.'
+    const system = `You are a supportive tutor for the Session "${lesson.title}". Relevant learning outcomes: ${relevantOutcomes.map((outcome) => outcome.title).join('; ') || 'none declared'}.\n${tutorContext}\nask guiding questions before giving a complete answer. Do not claim completion, assign or change scores, or alter Session progress. Use only public Session content and attempt feedback; never reveal hidden grading material or full solutions. Keep replies focused and concise.`
     const config = requireLlmConfig()
-    const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    const shouldStartPracticing = !progress || progress.state === 'not_started'
-    const chunkNum = shouldStartPracticing ? 1 : progress.current_chunk || 1
-    const totalChunks = progress?.total_chunks || DEFAULT_TOTAL_CHUNKS
     const history = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId,
-    )
-    history.push({ role: 'user', content: content.trim() })
+      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC LIMIT 20',
+      topicId,
+      lessonId,
+    ).reverse()
+    history.push({ role: 'user', content: body.content.trim() })
 
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
-    const isFinalChunk = chunkNum >= totalChunks
-
-    const difficultyInstruction = buildDifficultyInstruction(topicId)
-
-    const system = buildSystemPrompt({
-      mode: interactionMode,
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      chunkNum,
-      totalChunks,
-      isFinal: isFinalChunk,
-      difficultyInstruction,
-    })
-
-    const request = createRequestAbortSignal(req, res)
-    const streamResult = await streamText({
-      ...llmRequestOptions(config, { signal: request.signal }),
+    abortRequest = createRequestAbortSignal(req, res)
+    const response = await streamText({
+      ...llmRequestOptions(config, { signal: abortRequest.signal }),
       system,
-      messages: history.map((m) => ({ role: m.role, content: m.content })),
+      messages: history,
     })
-
-    const streamed = await streamReply(streamResult, res)
-    if (!streamed.ok) return
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
+    let text = ''
     try {
-      transaction(() => {
-        if (shouldStartPracticing) startPracticing({ topicId, lessonId, currentChunk: 1, totalChunks: DEFAULT_TOTAL_CHUNKS })
-        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
-        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
-      })()
-    } catch (smErr) {
-      writeStreamError(res, smErr instanceof StateMachineError ? smErr : new Error('course state could not be saved'))
+      for await (const chunk of response.textStream) {
+        if (res.destroyed || res.writableEnded || abortRequest.signal.aborted) return
+        if (typeof chunk !== 'string') continue
+        text += chunk
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+      }
+    } catch (error) {
+      writeStreamError(res, error)
       if (!res.destroyed && !res.writableEnded) res.end()
       return
     }
-    finishStream(res)
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/chat error:', err.message)
-    if (!res.headersSent) {
-      if (err instanceof LlmClientError) {
-        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      return res.status(500).json({ error: 'Failed to process chat message.' })
-    }
-    // Headers already sent - try to write SSE error
-    try {
-      if (!res.destroyed && !res.writableEnded) {
-        res.write(`event: error\n`)
-        res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
-        res.end()
-      }
-    } catch {}
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/continue
- * Advance to the next chunk and stream the tutor response via SSE.
- */
-router.post('/topics/:id/lessons/:lid/continue', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const prereqCheck = buildPrereqCheck(topicId, lesson)
-    if (prereqCheck.locked) {
-      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
-    }
-
-    const progress = get('SELECT id, state, current_chunk, total_chunks FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress || progress.state !== 'practicing') {
-      return res.status(400).json({ error: 'Lesson must be in practicing state to continue.' })
-    }
-
-    const config = requireLlmConfig()
-    const nextChunk = (progress.current_chunk || 0) + 1
-    const history = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId,
-    )
-    history.push({ role: 'user', content: '[Continue]' })
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
-    const isFinalChunk = nextChunk >= (progress.total_chunks || DEFAULT_TOTAL_CHUNKS)
-
-    const difficultyInstruction = buildDifficultyInstruction(topicId)
-
-    const system = buildSystemPrompt({
-      mode: interactionMode,
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      chunkNum: nextChunk,
-      totalChunks: progress.total_chunks || DEFAULT_TOTAL_CHUNKS,
-      isFinal: isFinalChunk,
-      difficultyInstruction,
-    })
-
-    const request = createRequestAbortSignal(req, res)
-    const streamResult = await streamText({
-      ...llmRequestOptions(config, { signal: request.signal }),
-      system,
-      messages: history.map((m) => ({ role: m.role, content: m.content })),
-    })
-
-    const streamed = await streamReply(streamResult, res)
-    if (!streamed.ok) return
-    try {
-      transaction(() => {
-        const update = run(
-          'UPDATE progress SET current_chunk = ? WHERE id = ? AND state = ? AND coalesce(current_chunk, 0) = ?',
-          nextChunk, progress.id, 'practicing', progress.current_chunk || 0,
-        )
-        if (update.changes !== 1) {
-          throw new StateMachineError('Lesson progress changed during generation. Please retry.', 'STATE_CHANGED')
-        }
-        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', '[Continue]')
-        run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
-      })()
-    } catch (smErr) {
-      writeStreamError(res, smErr instanceof StateMachineError ? smErr : new Error('course state could not be saved'))
-      res.end()
+    if (!text.trim()) {
+      writeStreamError(res, new LlmClientError('The model returned no response. Please retry.', { code: 'EMPTY_RESPONSE' }))
+      if (!res.destroyed && !res.writableEnded) res.end()
       return
     }
-    finishStream(res)
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/continue error:', err.message)
-    if (!res.headersSent) {
-      if (err instanceof LlmClientError) {
-        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      return res.status(500).json({ error: 'Failed to continue lesson.' })
-    }
-    try {
-      res.write(`event: error\n`)
-      res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
-      res.end()
-    } catch {}
-  }
-})
-
-/**
- * Build quiz generation prompt from lesson context.
- */
-function buildQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficultyInstruction = '' }) {
-  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
-  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
-  return `You are an expert tutor. Based on the following lesson context, generate 3-8 free-text quiz questions that test the learner's understanding of what was taught.
-
-Lesson: ${lessonTitle}
-Outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
-
-Conversation context:
-${context}
-
-Generate a JSON object with a "questions" array. Each question must have:
-- id (string)
-- text (string, the question prompt)
-- type (one of: Recall, Explain, Apply, Diagnose, Transfer)
-- weight (integer: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3)
-
-All questions must be free-text (no multiple choice). Make them context-aware and related to the lesson content. Return ONLY valid JSON.`
-}
-
-function buildMixedQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficultyInstruction = '', mode = 'regular' }) {
-  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
-  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
-  const counts = mode === 'retest' ? 'exactly one multiple_choice and one written question' : 'exactly two multiple_choice and two written questions'
-  return `You are an expert tutor. Generate ${counts} for the lesson "${lessonTitle}" based only on the material below.
-
-Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
-
-Conversation context:
-${context}
-
-Return ONLY valid JSON with a "questions" array. Each multiple_choice question must have:
-{"id":"unique-id","format":"multiple_choice","category":"Recall|Apply|Diagnose","prompt":"...","options":[{"id":"a","text":"..."},{"id":"b","text":"..."},{"id":"c","text":"..."},{"id":"d","text":"..."}],"correct_option":"a","weight":1}
-Each written question must have:
-{"id":"unique-id","format":"written","category":"Explain|Transfer|Apply","prompt":"...","max_words":80,"weight":2}
-Choice options must be plausible and have exactly one correct_option. Written answers must be answerable in at most 80 words and 2,000 characters. Do not include secrets, answer keys outside correct_option, or markdown.`
-}
-
-function buildMixedEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, answers, messages }) {
-  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
-  const written = questions.filter((question) => question.format === 'written')
-    .map((question) => `Question ${question.id}: ${question.prompt}\nAnswer: ${answers[question.id]}`)
-    .join('\n\n')
-  return `Evaluate only the written answers below for the lesson "${lessonTitle}". Do not evaluate or infer multiple-choice answers.
-Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
-Conversation context:
-${context}
-
-Written questions and answers:
-${written}
-
-Return ONLY JSON in this shape: {"written":{"question-id":{"score":0,"explanation":"..."}}}. Score each answer from 0 to 100. Keep explanations concise and identify a gap when the answer is incomplete.`
-}
-
-/**
- * Build retest quiz prompt focused only on missed gaps.
- */
-function buildRetestPrompt({ lessonTitle, lessonOutcomes, gaps, messages, difficultyInstruction = '' }) {
-  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
-  const adaptive = difficultyInstruction ? `\n\n${difficultyInstruction}` : ''
-  return `You are an expert tutor. The learner previously failed a quiz on "${lessonTitle}" and specifically struggled with these gaps:
-${gaps.map((g) => `- ${g}`).join('\n')}
-
-Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
-
-Conversation context:
-${context}
-
-Generate a SHORT retest of 1-3 free-text questions that target ONLY the gaps listed above. Do NOT ask about concepts the learner already demonstrated mastery of. Each question must have:
-- id (string)
-- text (string, the question prompt)
-- type (one of: Recall, Explain, Apply, Diagnose, Transfer)
-- weight (integer: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3)
-
-Return ONLY valid JSON with a "questions" array.`
-}
-
-/**
- * Build quiz evaluation prompt from lesson context.
- */
-function buildEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, answers, messages }) {
-  const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
-  const qaPairs = questions.map((q) => {
-    const ans = answers[q.id] || ''
-    return `Q: ${q.text}\nType: ${q.type} (weight ${q.weight})\nA: ${ans}`
-  }).join('\n\n')
-
-  return `You are an expert tutor. Evaluate the following quiz answers against the lesson content.
-
-Lesson: ${lessonTitle}
-Outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
-
-Conversation context:
-${context}
-
-Questions and answers:
-${qaPairs}
-
-Return a JSON object with exactly this structure:
-{
-  "overallScore": number (0-100),
-  "passed": boolean,
-  "criticalGap": boolean,
-  "feedback": [
-    {
-      "questionId": string,
-      "correctness": "correct" | "partial" | "incorrect",
-      "score": number,
-      "explanation": string
-    }
-  ],
-  "gaps": [string]
-}
-
-Scoring rules:
-- Weighted: Recall=1, Explain=2, Apply=2, Diagnose=2, Transfer=3
-- Pass threshold: overallScore >= 80 AND no critical gaps
-- criticalGap = true if any "Recall" or "Explain" question is fully incorrect, or if a learner shows a fundamental misunderstanding
-Return ONLY valid JSON.`
-}
-
-/**
- * POST /api/topics/:id/lessons/:lid/quiz
- * Generate quiz questions via LLM, transition state to quiz_pending.
- */
-router.post('/topics/:id/lessons/:lid/quiz', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const prereqCheck = buildPrereqCheck(topicId, lesson)
-    if (prereqCheck.locked) {
-      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
-    }
-
-    const taskSpec = parseTaskSpec(lesson.task_spec)
-    if (taskSpec) {
-      const progress = get('SELECT state, current_chunk, total_chunks, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      if (!progress || progress.state !== 'practicing' || !progress.total_chunks || progress.current_chunk < progress.total_chunks || !progress.artifact_passed) {
-        return res.status(409).json({ error: 'Complete all teaching chunks and pass the practical task before starting the quiz.', code: 'TASK_REQUIRED' })
-      }
-    }
-
-    const config = requireLlmConfig()
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const messages = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
-    )
-
-    const difficultyInstruction = buildDifficultyInstruction(topicId)
-    const mixedQuiz = Boolean(taskSpec)
-
-    const system = mixedQuiz
-      ? buildMixedQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction })
-      : buildQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction })
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: 'Generate the quiz questions as JSON.' }],
-    })
-
-    let parsed
-    try {
-      const text = result.text || '{}'
-      parsed = JSON.parse(text)
-    } catch {
-      return res.status(500).json({ error: 'Failed to parse quiz questions from LLM. Please try again.' })
-    }
-
-    const questions = Array.isArray(parsed.questions) ? parsed.questions : []
-    if (questions.length === 0) return res.status(500).json({ error: 'LLM returned no quiz questions. Please try again.' })
-
-    let validQuestions = questions
-    let answerKey = null
-    let formatVersion = 1
-    if (mixedQuiz) {
-      try {
-        const normalized = normalizeQuizQuestions(questions, { mode: 'regular' })
-        validQuestions = normalized.questions
-        answerKey = normalized.answerKey
-        formatVersion = 2
-      } catch (error) {
-        return res.status(500).json({ error: `LLM returned an invalid mixed quiz: ${error.message}`, retryable: true })
-      }
-    } else {
-      const valid = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
-      if (valid.length === 0) return res.status(500).json({ error: 'LLM returned malformed quiz questions. Please try again.' })
-      validQuestions = valid
-    }
-
-    const questionsJson = JSON.stringify(validQuestions)
-    let attemptId
-    try {
-      transaction(() => {
-        startQuiz({ topicId, lessonId })
-        const inserted = run(
-          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answer_key, format_version) VALUES (?, ?, ?, ?, ?)',
-          topicId, lessonId, questionsJson, answerKey ? JSON.stringify(answerKey) : null, formatVersion,
-        )
-        attemptId = Number(inserted.lastInsertRowid)
-      })()
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-
-    return res.json({ attemptId, formatVersion, questions: validQuestions })
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/quiz error:', err.message)
-    if (err instanceof LlmClientError) {
-      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-    }
-    return res.status(500).json({ error: 'Failed to generate quiz.' })
-  }
-})
-
-/**
- * GET /api/topics/:id/lessons/:lid/quiz
- * Return the latest quiz for this lesson.
- */
-router.get('/topics/:id/lessons/:lid/quiz', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const attempt = get(
-      'SELECT id, questions, answers, evaluation, format_version FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
-      topicId, lessonId
-    )
-
-    if (!attempt) {
-      return res.status(404).json({ error: 'No quiz found for this lesson.' })
-    }
-
-    let questions = []
-    let answers = {}
-    let evaluation = null
-    try {
-      questions = attempt.questions ? JSON.parse(attempt.questions) : []
-    } catch {}
-    try {
-      answers = attempt.answers ? JSON.parse(attempt.answers) : {}
-    } catch {}
-    try {
-      evaluation = attempt.evaluation ? JSON.parse(attempt.evaluation) : null
-    } catch {}
-
-    return res.json({ attemptId: attempt.id, formatVersion: attempt.format_version || 1, questions, answers, evaluation })
-  } catch (err) {
-    console.error('GET /api/topics/:id/lessons/:lid/quiz error:', err.message)
-    return res.status(500).json({ error: 'Failed to load quiz.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/quiz/submit
- * Evaluate answers, update lesson state, schedule SRS.
- */
-router.post('/topics/:id/lessons/:lid/quiz/submit', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { answers, attemptId: requestedAttemptId } = req.body
-
-    if (!answers || typeof answers !== 'object' || Array.isArray(answers) || Object.keys(answers).length === 0) {
-      return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
-    }
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const attempt = get(
-      'SELECT id, questions, answers AS stored_answers, evaluation AS stored_evaluation, answer_key, format_version FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC',
-      topicId, lessonId
-    )
-    if (!attempt) {
-      return res.status(404).json({ error: 'No quiz found for this lesson.' })
-    }
-
-    let questions = []
-    try {
-      questions = attempt.questions ? JSON.parse(attempt.questions) : []
-    } catch {
-      questions = []
-    }
-
-    const latestAttempt = get(
-      'SELECT id FROM quiz_attempts WHERE topic_id = ? AND lesson_id = ? ORDER BY id DESC LIMIT 1',
-      topicId, lessonId,
-    )
-    const numericAttemptId = requestedAttemptId === undefined || requestedAttemptId === null ? null : Number(requestedAttemptId)
-    if (numericAttemptId !== null && (!Number.isInteger(numericAttemptId) || numericAttemptId !== attempt.id || attempt.id !== latestAttempt?.id)) {
-      return res.status(409).json({ error: 'This quiz attempt is stale. Please load the current attempt.', code: 'STALE_ATTEMPT' })
-    }
-
-    if ((attempt.format_version || 1) === 2) {
-      if (numericAttemptId === null || attempt.id !== latestAttempt?.id) {
-        return res.status(409).json({ error: 'A current quiz attempt id is required.', code: 'STALE_ATTEMPT' })
-      }
-      let answerKey
-      try {
-        answerKey = attempt.answer_key ? JSON.parse(attempt.answer_key) : null
-      } catch {
-        answerKey = null
-      }
-      const storedValidation = validatePersistedQuiz(questions, answerKey, { mode: questions.length === 2 ? 'retest' : 'regular' })
-      if (!storedValidation.valid) return res.status(500).json({ error: 'Stored mixed quiz is invalid. Please start a new quiz.', code: 'INVALID_MIXED_QUIZ' })
-      const answerValidation = validateAnswerSubmission(questions, answerKey, answers)
-      if (!answerValidation.valid) return res.status(400).json({ error: answerValidation.error, code: 'INVALID_QUIZ_ANSWERS' })
-
-      const topicMessages = all(
-        'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-        topicId, lessonId,
-      )
-      let mixedOutcomes = []
-      try { mixedOutcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : [] } catch { mixedOutcomes = [] }
-      const config = requireLlmConfig()
-      const writtenResult = await generateText({
-        ...llmRequestOptions(config),
-        system: buildMixedEvaluationPrompt({ lessonTitle: lesson.title, lessonOutcomes: mixedOutcomes, questions, answers, messages: topicMessages }),
-        messages: [{ role: 'user', content: 'Evaluate only the written answers and return JSON.' }],
-      })
-      let writtenParsed
-      try {
-        writtenParsed = JSON.parse(writtenResult.text || '{}')
-      } catch {
-        return res.status(500).json({ error: 'Failed to parse written quiz evaluation from LLM. Please try again.', retryable: true })
-      }
-      const writtenValidation = validateWrittenEvaluation(questions, writtenParsed.written || writtenParsed)
-      if (!writtenValidation.valid) return res.status(500).json({ error: writtenValidation.error, retryable: true })
-      const evaluation = aggregateMixedScore(questions, scoreChoiceAnswers(questions, answers, answerKey), writtenValidation.value)
-      evaluation.formatVersion = 2
-      try {
-        recordQuizResult({ topicId, lessonId, passed: evaluation.passed, quizScore: evaluation.overallScore, answers, evaluation, attemptId: attempt.id })
-      } catch (smErr) {
-        if (smErr instanceof StateMachineError) return res.status(400).json({ error: smErr.message, code: smErr.code })
-        throw smErr
-      }
-      if (evaluation.passed) {
-        try { recordMasteryEvent(req.body.localDate || new Date().toISOString().split('T')[0]) } catch (streakErr) { console.error('Streak record error on quiz pass:', streakErr.message) }
-      }
-      return res.json(evaluation)
-    }
-
-    const config = requireLlmConfig()
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const messages = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
-    )
-
-    const system = buildEvaluationPrompt({
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      questions,
-      answers,
-      messages,
-    })
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: 'Evaluate the quiz answers and return JSON.' }],
-    })
-
-    let parsed
-    try {
-      const text = result.text || '{}'
-      parsed = JSON.parse(text)
-    } catch {
-      return res.status(500).json({ error: 'Failed to parse evaluation from LLM. Please try again.' })
-    }
-
-    const overallScore = typeof parsed.overallScore === 'number' ? parsed.overallScore : 0
-    const criticalGap = !!parsed.criticalGap
-    const passed = overallScore >= 80 && !criticalGap
-
-    const evaluation = {
-      overallScore,
-      passed,
-      criticalGap,
-      feedback: Array.isArray(parsed.feedback) ? parsed.feedback : [],
-      gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
-    }
-
-    // Atomic state transition via state machine
-    try {
-      recordQuizResult({
-        topicId,
-        lessonId,
-        passed,
-        quizScore: overallScore,
-        answers,
-        evaluation,
-        attemptId: attempt.id,
-      })
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-
-    // Record streak on quiz pass
-    if (passed) {
-      try {
-        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
-        recordMasteryEvent(localDate)
-      } catch (streakErr) {
-        console.error('Streak record error on quiz pass:', streakErr.message)
-      }
-    }
-
-    return res.json(evaluation)
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/quiz/submit error:', err.message)
-    if (err instanceof LlmClientError) {
-      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-    }
-    return res.status(500).json({ error: 'Failed to evaluate quiz.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/retest
- * Start a retest (remediating -> quiz_pending).
- */
-router.post('/topics/:id/lessons/:lid/retest', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    try {
-      const result = startRetest({ topicId, lessonId })
-      return res.json(result)
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/retest error:', err.message)
-    return res.status(500).json({ error: 'Failed to start retest.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/skip
- * Skip a lesson.
- */
-router.post('/topics/:id/lessons/:lid/skip', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    try {
-      const result = skipLesson({ topicId, lessonId })
-      return res.json(result)
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/skip error:', err.message)
-    return res.status(500).json({ error: 'Failed to skip lesson.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/test-out/start
- * Start a test-out diagnostic (no state change yet).
- */
-router.post('/topics/:id/lessons/:lid/test-out/start', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const task = get('SELECT l.task_spec FROM lessons l JOIN modules m ON l.module_id = m.id WHERE l.id = ? AND m.topic_id = ?', lessonId, topicId)
-    if (parseTaskSpec(task?.task_spec)) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
-
-    try {
-      const result = startTestOut({ topicId, lessonId })
-      return res.json(result)
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/test-out/start error:', err.message)
-    return res.status(500).json({ error: 'Failed to start test-out.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/test-out/finish
- * Finish a test-out diagnostic.
- */
-router.post('/topics/:id/lessons/:lid/test-out/finish', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { answers, passed, quizScore, evaluation, attemptId } = req.body
-
-    if (!answers || typeof answers !== 'object' || Object.keys(answers).length === 0) {
-      return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
-    }
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-    if (parseTaskSpec(lesson.task_spec)) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
-
-    try {
-      const result = finishTestOut({
-        topicId,
-        lessonId,
-        passed,
-        quizScore,
-        answers,
-        evaluation,
-        attemptId,
-      })
-
-      if (passed) {
-        try {
-          const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
-          recordMasteryEvent(localDate)
-        } catch (streakErr) {
-          console.error('Streak record error on test-out pass:', streakErr.message)
-        }
-      }
-
-      return res.json(result)
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/test-out/finish error:', err.message)
-    return res.status(500).json({ error: 'Failed to finish test-out.' })
-  }
-})
-
-/**
- * GET /api/topics/:id/lessons/:lid/remediate
- * Get current remediation state (gaps, attempts).
- */
-router.get('/topics/:id/lessons/:lid/remediate', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const progress = get(
-      'SELECT state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?',
-      topicId, lessonId
-    )
-
-    if (!progress) {
-      return res.status(404).json({ error: 'No progress found for this lesson.' })
-    }
-
-    let gaps = []
-    try {
-      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
-    } catch {
-      gaps = []
-    }
-
-    return res.json({
-      state: progress.state,
-      remediationAttempts: progress.remediation_attempts || 0,
-      gaps,
-    })
-  } catch (err) {
-    console.error('GET /api/topics/:id/lessons/:lid/remediate error:', err.message)
-    return res.status(500).json({ error: 'Failed to load remediation state.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/remediate/chat
- * Send a user message during remediation and stream targeted re-teach response.
- */
-router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { content } = req.body
-
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      return res.status(400).json({ error: 'Message content is required.' })
-    }
-    if (content.length > MAX_MESSAGE_LENGTH) {
-      return res.status(400).json({ error: `Message exceeds ${MAX_MESSAGE_LENGTH} character limit.` })
-    }
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const progress = get('SELECT id, state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress || progress.state !== 'remediating') {
-      return res.status(400).json({ error: 'Lesson must be in remediating state to use remediation chat.' })
-    }
-
-    let gaps = []
-    try {
-      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
-    } catch {
-      gaps = []
-    }
-
-    const config = requireLlmConfig()
-    const history = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId,
-    )
-    history.push({ role: 'user', content: content.trim() })
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const interactionMode = topic.interaction_mode || inferInteractionMode(topic.title)
-    const difficultyInstruction = buildDifficultyInstruction(topicId)
-
-    const system = `You are an expert tutor. The learner is struggling with the lesson "${lesson.title}" and specifically these gaps:
-${gaps.map((g) => `- ${g}`).join('\n')}
-
-Learning outcomes: ${outcomeTitles(outcomes).join('; ')}.
-This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT explanation strategy from the original lesson (new analogy, new example, different framing). Keep the message under ~500 characters or 3 short paragraphs. Be encouraging, not punitive.
-
-${difficultyInstruction}`
-
-    const request = createRequestAbortSignal(req, res)
-    const streamResult = await streamText({
-      ...llmRequestOptions(config, { signal: request.signal }),
-      system,
-      messages: history.map((m) => ({ role: m.role, content: m.content })),
-    })
-
-    const streamed = await streamReply(streamResult, res)
-    if (!streamed.ok) return
     transaction(() => {
-      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', content.trim())
-      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', streamed.text.trim())
+      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', body.content.trim())
+      run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', text.trim())
     })()
-    finishStream(res)
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/remediate/chat error:', err.message)
-    if (!res.headersSent) {
-      if (err instanceof LlmClientError) {
-        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      return res.status(500).json({ error: 'Failed to process remediation chat message.' })
-    }
-    try {
-      res.write(`event: error\n`)
-      res.write(`data: ${JSON.stringify({ message: err.message || 'Server error.', code: 'SERVER_ERROR' })}\n\n`)
+    if (!res.destroyed && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
       res.end()
-    } catch {}
+    }
+  } catch (error) {
+    if (res.headersSent) {
+      writeStreamError(res, error)
+      if (!res.destroyed && !res.writableEnded) res.end()
+    } else if (!(error instanceof LlmClientError) && !(error instanceof ActivityRuntimeError) && !Number.isInteger(error?.status)) {
+      return res.status(502).json({ error: 'Tutor response failed. Please retry.', code: 'TUTOR_REQUEST_FAILED', retryable: true })
+    } else {
+      return sendError(res, error, 'Failed to process tutor message.')
+    }
+  } finally {
+    abortRequest?.cleanup()
   }
 })
 
-/**
- * POST /api/topics/:id/lessons/:lid/remediate/retest
- * Generate retest questions targeting gaps, transition remediating -> quiz_pending.
- */
-router.post('/topics/:id/lessons/:lid/remediate/retest', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const progress = get('SELECT id, state, remediation_attempts, last_gaps FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress || progress.state !== 'remediating') {
-      return res.status(400).json({ error: 'Lesson must be in remediating state to start a retest.' })
-    }
-
-    let gaps = []
-    try {
-      gaps = progress.last_gaps ? JSON.parse(progress.last_gaps) : []
-    } catch {
-      gaps = []
-    }
-
-    if (gaps.length === 0) {
-      return res.status(400).json({ error: 'No gaps identified for retest. Cannot generate retest without diagnostic gaps.' })
-    }
-
-    const config = requireLlmConfig()
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const messages = all(
-      'SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id ASC',
-      topicId, lessonId
-    )
-
-    const difficultyInstruction = buildDifficultyInstruction(topicId)
-
-    if (parseTaskSpec(lesson.task_spec)) {
-      const system = `${buildMixedQuizPrompt({ lessonTitle: lesson.title, lessonOutcomes: outcomes, messages, difficultyInstruction, mode: 'retest' })}
-This is a targeted retest. Focus the two questions on these previously identified gaps:\n${gaps.map((gap) => `- ${gap}`).join('\n')}`
-      const result = await generateText({
-        ...llmRequestOptions(config),
-        system,
-        messages: [{ role: 'user', content: 'Generate the targeted mixed retest as JSON.' }],
-      })
-      let parsed
-      try { parsed = JSON.parse(result.text || '{}') } catch { return res.status(500).json({ error: 'Failed to parse retest questions from LLM. Please try again.', retryable: true }) }
-      let normalized
-      try { normalized = normalizeQuizQuestions(parsed.questions, { mode: 'retest' }) } catch (error) { return res.status(500).json({ error: `LLM returned an invalid mixed retest: ${error.message}`, retryable: true }) }
-      let attemptId
-      try {
-        transaction(() => {
-          startRetest({ topicId, lessonId })
-          const inserted = run(
-            'INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answer_key, format_version) VALUES (?, ?, ?, ?, ?)',
-            topicId, lessonId, JSON.stringify(normalized.questions), JSON.stringify(normalized.answerKey), 2,
-          )
-          attemptId = Number(inserted.lastInsertRowid)
-        })()
-      } catch (smErr) {
-        if (smErr instanceof StateMachineError) return res.status(400).json({ error: smErr.message, code: smErr.code })
-        throw smErr
-      }
-      return res.json({ attemptId, formatVersion: 2, questions: normalized.questions })
-    }
-
-    const system = buildRetestPrompt({
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      gaps,
-      messages,
-      difficultyInstruction,
-    })
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: 'Generate the retest questions as JSON.' }],
-    })
-
-    let parsed
-    try {
-      const text = result.text || '{}'
-      parsed = JSON.parse(text)
-    } catch {
-      return res.status(500).json({ error: 'Failed to parse retest questions from LLM. Please try again.' })
-    }
-
-    const questions = Array.isArray(parsed.questions) ? parsed.questions : []
-    if (questions.length === 0) {
-      return res.status(500).json({ error: 'LLM returned no retest questions. Please try again.' })
-    }
-
-    const validQuestions = questions.filter((q) => q.id && q.text && q.type && typeof q.weight === 'number')
-    if (validQuestions.length === 0) {
-      return res.status(500).json({ error: 'LLM returned malformed retest questions. Please try again.' })
-    }
-
-    const questionsJson = JSON.stringify(validQuestions)
-    let attemptId
-    try {
-      transaction(() => {
-        startRetest({ topicId, lessonId })
-        const inserted = run(
-          'INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)',
-          topicId, lessonId, questionsJson,
-        )
-        attemptId = Number(inserted.lastInsertRowid)
-      })()
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-
-    return res.json({ attemptId, formatVersion: 1, questions: validQuestions })
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/remediate/retest error:', err.message)
-    if (err instanceof LlmClientError) {
-      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-    }
-    return res.status(500).json({ error: 'Failed to generate retest.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/remediate/defer
- * Save progress and defer the lesson (remediating -> skipped).
- */
-router.post('/topics/:id/lessons/:lid/remediate/defer', (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    try {
-      const result = skipLesson({ topicId, lessonId })
-      return res.json({ success: true, ...result })
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
-      }
-      throw smErr
-    }
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/remediate/defer error:', err.message)
-    return res.status(500).json({ error: 'Failed to defer lesson.' })
-  }
-})
-
-/**
- * Build artifact evaluation prompt.
- */
-function buildArtifactEvaluationPrompt({ lessonTitle, lessonOutcomes, artifactContent, artifactType, taskSpec }) {
-  const taskContext = taskSpec
-    ? `\nPractical task:\n${JSON.stringify({
-      scenario: taskSpec.scenario,
-      goal: taskSpec.goal,
-      constraints: taskSpec.constraints,
-      deliverables: taskSpec.deliverables,
-      success_criteria: taskSpec.success_criteria,
-      primary_setup: taskSpec.primary_setup,
-      free_fallback: taskSpec.free_fallback,
-      safety_notes: taskSpec.safety_notes,
-    })}\nThe submission is text evidence only. Do not assume commands were executed; judge the evidence and explanation provided.`
-    : ''
-  return `You are an expert reviewer evaluating a learner's artifact for the lesson "${lessonTitle}".
-
-Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
-${taskContext}
-
-Artifact type: ${artifactType || 'code/text'}
-Artifact content:
-${artifactContent}
-
-Evaluate the artifact against a 4-point rubric. Score each dimension 0–2:
-- Correctness: Does it work / is it factually correct?
-- Completeness: Are all required parts included?
-- Clarity: Is it easy to understand / well structured?
-- Edge Cases: Does it handle boundary conditions or unusual inputs?
-
-Passing criteria: no zeros in any dimension AND total score >= 70% of maximum (i.e., >= 6 out of 8 total points).
-
-Return ONLY valid JSON with this exact structure:
-{
-  "overallScore": number (0-100),
-  "passed": boolean,
-  "scores": {
-    "Correctness": 0|1|2,
-    "Completeness": 0|1|2,
-    "Clarity": 0|1|2,
-    "Edge Cases": 0|1|2
-  },
-  "feedback": {
-    "Correctness": "string",
-    "Completeness": "string",
-    "Clarity": "string",
-    "Edge Cases": "string"
-  }
-}`
-}
-
-const MAX_FILE_SIZE_MB = 5
-
-/**
- * POST /api/topics/:id/lessons/:lid/artifact
- * Submit an artifact for LLM evaluation.
- */
 router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
   try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { content, fileData, evidence } = req.body
+    const topicId = positiveId(req.params.id, 'topicId')
+    const lessonId = positiveId(req.params.lid, 'lessonId')
+    const body = req.body || {}
+    const localDate = body.localDate ?? new Date().toISOString().slice(0, 10)
+    if (!isValidDate(localDate)) return res.status(400).json({ error: 'localDate must be a real YYYY-MM-DD calendar date.', code: 'INVALID_LOCAL_DATE' })
 
-    // File size validation
-    if (fileData && Buffer.byteLength(fileData, 'utf8') > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      return res.status(400).json({ error: `File too large (max ${MAX_FILE_SIZE_MB}MB). Please upload a smaller file.` })
-    }
-
-    const topic = get('SELECT id, title, interaction_mode FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.id, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.artifact_required, l.artifact_type, l.task_spec
-       FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-
-    const prereqCheck = buildPrereqCheck(topicId, lesson)
-    if (prereqCheck.locked) {
-      return res.status(403).json({ error: 'This lesson is locked. Complete the prerequisites first.' })
-    }
-
+    const lesson = getScopedLesson(topicId, lessonId)
+    if (lesson.artifact_required !== 1) return res.status(409).json({ error: 'This Session does not require a Build.', code: 'ARTIFACT_NOT_REQUIRED' })
+    const access = checkAccess(topicId, lesson)
+    if (access.locked) return res.status(403).json({ error: 'This Session is locked. Complete the prerequisites first.', code: 'PREREQUISITES_NOT_MET' })
+    const document = getActivityDocument(lesson)
+    if (!document) return res.status(409).json({ error: 'This Session does not have an activity document.', code: 'ACTIVITY_DOCUMENT_MISSING' })
     const taskSpec = parseTaskSpec(lesson.task_spec)
-    let artifactText = content || fileData || ''
-    if (taskSpec) {
-      const progress = get('SELECT state, current_chunk, total_chunks, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      if (!progress || progress.state !== 'practicing' || !progress.total_chunks || progress.current_chunk < progress.total_chunks) {
-        return res.status(409).json({ error: 'Complete all teaching chunks before submitting practical evidence.', code: 'TASK_NOT_READY' })
-      }
-      try {
-        artifactText = getTaskEvidence(evidence)
-      } catch (error) {
-        return res.status(400).json({ error: error.message, code: 'INVALID_TASK_EVIDENCE' })
-      }
-    } else if (!artifactText || typeof artifactText !== 'string' || artifactText.trim().length === 0) {
-      return res.status(400).json({ error: 'Artifact content is empty. Please enter or upload your solution before submitting.' })
+    if (!taskSpec) return res.status(409).json({ error: 'This Build has no task specification.', code: 'TASK_REQUIRED' })
+
+    const progress = get('SELECT id, state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+    if (progress?.state === 'passed' && progress.artifact_passed === 1) {
+      const prior = readArtifact(progress.id)
+      if (prior) return res.json({ ...prior, state: 'passed', session: { completed: true, requiresArtifact: true }, alreadyCompleted: true })
     }
-    if (!taskSpec && typeof artifactText === 'string' && Buffer.byteLength(artifactText, 'utf8') > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      return res.status(400).json({ error: `Artifact too large (max ${MAX_FILE_SIZE_MB}MB). Please submit a smaller artifact.` })
+    if (!progress || progress.state !== 'practicing') {
+      return res.status(409).json({ error: 'Start this Session and complete its required activities before submitting a Build.', code: 'ACTIVITIES_NOT_READY' })
+    }
+    const readiness = getActivityProgress(topicId, lessonId)
+    if (readiness.completed !== readiness.total) {
+      return res.status(409).json({ error: 'Complete all required activities before submitting a Build.', code: 'ACTIVITIES_NOT_READY', activityProgress: readiness })
     }
 
+    const evidence = buildTaskEvidence(body.evidence)
+    if (Buffer.byteLength(evidence, 'utf8') > MAX_EVIDENCE_CHARS) return res.status(400).json({ error: 'Build evidence is too large.', code: 'INVALID_TASK_EVIDENCE' })
+    const outcomes = parseOutcomes(lesson.outcomes)
+    const system = `Evaluate the learner's Build evidence for Session "${lesson.title}". Learning outcomes: ${outcomes.map((outcome) => outcome.title).join('; ')}.\nBuild specification: ${JSON.stringify(taskSpec)}\nLearner evidence:\n${evidence}\n\nScore each rubric dimension from 0 to 2 and provide short actionable feedback for each. Return strict JSON only: {"scores":{"Correctness":0,"Completeness":0,"Clarity":0,"Edge Cases":0},"feedback":{"Correctness":"...","Completeness":"...","Clarity":"...","Edge Cases":"..."}}. Do not use markdown.`
     const config = requireLlmConfig()
-
-    let outcomes = []
+    let generated
     try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
+      generated = await generateText({
+        ...llmRequestOptions(config),
+        system,
+        messages: [{ role: 'user', content: 'Evaluate the Build evidence and return the required JSON rubric.' }],
+      })
+    } catch (error) {
+      if (error instanceof LlmClientError) return sendError(res, error, 'Failed to evaluate Build.')
+      return res.status(502).json({ error: 'Build evaluation failed. Please retry.', code: 'ARTIFACT_EVALUATION_FAILED', retryable: true })
     }
-
-    const system = buildArtifactEvaluationPrompt({
-      lessonTitle: lesson.title,
-      lessonOutcomes: outcomes,
-      artifactContent: artifactText.trim(),
-      artifactType: lesson.artifact_type,
-      taskSpec,
-    })
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: 'Evaluate the artifact and return JSON.' }],
-    })
 
     let parsed
-    try {
-      const text = result.text || '{}'
-      parsed = JSON.parse(text)
-    } catch {
-      return res.status(500).json({ error: 'Failed to parse artifact evaluation from LLM. Please try again.', retryable: true })
+    try { parsed = JSON.parse(generated?.text) } catch {
+      return res.status(502).json({ error: 'Build evaluation returned invalid JSON. Please retry.', code: 'ARTIFACT_EVALUATION_INVALID', retryable: true })
     }
+    const scores = parsed?.scores
+    const feedback = parsed?.feedback
+    if (!scores || typeof scores !== 'object' || Array.isArray(scores) || Object.keys(scores).length !== RUBRIC_DIMENSIONS.length
+      || !feedback || typeof feedback !== 'object' || Array.isArray(feedback) || Object.keys(feedback).length !== RUBRIC_DIMENSIONS.length
+      || RUBRIC_DIMENSIONS.some((dimension) => !Number.isInteger(scores[dimension]) || scores[dimension] < 0 || scores[dimension] > 2
+        || typeof feedback[dimension] !== 'string' || !feedback[dimension].trim() || feedback[dimension].length > 500)) {
+      return res.status(502).json({ error: 'Build evaluation did not match the required rubric. Please retry.', code: 'ARTIFACT_EVALUATION_INVALID', retryable: true })
+    }
+    const totalScore = RUBRIC_DIMENSIONS.reduce((sum, dimension) => sum + scores[dimension], 0)
+    const overallScore = Math.round(totalScore / (RUBRIC_DIMENSIONS.length * 2) * 100)
+    const passed = RUBRIC_DIMENSIONS.every((dimension) => scores[dimension] > 0) && totalScore >= 6
+    const evaluation = { overallScore, passed, scores, feedback }
 
-    const scores = parsed.scores || {}
-    const feedback = parsed.feedback || {}
-
-    // Validate rubric dimensions
-    const RUBRIC_DIMENSIONS = ['Correctness', 'Completeness', 'Clarity', 'Edge Cases']
-    for (const dim of RUBRIC_DIMENSIONS) {
-      if (typeof scores[dim] !== 'number' || scores[dim] < 0 || scores[dim] > 2) {
-        return res.status(500).json({
-          error: `Invalid rubric evaluation: ${dim} score is missing or out of range (0-2). Please retry.`,
-          retryable: true,
-        })
+    const saved = transaction(() => {
+      const current = get('SELECT id, state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      if (current?.state === 'passed' && current.artifact_passed === 1) {
+        return { alreadyCompleted: true, artifact: readArtifact(current.id) }
       }
-    }
-
-    const totalScore = RUBRIC_DIMENSIONS.reduce((sum, dim) => sum + (scores[dim] || 0), 0)
-    const maxPoints = RUBRIC_DIMENSIONS.length * 2
-    const percentage = Math.round((totalScore / maxPoints) * 100)
-    const hasZero = RUBRIC_DIMENSIONS.some((dim) => (scores[dim] || 0) === 0)
-    const passed = !hasZero && totalScore >= Math.ceil(maxPoints * 0.7)
-
-    const evaluation = {
-      overallScore: typeof parsed.overallScore === 'number' ? parsed.overallScore : percentage,
-      passed,
-      scores,
-      feedback,
-    }
-
-    let progress
-    let stateMachineResult
-    let artifactResult
-    let attemptNumber = 1
-    try {
-      transaction(() => {
-        progress = get('SELECT id, quiz_score FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-        stateMachineResult = recordArtifactResult({
-          topicId,
-          lessonId,
-          artifactPassed: passed,
-          quizScore: taskSpec ? null : (progress ? progress.quiz_score : null),
-        })
-        if (progress) {
-          const countRow = get('SELECT COUNT(*) as count FROM artifacts WHERE progress_id = ?', progress.id)
-          attemptNumber = (countRow?.count || 0) + 1
-        }
-        const progressId = progress ? progress.id : (stateMachineResult.progressId || 0)
-        artifactResult = run(
-          'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
-          progressId,
-          artifactText.trim(),
-          JSON.stringify(scores),
-          passed ? 1 : 0,
-          JSON.stringify(feedback),
-          attemptNumber,
-        )
-      })()
-    } catch (smErr) {
-      if (smErr instanceof StateMachineError) {
-        return res.status(400).json({ error: smErr.message, code: smErr.code })
+      if (!current || current.state !== 'practicing') throw routeError('Session state changed while the Build was being evaluated.', 409, 'ACTIVITY_STATE_CONFLICT')
+      const currentReadiness = getActivityProgress(topicId, lessonId)
+      if (currentReadiness.completed !== currentReadiness.total) throw routeError('Required activities changed while the Build was being evaluated.', 409, 'ACTIVITIES_NOT_READY')
+      const update = run('UPDATE progress SET artifact_passed = ? WHERE id = ? AND state = ?', passed ? 1 : 0, current.id, 'practicing')
+      if (update.changes !== 1) throw routeError('Session state changed while the Build was being evaluated.', 409, 'ACTIVITY_STATE_CONFLICT')
+      const attemptNumber = Number(get('SELECT COUNT(*) AS count FROM artifacts WHERE progress_id = ?', current.id).count) + 1
+      const inserted = run(
+        'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
+        current.id,
+        evidence,
+        JSON.stringify(scores),
+        passed ? 1 : 0,
+        JSON.stringify(feedback),
+        attemptNumber,
+      )
+      let session = { completed: false, requiresArtifact: true }
+      if (passed) {
+        session = completeActivitySessionIfEligible(topicId, lessonId, { localDate })
+        if (!session.completed) throw routeError('Build passed but Session completion was not eligible.', 409, 'ACTIVITIES_NOT_READY')
       }
-      throw smErr
-    }
+      return { artifactId: inserted.lastInsertRowid, state: passed ? 'passed' : 'practicing', session, attemptNumber }
+    })()
 
-    // Record streak when artifact completes the lesson
-    if (stateMachineResult.toState === 'passed' || stateMachineResult.toState === 'tested_out') {
-      try {
-        const localDate = req.body.localDate || new Date().toISOString().split('T')[0]
-        recordMasteryEvent(localDate)
-      } catch (streakErr) {
-        console.error('Streak record error on artifact pass:', streakErr.message)
-      }
+    if (saved.alreadyCompleted) {
+      return res.json({ ...(saved.artifact || {}), state: 'passed', session: { completed: true, requiresArtifact: true }, alreadyCompleted: true })
     }
-
-    return res.json({
-      evaluation,
-      state: stateMachineResult.toState || get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)?.state || 'practicing',
-      artifactId: artifactResult.lastInsertRowid,
-    })
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/artifact error:', err.message)
-    if (err instanceof LlmClientError) {
-      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-    }
-    return res.status(500).json({ error: 'Failed to evaluate artifact.' })
+    return res.json({ evaluation, state: saved.state, artifactId: saved.artifactId, attemptNumber: saved.attemptNumber, session: saved.session })
+  } catch (error) {
+    return sendError(res, error, 'Failed to evaluate Build.')
   }
 })
 
-/**
- * GET /api/topics/:id/lessons/:lid/artifact
- * Return the latest artifact submission for this lesson.
- */
 router.get('/topics/:id/lessons/:lid/artifact', (req, res) => {
   try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
+    const topicId = positiveId(req.params.id, 'topicId')
+    const lessonId = positiveId(req.params.lid, 'lessonId')
+    getScopedLesson(topicId, lessonId)
     const progress = get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-    if (!progress) {
-      return res.status(404).json({ error: 'No artifact found for this lesson.' })
-    }
-
-    const artifact = get(
-      'SELECT id, content, rubric_scores, passed, feedback, attempt_number, created_at FROM artifacts WHERE progress_id = ? ORDER BY id DESC',
-      progress.id,
-    )
-
-    if (!artifact) {
-      return res.status(404).json({ error: 'No artifact found for this lesson.' })
-    }
-
-    let scores = {}
-    let fb = {}
-    try {
-      scores = artifact.rubric_scores ? JSON.parse(artifact.rubric_scores) : {}
-    } catch {}
-    try {
-      fb = artifact.feedback ? JSON.parse(artifact.feedback) : {}
-    } catch {}
-
-    return res.json({
-      id: artifact.id,
-      content: artifact.content,
-      passed: !!artifact.passed,
-      attemptNumber: artifact.attempt_number,
-      createdAt: artifact.created_at,
-      evaluation: {
-        scores,
-        feedback: fb,
-      },
-    })
-  } catch (err) {
-    console.error('GET /api/topics/:id/lessons/:lid/artifact error:', err.message)
-    return res.status(500).json({ error: 'Failed to load artifact.' })
+    const artifact = progress ? readArtifact(progress.id) : null
+    if (!artifact) return res.status(404).json({ error: 'No artifact found for this Session.' })
+    return res.json(artifact)
+  } catch (error) {
+    return sendError(res, error, 'Failed to load Build.')
   }
 })
 

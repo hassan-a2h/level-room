@@ -149,30 +149,29 @@ describe('provider switching during a course operation', () => {
         { role: 'user', content: 'Explain JSX' },
         { role: 'assistant', content: 'first provider response' },
       ],
-      progress: { state: 'practicing', current_chunk: 1, total_chunks: 3 },
-      startedAtChanged: true,
+      progress: { state: 'not_started', current_chunk: 0, total_chunks: 0 },
     })
     expect(courseSnapshot()).toEqual(afterFirstRequest)
 
-    const beforeContinue = courseSnapshot()
+    const beforeNextChat = courseSnapshot()
     const nextResponse = await request(app)
-      .post(`/api/topics/${topicId}/lessons/${lessonId}/continue`)
+      .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
       .set('Accept', 'text/event-stream')
-      .send({})
+      .send({ content: 'Can you offer another hint?' })
     expect(nextResponse.status).toBe(200)
     expect(llm.streamText.mock.calls[1][0]).toMatchObject({
       provider: 'fireworks',
       model: 'accounts/fireworks/routers/kimi-k2p6-turbo',
       reasoningEffort: 'none',
     })
-    const afterContinue = snapshotAfterSuccessfulOperation(beforeContinue, {
+    const afterNextChat = snapshotAfterSuccessfulOperation(beforeNextChat, {
       messages: [
-        { role: 'user', content: '[Continue]' },
+        { role: 'user', content: 'Can you offer another hint?' },
         { role: 'assistant', content: 'next provider response' },
       ],
-      progress: { state: 'practicing', current_chunk: 2, total_chunks: 3 },
+      progress: { state: 'not_started', current_chunk: 0, total_chunks: 0 },
     })
-    expect(courseSnapshot()).toEqual(afterContinue)
+    expect(courseSnapshot()).toEqual(afterNextChat)
   })
 
   it('leaves progress and chat history untouched when a switched in-flight request fails', async () => {
