@@ -146,6 +146,16 @@ PORT=3200          # backend API port
 CLIENT_PORT=3201   # frontend dev server port
 ```
 
+Optional LLM selection overrides are read at runtime:
+
+```bash
+LLM_PROVIDER=openai-codex
+LLM_MODEL=gpt-5.6-luna
+LLM_REASONING_EFFORT=xhigh
+```
+
+Each saved Settings field takes precedence over its corresponding environment variable independently. Missing or empty saved fields fall through to the environment, then to the provider-aware defaults. With no saved selection or overrides, new sessions use Codex, `gpt-5.6-luna`, and `xhigh` reasoning. Environment values are trimmed; provider, model, and reasoning identifiers remain case-sensitive.
+
 API keys stay outside the learning database. Set any API-key provider credentials in the environment before starting the server:
 
 ```bash
@@ -181,11 +191,11 @@ Choose a provider in the app's Settings page (`http://localhost:3201/settings`).
 ### OpenAI Codex subscription (experimental)
 
 1. In Settings, choose **OpenAI Codex subscription**.
-2. Select an available Codex model and one of its listed reasoning levels.
+2. The default is `gpt-5.6-luna` with `xhigh` reasoning; you may select another available Codex model and one of its listed reasoning levels.
 3. Select **Connect with browser**. If local browser callback setup is unavailable, or the browser flow cannot finish, use the device-code or manual-code option.
 4. Return to the app and save the provider settings.
 
-This integration uses the Pi AI provider's in-process OAuth and Responses implementation. It does not invoke Codex CLI or Pi CLI and does not use an OpenAI API key. OpenAI does not document a general-purpose third-party OAuth API for this flow; the integration depends on an unofficial/private backend path and may stop working as OpenAI changes it. It is intended for personal local use. If it is unavailable, switch to OpenAI API, Anthropic API, or Fireworks API credentials.
+This integration uses the Pi AI provider's in-process OAuth and Responses implementation. It uses a ChatGPT/Codex subscription and does not require or accept an OpenAI API key. OpenAI does not document a general-purpose third-party OAuth API for this flow; the integration depends on an unofficial/private backend path and may stop working as OpenAI changes it. It is intended for personal local use. If OAuth is not connected or unavailable, connect it in Settings or switch to OpenAI API, Anthropic API, or Fireworks API credentials.
 
 Pi OAuth credentials are stored separately from SQLite and JSON backups in an app-owned, owner-protected file:
 

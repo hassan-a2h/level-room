@@ -63,6 +63,7 @@ describe('Settings API', () => {
     delete process.env.FIREWORKS_API_KEY
     delete process.env.LLM_PROVIDER
     delete process.env.LLM_MODEL
+    delete process.env.LLM_REASONING_EFFORT
     codexState.connection = { connected: false, status: 'disconnected' }
     codexState.flowStatus = { flowId: 'flow-fixture', state: 'awaiting_manual_code', mode: 'browser' }
     vi.clearAllMocks()
@@ -89,14 +90,17 @@ describe('Settings API', () => {
     delete process.env.FIREWORKS_API_KEY
     delete process.env.LLM_PROVIDER
     delete process.env.LLM_MODEL
+    delete process.env.LLM_REASONING_EFFORT
   })
 
   describe('GET /api/settings', () => {
     it('returns default settings when none exist and no env vars', async () => {
       const res = await request(app).get('/api/settings')
       expect(res.status).toBe(200)
-      expect(res.body.provider).toBe('fireworks')
-      expect(res.body.model).toBe('accounts/fireworks/routers/kimi-k2p6-turbo')
+      expect(res.body.provider).toBe('openai-codex')
+      expect(res.body.model).toBe('gpt-5.6-luna')
+      expect(res.body.reasoningEffort).toBe('xhigh')
+      expect(res.body.authStatus).toBe('disconnected')
       expect(res.body.apiKeySet).toBe(false)
       expect(res.body.envStatus).toBeDefined()
       expect(res.body.envStatus).toHaveLength(3)
@@ -112,6 +116,7 @@ describe('Settings API', () => {
       expect(res.status).toBe(200)
       expect(res.body.provider).toBe('openai')
       expect(res.body.model).toBe('gpt-4o')
+      expect(res.body.reasoningEffort).toBe('none')
       expect(res.body.apiKey).toBeUndefined()
       expect(res.body.apiKeySet).toBe(true)
       expect(res.body.envStatus).toBeDefined()
@@ -137,8 +142,12 @@ describe('Settings API', () => {
       const res = await request(app).get('/api/settings/catalog')
       expect(res.status).toBe(200)
       expect(res.body.providers.map(({ id }) => id)).toEqual(['openai', 'anthropic', 'fireworks', 'openai-codex'])
+      expect(res.body.providers.find(({ id }) => id === 'openai-codex').defaultModel).toBe('gpt-5.6-luna')
       expect(res.body.providers.find(({ id }) => id === 'openai-codex').models)
-        .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.4', reasoningEfforts: ['minimal', 'xhigh'] })]))
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: 'gpt-5.4', reasoningEfforts: ['minimal', 'xhigh'] }),
+          expect.objectContaining({ id: 'gpt-5.6-luna', reasoningEfforts: expect.arrayContaining(['minimal', 'xhigh', 'max']) }),
+        ]))
     })
 
     it('allows saving a Codex model and effort before subscription sign-in', async () => {
@@ -306,12 +315,14 @@ describe('Settings API', () => {
 
   describe('POST /api/settings/validate', () => {
     it('returns 400 when no env key is configured', async () => {
+      process.env.LLM_PROVIDER = 'fireworks'
       const res = await request(app).post('/api/settings/validate').send({})
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/FIREWORKS_API_KEY/i)
     })
 
     it('returns ok when env key is present', async () => {
+      process.env.LLM_PROVIDER = 'fireworks'
       process.env.FIREWORKS_API_KEY = 'fw-test'
       const res = await request(app).post('/api/settings/validate').send({})
       expect(res.status).toBe(200)

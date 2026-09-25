@@ -31,20 +31,166 @@ describe('provider catalog and LLM configuration', () => {
     delete process.env.FIREWORKS_API_KEY
     delete process.env.LLM_PROVIDER
     delete process.env.LLM_MODEL
+    delete process.env.LLM_REASONING_EFFORT
   })
 
-  it('preserves the legacy provider catalog and reports not-ready defaults', () => {
+  it('uses Codex Luna xhigh for fresh defaults and requires OAuth', () => {
     expect(resolveLlmConfig()).toMatchObject({
-      provider: 'fireworks',
-      model: 'accounts/fireworks/routers/kimi-k2p6-turbo',
-      reasoningEffort: 'none',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'xhigh',
       ready: false,
       apiKeySet: false,
     })
+    expect(() => requireLlmConfig()).toThrow(expect.objectContaining({ code: 'MISSING_CODEX_AUTH' }))
     expect(getProviderCatalog().map(({ id }) => id)).toEqual(['openai', 'anthropic', 'fireworks', 'openai-codex'])
     expect(getProviderCatalog().find(({ id }) => id === 'openai').models.map(({ id }) => id)).toEqual([
       'gpt-4o', 'gpt-4o-mini', 'o3-mini',
     ])
+    const codex = getProviderCatalog().find(({ id }) => id === 'openai-codex')
+    expect(codex.defaultModel).toBe('gpt-5.6-luna')
+    expect(codex.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'gpt-5.6-luna',
+        reasoningEfforts: expect.arrayContaining(['minimal', 'xhigh', 'max']),
+      }),
+    ]))
+  })
+
+  it('resolves all three trimmed environment values independently', () => {
+    process.env.LLM_PROVIDER = ' openai-codex '
+    process.env.LLM_MODEL = ' gpt-5.6-luna '
+    process.env.LLM_REASONING_EFFORT = ' xhigh '
+
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'xhigh',
+      authType: 'oauth',
+      authStatus: 'disconnected',
+      ready: false,
+      configError: undefined,
+    })
+  })
+
+  it('resolves provider-only, model-only, reasoning-only, and API-key partial environments', () => {
+    process.env.LLM_PROVIDER = 'fireworks'
+    process.env.FIREWORKS_API_KEY = 'fixture-api-key'
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'fireworks',
+      model: 'accounts/fireworks/routers/kimi-k2p6-turbo',
+      reasoningEffort: 'none',
+      ready: true,
+    })
+
+    delete process.env.LLM_PROVIDER
+    delete process.env.FIREWORKS_API_KEY
+    process.env.LLM_MODEL = 'gpt-5.4'
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.4',
+      reasoningEffort: 'xhigh',
+    })
+
+    delete process.env.LLM_MODEL
+    process.env.LLM_REASONING_EFFORT = 'minimal'
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'minimal',
+    })
+
+    process.env.LLM_PROVIDER = 'openai'
+    process.env.LLM_MODEL = 'gpt-4o-mini'
+    process.env.OPENAI_API_KEY = 'fixture-api-key'
+    delete process.env.LLM_REASONING_EFFORT
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      reasoningEffort: 'none',
+      ready: true,
+    })
+  })
+
+  it('trims environment values and ignores whitespace-only values', () => {
+    process.env.LLM_PROVIDER = ' \t '
+    process.env.LLM_MODEL = '\n'
+    process.env.LLM_REASONING_EFFORT = '  '
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'xhigh',
+    })
+
+    process.env.LLM_PROVIDER = ' openai '
+    process.env.LLM_MODEL = ' gpt-4o '
+    process.env.LLM_REASONING_EFFORT = ' none '
+    process.env.OPENAI_API_KEY = 'fixture-api-key'
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'none',
+      ready: true,
+    })
+  })
+
+  it('keeps non-empty saved values authoritative over environment values', () => {
+    state.row = { provider: 'openai', model: 'gpt-4o', reasoning_effort: 'none' }
+    process.env.LLM_PROVIDER = 'not-a-provider'
+    process.env.LLM_MODEL = 'not-a-model'
+    process.env.LLM_REASONING_EFFORT = 'xhigh'
+    process.env.OPENAI_API_KEY = 'fixture-api-key'
+
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'none',
+      ready: true,
+      configError: undefined,
+    })
+  })
+
+  it('lets empty legacy fields fall through independently and defaults missing API-key reasoning to none', () => {
+    state.row = { provider: '', model: 'gpt-4o', reasoning_effort: '' }
+    process.env.LLM_PROVIDER = 'openai'
+    process.env.LLM_MODEL = 'gpt-4o-mini'
+    process.env.LLM_REASONING_EFFORT = 'none'
+    process.env.OPENAI_API_KEY = 'fixture-api-key'
+
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'none',
+      ready: true,
+    })
+
+    state.row = { provider: 'openai', model: 'gpt-4o' }
+    delete process.env.LLM_MODEL
+    delete process.env.LLM_REASONING_EFFORT
+    expect(resolveLlmConfig()).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'none',
+      ready: true,
+    })
+  })
+
+  it('rejects invalid environment provider, model, and reasoning combinations without fallback', () => {
+    process.env.LLM_PROVIDER = 'not-a-provider'
+    expect(resolveLlmConfig()).toMatchObject({ provider: 'not-a-provider', configError: 'UNSUPPORTED_PROVIDER' })
+
+    process.env.LLM_PROVIDER = 'fireworks'
+    process.env.LLM_MODEL = 'gpt-5.6-luna'
+    expect(resolveLlmConfig()).toMatchObject({ configError: 'UNSUPPORTED_MODEL' })
+
+    delete process.env.LLM_MODEL
+    process.env.LLM_REASONING_EFFORT = 'xhigh'
+    expect(resolveLlmConfig()).toMatchObject({ configError: 'UNSUPPORTED_REASONING_EFFORT' })
+
+    process.env.LLM_PROVIDER = 'openai-codex'
+    process.env.LLM_MODEL = 'gpt-5.6-luna'
+    process.env.LLM_REASONING_EFFORT = 'medium'
+    expect(resolveLlmConfig()).toMatchObject({ configError: 'UNSUPPORTED_REASONING_EFFORT' })
   })
 
   it('keeps API-key readiness separate from Codex subscription readiness', () => {

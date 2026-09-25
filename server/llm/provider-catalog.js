@@ -67,7 +67,7 @@ export function getProviderCatalog() {
       id: 'openai-codex',
       name: 'OpenAI Codex subscription',
       authType: 'oauth',
-      defaultModel: 'gpt-5.4',
+      defaultModel: 'gpt-5.6-luna',
       models: getCodexModels(),
     },
   ].map((provider) => ({

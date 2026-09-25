@@ -3,8 +3,20 @@ import { codexAuth } from '../llm/codex-auth.js'
 import { LlmClientError } from '../llm/errors.js'
 import { getProviderDefinition } from '../llm/provider-catalog.js'
 
-const DEFAULT_PROVIDER = 'fireworks'
-const DEFAULT_MODEL = 'accounts/fireworks/routers/kimi-k2p6-turbo'
+const DEFAULT_PROVIDER = 'openai-codex'
+const DEFAULT_MODEL = 'gpt-5.6-luna'
+const DEFAULT_CODEX_REASONING_EFFORT = 'xhigh'
+
+function readEnvironmentValue(name) {
+  const value = process.env[name]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function firstNonEmpty(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '')
+}
 
 /**
  * Capture provider, model, effort, and auth generation together for one operation.
@@ -12,10 +24,11 @@ const DEFAULT_MODEL = 'accounts/fireworks/routers/kimi-k2p6-turbo'
  */
 export function resolveLlmConfig() {
   const row = get('SELECT provider, model, reasoning_effort FROM llm_settings LIMIT 1')
-  const provider = row?.provider || process.env.LLM_PROVIDER || DEFAULT_PROVIDER
+  const provider = firstNonEmpty(row?.provider, readEnvironmentValue('LLM_PROVIDER'), DEFAULT_PROVIDER)
   const providerDefinition = getProviderDefinition(provider)
-  const model = row?.model || process.env.LLM_MODEL || providerDefinition?.defaultModel || DEFAULT_MODEL
-  const reasoningEffort = row?.reasoning_effort || 'none'
+  const model = firstNonEmpty(row?.model, readEnvironmentValue('LLM_MODEL'), providerDefinition?.defaultModel, DEFAULT_MODEL)
+  const reasoningFallback = providerDefinition?.authType === 'oauth' ? DEFAULT_CODEX_REASONING_EFFORT : 'none'
+  const reasoningEffort = firstNonEmpty(row?.reasoning_effort, readEnvironmentValue('LLM_REASONING_EFFORT'), reasoningFallback)
   const modelDefinition = providerDefinition?.models.find((entry) => entry.id === model)
   const apiKey = providerDefinition?.envVar ? (process.env[providerDefinition.envVar] || '') : ''
   const apiKeySet = Boolean(apiKey)
