@@ -71,6 +71,7 @@ export function initSchema() {
           estimated_time INTEGER,
           outcomes TEXT,
           prerequisites TEXT,
+          activity_blocks TEXT,
           artifact_required INTEGER DEFAULT 0,
           artifact_type TEXT,
           artifact_rubric TEXT,
@@ -85,6 +86,7 @@ export function initSchema() {
           quiz_score INTEGER,
           quiz_attempts INTEGER DEFAULT 0,
           artifact_passed INTEGER DEFAULT 0,
+          activity_state TEXT NOT NULL DEFAULT '{}',
           started_at DATETIME,
           completed_at DATETIME,
           FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
@@ -445,6 +447,21 @@ export function initSchema() {
       `)
 
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration014)
+    })()
+  }
+
+  const migration018 = '018_add_structured_activities'
+  const check018 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration018)
+  if (!check018) {
+    db.transaction(() => {
+      const columnExists = (table, column) => db.prepare(`PRAGMA table_info("${table}")`).all().some((entry) => entry.name === column)
+      if (!columnExists('lessons', 'activity_blocks')) db.exec('ALTER TABLE lessons ADD COLUMN activity_blocks TEXT')
+      if (!columnExists('progress', 'activity_state')) db.exec("ALTER TABLE progress ADD COLUMN activity_state TEXT NOT NULL DEFAULT '{}'")
+
+      db.exec('DELETE FROM course_links')
+      db.exec('DELETE FROM topics')
+      db.exec('DELETE FROM streaks')
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration018)
     })()
   }
 }
