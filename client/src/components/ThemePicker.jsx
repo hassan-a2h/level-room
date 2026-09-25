@@ -28,9 +28,17 @@ export default function ThemePicker() {
                   checked={theme.id === item.id}
                   onChange={() => selectTheme(item.id)}
                 />
-                <span className="theme-card-swatches" aria-hidden="true">
-                  {[item.tokens.canvas, item.tokens.surface, item.tokens.action].map((color) => (
-                    <span key={color} style={{ backgroundColor: color }} />
+                <span className="theme-card-swatches" aria-hidden="true" data-theme-preview={item.id} data-testid={`theme-preview-${item.id}`}>
+                  {[
+                    item.tokens.canvas,
+                    item.tokens.surface,
+                    item.tokens.accent,
+                    item.tokens.text,
+                    item.tokens.success,
+                    item.tokens.warning,
+                    item.tokens.danger,
+                  ].map((color, index) => (
+                    <span key={`${item.id}-${index}`} role="presentation" style={{ backgroundColor: color }} />
                   ))}
                 </span>
                 <span className="theme-card-copy">
