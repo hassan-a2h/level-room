@@ -335,4 +335,34 @@ describe('ArtifactPanel', () => {
     })
     expect(screen.getByText(/Max 5MB/i)).toBeInTheDocument()
   })
+
+  it('calls onPassed only after a newly passing Build result', async () => {
+    const onPassed = vi.fn()
+    getArtifact.mockRejectedValue(new Error('No artifact'))
+    submitArtifact.mockResolvedValue({
+      passed: true,
+      evaluation: { overallScore: 90, passed: true, scores: { Correctness: 2, Completeness: 2, Clarity: 2, 'Edge Cases': 1 }, feedback: {} },
+    })
+    render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code', artifact_required: true }} onBack={vi.fn()} onPassed={onPassed} />)
+    fireEvent.change(await screen.findByPlaceholderText(/Paste your code/i), { target: { value: 'verified work' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit artifact/i }))
+    await waitFor(() => expect(onPassed).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not call onPassed for failed results, evaluator errors, or an already-passed display', async () => {
+    const onPassed = vi.fn()
+    getArtifact.mockRejectedValue(new Error('No artifact'))
+    submitArtifact.mockResolvedValueOnce({ evaluation: { overallScore: 40, passed: false, scores: {}, feedback: {} } })
+    const { unmount } = render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code' }} onBack={vi.fn()} onPassed={onPassed} />)
+    fireEvent.change(await screen.findByPlaceholderText(/Paste your code/i), { target: { value: 'partial work' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit artifact/i }))
+    await screen.findByText(/Needs Revision/i)
+    expect(onPassed).not.toHaveBeenCalled()
+
+    getArtifact.mockResolvedValueOnce({ content: 'complete work', passed: true, evaluation: { overallScore: 90, passed: true, scores: {}, feedback: {} } })
+    unmount()
+    render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code' }} onBack={vi.fn()} onPassed={onPassed} />)
+    await screen.findByText(/Artifact Approved/i)
+    expect(onPassed).not.toHaveBeenCalled()
+  })
 })

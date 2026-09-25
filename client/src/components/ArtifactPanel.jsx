@@ -142,7 +142,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence 
   )
 }
 
-export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
+export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPassed }) {
   const [content, setContent] = useState('')
   const [evidence, setEvidence] = useState({ setup: '', actions: '', result: '', reflection: '' })
   const [showHints, setShowHints] = useState(false)
@@ -224,6 +224,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
         setEvaluation(result.evaluation)
         setPrevContent(taskSpec ? JSON.stringify(evidence) : trimmed)
         setPrevEvidence(taskSpec ? { ...evidence } : null)
+        if (!evaluation?.passed && result.evaluation.passed && !result.alreadyCompleted) onPassed?.(result)
       }
     } catch (err) {
       setError(safeArtifactError(err, taskSpec
@@ -232,7 +233,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
     } finally {
       setLoading(false)
     }
-  }, [topicId, lessonId, content, evidence, lesson])
+  }, [topicId, lessonId, content, evidence, lesson, evaluation?.passed, onPassed])
 
   const handleRevise = useCallback(() => {
     setEvaluation(null)
