@@ -20,7 +20,7 @@ describe('App', () => {
   it('renders the app title', async () => {
     render(<App />)
     await waitFor(() => {
-      expect(screen.getByText('Mastery Roadmap')).toBeInTheDocument()
+      expect(screen.getByText('Mastery Trail')).toBeInTheDocument()
     })
   })
 })
