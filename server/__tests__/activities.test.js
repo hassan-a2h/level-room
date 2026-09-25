@@ -6,10 +6,10 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const llmMocks = vi.hoisted(() => ({ streamText: vi.fn() }))
+const llmMocks = vi.hoisted(() => ({ streamText: vi.fn(), generateText: vi.fn() }))
 vi.mock('../llm/client.js', () => ({
   streamText: llmMocks.streamText,
-  generateText: vi.fn(),
+  generateText: llmMocks.generateText,
   LlmClientError: class LlmClientError extends Error {
     constructor(message, { code, retryable = false } = {}) { super(message); this.code = code; this.retryable = retryable }
   },
@@ -76,6 +76,7 @@ describe('activity generation API', () => {
     process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
     llmMocks.streamText.mockReset()
+    llmMocks.generateText.mockReset()
     db = await import('../db.js')
     db.initSchema()
     db.run('INSERT INTO llm_settings (provider, model) VALUES (?, ?)', 'openai', 'gpt-4o')
@@ -128,6 +129,23 @@ describe('activity generation API', () => {
     ).lastInsertRowid)
     const wrongTopicId = otherTopic ? Number(db.run("INSERT INTO topics (title, status) VALUES ('Other', 'active')").lastInsertRowid) : topicId
     return { topicId, lessonId, wrongTopicId, prerequisiteId }
+  }
+
+  async function startedSession() {
+    const seeded = seedLesson()
+    const document = { ...makeProviderDocument(seeded.lessonId), generator: { provider: 'openai', model: 'gpt-4o', generatedAt: '2026-09-26T00:00:00.000Z' } }
+    db.run('UPDATE lessons SET activity_blocks = ? WHERE id = ?', JSON.stringify(document), seeded.lessonId)
+    const runtime = await import('../utils/activity-runtime.js')
+    runtime.startActivitySession(seeded.topicId, seeded.lessonId)
+    return { seeded, document, runtime }
+  }
+
+  function evaluatorResult(criteria) {
+    return JSON.stringify({
+      criteria,
+      feedback: 'Your explanation identifies the important query stages.',
+      nextStep: 'Practice explaining what each stage preserves.',
+    })
   }
 
   function respondWith(doc, options) {
@@ -321,5 +339,102 @@ describe('activity generation API', () => {
     expect(providerSignal.aborted).toBe(true)
     expect(db.get('SELECT activity_blocks FROM lessons WHERE id = ?', seeded.lessonId).activity_blocks).toBeNull()
     expect(db.get('SELECT COUNT(*) AS count FROM progress WHERE lesson_id = ?', seeded.lessonId).count).toBe(0)
+  })
+
+  it('completes informational blocks through a scoped endpoint and returns the latest state', async () => {
+    const { seeded } = await startedSession()
+    const result = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/read-joins/complete`)
+      .send({ action: 'continue', localDate: '2024-02-29' })
+    expect(result.status).toBe(200)
+    expect(result.body.status).toBe('completed')
+    expect(result.body.activityProgress.currentBlockId).toBe('worked-join')
+    expect(JSON.stringify(result.body)).not.toMatch(/answerKey|correctOptionId|correctOrder|exemplar/)
+  })
+
+  it('scores objective responses in code and treats identical failed submissions idempotently', async () => {
+    const { seeded, runtime } = await startedSession()
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'read-joins', action: 'continue', localDate: '2024-02-29' })
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'worked-join', action: 'continue', localDate: '2024-02-29' })
+    const body = { response: 'inner', localDate: '2024-02-29' }
+    const first = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/choose-join/submit`).send(body)
+    const duplicate = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/choose-join/submit`).send(body)
+    expect(first.status).toBe(200)
+    expect(first.body).toMatchObject({ correct: false, status: 'needs_retry' })
+    expect(duplicate.body).toMatchObject({ correct: false, status: 'needs_retry' })
+    expect(db.get('SELECT COUNT(*) AS count FROM mistakes_log WHERE topic_id = ?', seeded.topicId).count).toBe(1)
+    expect(db.get('SELECT activity_state FROM progress WHERE lesson_id = ?', seeded.lessonId).activity_state).toContain('"attempts":1')
+    expect(llmMocks.generateText).not.toHaveBeenCalled()
+  })
+
+  it('evaluates short answers with only bounded prompt, outcomes and rubric, then stores the validated result', async () => {
+    const { seeded, runtime } = await startedSession()
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'read-joins', action: 'continue', localDate: '2024-02-29' })
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'worked-join', action: 'continue', localDate: '2024-02-29' })
+    runtime.submitObjectiveBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'choose-join', response: 'left', localDate: '2024-02-29' })
+    llmMocks.generateText.mockResolvedValueOnce({ text: evaluatorResult([
+      { id: 'source-first', passed: true, feedback: 'Names the source.' },
+      { id: 'join-next', passed: true, feedback: 'Explains the join.' },
+    ]) })
+    const response = 'Begin with the source, then join related rows.'
+    const result = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/explain-join/submit`)
+      .send({ response, localDate: '2024-02-29' })
+    expect(result.status).toBe(200)
+    expect(result.body).toMatchObject({ correct: true, status: 'passed', nextStep: 'Practice explaining what each stage preserves.' })
+    expect(result.body.criteria).toHaveLength(2)
+    const prompt = JSON.stringify(llmMocks.generateText.mock.calls[0][0])
+    expect(prompt).toContain(response)
+    expect(prompt).toContain('source-first')
+    expect(prompt).not.toContain('exemplar')
+    expect(prompt).not.toContain('Start with the source, join related rows, then choose columns')
+    expect(db.get('SELECT COUNT(*) AS count FROM mistakes_log WHERE topic_id = ?', seeded.topicId).count).toBe(0)
+  })
+
+  it('does not persist malformed written evaluations and does not reevaluate canonical duplicates', async () => {
+    const { seeded, runtime } = await startedSession()
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'read-joins', action: 'continue', localDate: '2024-02-29' })
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'worked-join', action: 'continue', localDate: '2024-02-29' })
+    runtime.submitObjectiveBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'choose-join', response: 'left', localDate: '2024-02-29' })
+    const url = `/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/explain-join/submit`
+    const response = 'Begin with the source, then join related rows.'
+    llmMocks.generateText.mockResolvedValueOnce({ text: evaluatorResult([
+      { id: 'source-first', passed: true, feedback: '<script>alert(1)</script>' },
+      { id: 'join-next', passed: true, feedback: 'Good.' },
+    ]) })
+    const unsafe = await request(app).post(url).send({ response, localDate: '2024-02-29' })
+    expect(unsafe.status).toBe(502)
+    expect(JSON.parse(db.get('SELECT activity_state FROM progress WHERE lesson_id = ?', seeded.lessonId).activity_state).blocks['explain-join'].attempts).toBe(0)
+
+    llmMocks.generateText.mockResolvedValueOnce({ text: evaluatorResult([{ id: 'source-first', passed: true, feedback: 'OK' }, { id: 'unknown', passed: false, feedback: 'No' }]) })
+    const malformed = await request(app).post(url).send({ response, localDate: '2024-02-29' })
+    expect(malformed.status).toBe(502)
+    expect(JSON.parse(db.get('SELECT activity_state FROM progress WHERE lesson_id = ?', seeded.lessonId).activity_state).blocks['explain-join'].attempts).toBe(0)
+
+    llmMocks.generateText.mockResolvedValueOnce({ text: evaluatorResult([{ id: 'source-first', passed: false, feedback: 'Name the source.' }, { id: 'join-next', passed: true, feedback: 'Good.' }]) })
+    const failed = await request(app).post(url).send({ response, localDate: '2024-02-29' })
+    const duplicate = await request(app).post(url).send({ response, localDate: '2024-02-29' })
+    expect(failed.body).toMatchObject({ correct: false, status: 'needs_retry' })
+    expect(duplicate.body).toMatchObject({ correct: false, status: 'needs_retry' })
+    expect(llmMocks.generateText).toHaveBeenCalledTimes(3)
+    expect(db.get('SELECT COUNT(*) AS count FROM mistakes_log WHERE topic_id = ?', seeded.topicId).count).toBe(1)
+    expect(JSON.parse(db.get('SELECT activity_state FROM progress WHERE lesson_id = ?', seeded.lessonId).activity_state).blocks['explain-join'].attempts).toBe(1)
+  })
+
+  it('returns latest public state on final-response conflict and rejects caller-controlled scoring and invalid dates', async () => {
+    const { seeded, runtime } = await startedSession()
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'read-joins', action: 'continue', localDate: '2024-02-29' })
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'worked-join', action: 'continue', localDate: '2024-02-29' })
+    const scoreUrl = `/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/choose-join/submit`
+    expect((await request(app).post(scoreUrl).send({ response: 'left', correct: false, localDate: '2024-02-29' })).status).toBe(400)
+    const passed = await request(app).post(scoreUrl).send({ response: 'left', localDate: '2024-02-29' })
+    expect(passed.body.correct).toBe(true)
+    const conflict = await request(app).post(scoreUrl).send({ response: 'inner', localDate: '2024-02-29' })
+    expect(conflict.status).toBe(409)
+    expect(conflict.body.code).toBe('BLOCK_ALREADY_FINAL')
+    expect(conflict.body.latestState.currentBlockId).toBe('explain-join')
+    expect(JSON.stringify(conflict.body)).not.toMatch(/answerKey|correctOptionId|correctOrder|exemplar/)
+    const invalidDate = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities/explain-join/complete`)
+      .send({ action: 'continue', response: 'Short answer', localDate: '2026-02-31' })
+    expect(invalidDate.status).toBe(400)
+    expect(invalidDate.body.code).toBe('INVALID_LOCAL_DATE')
   })
 })

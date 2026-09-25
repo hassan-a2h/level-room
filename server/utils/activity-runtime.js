@@ -5,7 +5,7 @@ import { isValidDate, recordMasteryEvent } from './streak-tracker.js'
 import { updateMistakesAfterResult } from './mistakes-log.js'
 
 const STATE_KEYS = new Set(['schemaVersion', 'currentBlockId', 'blocks', 'updatedAt'])
-const BLOCK_STATE_KEYS = new Set(['status', 'attempts', 'response', 'feedback', 'updatedAt', 'completedAt'])
+const BLOCK_STATE_KEYS = new Set(['status', 'attempts', 'response', 'feedback', 'criteria', 'nextStep', 'updatedAt', 'completedAt'])
 const STATE_STATUSES = new Set(['not_started', 'active', 'completed', 'passed', 'needs_retry'])
 const FINAL_STATUS = { read: 'completed', worked_example: 'completed', reflection: 'completed', choice: 'passed', ordering: 'passed', short_answer: 'passed' }
 const OBJECTIVE_TYPES = new Set(['choice', 'ordering', 'short_answer'])
@@ -112,6 +112,14 @@ function isIsoTimestamp(value) {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value
 }
 
+function safeFeedback(value, maxLength) {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
+    && !/<\s*\/?\s*[a-z][^>]*>/i.test(value)
+    && !/javascript\s*:|data\s*:/i.test(value)
+    && !/!\[[^\]]*\]\(\s*<?(?:https?:)?\/\//i.test(value)
+}
+
 function stateResponseValid(block, response) {
   if (block.type === 'choice') return typeof response === 'string' && block.options.some((option) => option.id === response)
   if (block.type === 'ordering') {
@@ -156,8 +164,30 @@ function validateStoredState(raw, document, now) {
     if (['needs_retry', 'passed', 'completed'].includes(entry.status) && entry.attempts < 1) throw fail(`Attempted block "${blockId}" must have a positive attempt count.`, 'ACTIVITY_STATE_INVALID', 409)
     if (Object.hasOwn(entry, 'response') && !stateResponseValid(block, entry.response)) throw fail(`Stored response for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
     if (OBJECTIVE_TYPES.has(block.type) && ['passed', 'needs_retry'].includes(entry.status) && (!Object.hasOwn(entry, 'response') || !Object.hasOwn(entry, 'feedback'))) throw fail(`Scored result for "${blockId}" must retain its response and feedback.`, 'ACTIVITY_STATE_INVALID', 409)
+    if (Object.hasOwn(entry, 'criteria')) {
+      const expectedCriteria = block.type === 'short_answer' ? document.answerKey[blockId].criteria : []
+      if (!Array.isArray(entry.criteria) || entry.criteria.length !== expectedCriteria.length) throw fail(`Stored rubric result for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
+      const expectedIds = new Set(expectedCriteria.map((criterion) => criterion.id))
+      const seenIds = new Set()
+      for (const criterion of entry.criteria) {
+        if (!criterion || typeof criterion !== 'object' || Array.isArray(criterion)
+          || Object.keys(criterion).some((key) => !['id', 'passed', 'feedback'].includes(key))
+          || !expectedIds.has(criterion.id) || seenIds.has(criterion.id) || typeof criterion.passed !== 'boolean'
+          || !safeFeedback(criterion.feedback, 500)) {
+          throw fail(`Stored rubric result for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
+        }
+        seenIds.add(criterion.id)
+      }
+      if (seenIds.size !== expectedCriteria.length) throw fail(`Stored rubric result for "${blockId}" is incomplete.`, 'ACTIVITY_STATE_INVALID', 409)
+    }
+    if (OBJECTIVE_TYPES.has(block.type) && ['passed', 'needs_retry'].includes(entry.status) && block.type === 'short_answer'
+      && (!Object.hasOwn(entry, 'criteria') || !safeFeedback(entry.nextStep, 500))) {
+      throw fail(`Written result for "${blockId}" is incomplete.`, 'ACTIVITY_STATE_INVALID', 409)
+    }
+    if (Object.hasOwn(entry, 'criteria') && block.type !== 'short_answer') throw fail(`Block "${blockId}" cannot retain a rubric result.`, 'ACTIVITY_STATE_INVALID', 409)
+    if (Object.hasOwn(entry, 'nextStep') && !safeFeedback(entry.nextStep, 500)) throw fail(`Stored next step for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
     if (block.type === 'reflection' && entry.status === 'completed' && !Object.hasOwn(entry, 'response')) throw fail(`Reflection "${blockId}" must retain its response.`, 'ACTIVITY_STATE_INVALID', 409)
-    if (Object.hasOwn(entry, 'feedback') && (typeof entry.feedback !== 'string' || entry.feedback.length > 1500)) throw fail(`Stored feedback for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
+    if (Object.hasOwn(entry, 'feedback') && !safeFeedback(entry.feedback, 1500)) throw fail(`Stored feedback for "${blockId}" is invalid.`, 'ACTIVITY_STATE_INVALID', 409)
     normalizedBlocks[blockId] = entry
   }
 
@@ -249,6 +279,10 @@ function storedResult(block, entry, state, document, lesson, progress) {
     session: sessionStatus(lesson, progress),
   }
   if (OBJECTIVE_TYPES.has(block.type)) result.correct = entry.status === 'passed'
+  if (block.type === 'short_answer') {
+    if (entry.criteria) result.criteria = entry.criteria
+    if (entry.nextStep) result.nextStep = entry.nextStep
+  }
   return result
 }
 
@@ -487,14 +521,12 @@ function normalizeWrittenEvaluation(rubricCriteria, evaluation) {
     if (!result || typeof result !== 'object' || Array.isArray(result)
       || Object.keys(result).some((key) => !['id', 'passed', 'feedback'].includes(key))
       || typeof result.id !== 'string' || !expected.has(result.id) || results.has(result.id)
-      || typeof result.passed !== 'boolean' || typeof result.feedback !== 'string'
-      || !result.feedback.trim() || result.feedback.length > 500) {
+      || typeof result.passed !== 'boolean' || !safeFeedback(result.feedback, 500)) {
       throw fail('Written evaluation criterion is invalid.', 'WRITTEN_EVALUATION_INVALID', 502)
     }
     results.set(result.id, { id: result.id, passed: result.passed, feedback: result.feedback.trim() })
   }
-  if (results.size !== expected.size || typeof evaluation.feedback !== 'string' || !evaluation.feedback.trim() || evaluation.feedback.length > 1000
-    || typeof evaluation.nextStep !== 'string' || !evaluation.nextStep.trim() || evaluation.nextStep.length > 500) {
+  if (results.size !== expected.size || !safeFeedback(evaluation.feedback, 1000) || !safeFeedback(evaluation.nextStep, 500)) {
     throw fail('Written evaluation feedback is invalid.', 'WRITTEN_EVALUATION_INVALID', 502)
   }
   const criteria = [...expected.values()].map((criterion) => results.get(criterion.id))
@@ -526,7 +558,7 @@ export function recordWrittenEvaluation(input) {
     if (!blockUnlocked(block, state)) conflict('This activity block is still locked.', 'ACTIVITY_BLOCK_LOCKED', state)
     const normalized = normalizeWrittenEvaluation(document.answerKey[block.id].criteria, input.evaluation)
     const status = normalized.passed ? 'passed' : 'needs_retry'
-    const entry = { status, attempts: (prior?.attempts || 0) + 1, response, feedback: `${normalized.feedback}\n\nNext step: ${normalized.nextStep}`, updatedAt: context.now }
+    const entry = { status, attempts: (prior?.attempts || 0) + 1, response, feedback: normalized.feedback, criteria: normalized.criteria, nextStep: normalized.nextStep, updatedAt: context.now }
     if (normalized.passed) entry.completedAt = context.now
     state.blocks[block.id] = entry
     if (!normalized.passed) updateMistakesAfterResult(topicId, lessonId, false, [mistakeDescription(lesson, block, normalized.failedCriterion)])
