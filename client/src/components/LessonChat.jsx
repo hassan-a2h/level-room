@@ -5,6 +5,7 @@ import QuizPanel from './QuizPanel.jsx'
 import ArtifactPanel from './ArtifactPanel.jsx'
 import { SkeletonLesson } from '../components/Skeleton.jsx'
 import AppHeader from './AppHeader.jsx'
+import MarkdownContent from './MarkdownContent.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
 
@@ -127,7 +128,7 @@ function ChatMessage({ message, isStreaming }) {
         }`}
       >
         <span className="sr-only">{isUser ? 'You: ' : 'Tutor: '}</span>
-        {message.content}
+        {isUser ? message.content : <MarkdownContent content={message.content} />}
         {isStreaming && (
           <span className="inline-block ml-1 w-1.5 h-4 bg-current opacity-50 animate-pulse" />
         )}
