@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import CurriculumConfirmation from '../pages/CurriculumConfirmation'
-import OnboardingFlow from '../pages/OnboardingFlow'
+import CurriculumConfirmation from '../pages/CurriculumConfirmation.jsx'
+import OnboardingFlow from '../pages/OnboardingFlow.jsx'
 
 vi.mock('../api.js', () => ({
-  getSettings: vi.fn(() => Promise.resolve({ apiKeySet: true })),
+  getSettings: vi.fn(() => Promise.resolve({ ready: true })),
   createTopic: vi.fn(),
   getSetupQuestions: vi.fn(),
   saveProfile: vi.fn(),
@@ -32,358 +32,227 @@ import {
   submitPlacementAssessment,
 } from '../api.js'
 
+function setupQuestions({ levels = ['Beginner', 'Intermediate', 'Advanced'], times = ['15 min/day', '30 min/day', '1 hour/day'] } = {}) {
+  return { questions: [
+    { id: 'level', text: 'Level?', options: levels },
+    { id: 'timeCommitment', text: 'Time?', options: times },
+  ] }
+}
+
+function makeCurriculum(chapterTitle = 'Basics') {
+  const outcomes = [
+    { id: 'react-components-know', title: 'Explain component boundaries', kind: 'knowledge', role: 'core', evidence: ['activity', 'checkpoint'] },
+    { id: 'react-components-build', title: 'Build a reusable component', kind: 'skill', role: 'core', evidence: ['activity', 'artifact'] },
+    { id: 'react-ecosystem-breadth', title: 'Recognize the wider React ecosystem', kind: 'knowledge', role: 'breadth', evidence: ['activity'] },
+  ]
+  return {
+    modules: [{
+      title: chapterTitle,
+      skill_outcomes: outcomes,
+      lessons: [
+        { id: 1, title: 'Intro', estimated_time: 10, outcomes: [outcomes[0]], prerequisites: [] },
+        { id: 2, title: 'Components', estimated_time: 15, artifact_required: true, task_spec: { title: 'Build a profile card' }, outcomes: outcomes.slice(1), prerequisites: [{ lessonId: 1, title: 'Intro' }] },
+      ],
+    }],
+  }
+}
+
+function curriculumResponse(curriculum) {
+  const encoded = new TextEncoder().encode(`data: ${JSON.stringify(JSON.stringify(curriculum))}\n\ndata: ${JSON.stringify('[DONE]')}\n\n`)
+  let read = false
+  return {
+    ok: true,
+    body: { getReader: () => ({ async read() { if (read) return { done: true }; read = true; return { done: false, value: encoded } } }) },
+  }
+}
+
 describe('OnboardingFlow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getSettings.mockResolvedValue({ ready: true })
   })
 
-  it('renders topic input first', async () => {
-    render(
-      <MemoryRouter>
-        <OnboardingFlow />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText(/what do you want to learn/i)).toBeInTheDocument()
-    })
-    expect(screen.getByRole('heading', { level: 1, name: /what do you want to learn/i })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: 'Topic' })).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    expect(screen.getByRole('navigation', { name: 'Learning path setup' })).toBeInTheDocument()
-    expect(screen.getByText('Step 1 of 4')).toBeInTheDocument()
-    expect(screen.getByRole('listitem', { name: 'Topic' })).toHaveAttribute('aria-current', 'step')
-  })
-
-  it('treats provider readiness as sufficient even when there is no API key', async () => {
-    getSettings.mockResolvedValue({ ready: true, apiKeySet: false })
+  it('starts at Destination and names the four onboarding steps', async () => {
     render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
 
-    await waitFor(() => expect(getSettings).toHaveBeenCalled())
-    expect(screen.queryByText(/you need an api key/i)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /what do you want to be able to do/i })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Your learning destination' })).toBeInTheDocument()
+    const navigation = screen.getByRole('navigation', { name: 'Learning path setup' })
+    expect(navigation).toHaveTextContent('Destination')
+    expect(navigation).toHaveTextContent('Starting point')
+    expect(navigation).toHaveTextContent('Learning rhythm')
+    expect(navigation).toHaveTextContent('Track preview')
+    expect(screen.getByRole('listitem', { name: 'Destination' })).toHaveAttribute('aria-current', 'step')
   })
 
-  it('shows validation error for empty topic', async () => {
-    render(
-      <MemoryRouter>
-        <OnboardingFlow />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    })
-
-    const submitBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(submitBtn)
-
-    await waitFor(() => {
-      const alerts = screen.getAllByText(/please enter a topic/i)
-      expect(alerts.length).toBeGreaterThanOrEqual(1)
-    })
-  })
-
-  it('transitions to setup questions after topic creation', async () => {
-    createTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getSetupQuestions.mockResolvedValue({
-      questions: [
-        { text: 'What is your current level?', options: ['Beginner', 'Intermediate', 'Advanced'] },
-        { text: 'How much time per day?', options: ['15 min', '30 min', '1 hour'] },
-      ],
-    })
-
-    render(
-      <MemoryRouter>
-        <OnboardingFlow />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    })
-
-    const input = screen.getByPlaceholderText(/enter a topic/i)
-    fireEvent.change(input, { target: { value: 'React' } })
-
-    const submitBtn = screen.getByRole('button', { name: /start learning/i })
-    fireEvent.click(submitBtn)
-
-    await waitFor(() => {
-      expect(screen.getByText(/what is your current level/i)).toBeInTheDocument()
-    })
-  })
-
-  it('offers a retry when setup questions cannot be loaded', async () => {
-    createTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getSetupQuestions
-      .mockRejectedValueOnce(new Error('Codex could not complete the request.'))
-      .mockResolvedValueOnce({
-        questions: [{ text: 'What is your current level?', options: ['Beginner', 'Advanced'] }],
-      })
-
-    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
-    fireEvent.change(await screen.findByPlaceholderText(/enter a topic/i), { target: { value: 'React' } })
-    fireEvent.click(screen.getByRole('button', { name: /start learning/i }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(/codex could not complete/i)
-    fireEvent.click(screen.getByRole('button', { name: /retry questions/i }))
-    expect(await screen.findByText(/what is your current level/i)).toBeInTheDocument()
-    expect(getSetupQuestions).toHaveBeenCalledTimes(2)
-  })
-
-  it('advances to generating state after answering setup questions', async () => {
-    createTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getSetupQuestions.mockResolvedValue({
-      questions: [
-        { text: 'What is your current level?', options: ['Beginner', 'Intermediate', 'Advanced'] },
-        { text: 'How much time per day?', options: ['15 min', '30 min', '1 hour'] },
-      ],
-    })
+  it('persists a self-reported level and time after the learner skips placement', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 21, title: 'React' } })
+    getSetupQuestions.mockResolvedValue(setupQuestions())
     saveProfile.mockResolvedValue({ ok: true })
     generateCurriculum.mockImplementation(() => new Promise(() => {}))
 
-    render(
-      <MemoryRouter>
-        <OnboardingFlow />
-      </MemoryRouter>
-    )
+    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your learning destination' }), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set my destination' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Intermediate' }))
+    expect(screen.getByRole('button', { name: 'Intermediate' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Skip placement check' }))
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/enter a topic/i)).toBeInTheDocument()
-    })
+    expect(await screen.findByRole('heading', { name: 'Set your learning rhythm' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '1 hour/day' }))
+    fireEvent.click(screen.getByRole('button', { name: /steady pace/i }))
+    expect(screen.getByRole('button', { name: /steady pace/i })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Build my Track' }))
 
-    fireEvent.change(screen.getByPlaceholderText(/enter a topic/i), { target: { value: 'React' } })
-    fireEvent.click(screen.getByRole('button', { name: /start learning/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText(/what is your current level/i)).toBeInTheDocument()
-    })
-
-    // Select level and time commitment
-    fireEvent.click(screen.getByText('Beginner'))
-    fireEvent.click(screen.getByText('30 min'))
-    expect(screen.getByRole('button', { name: /beginner/i })).toHaveAttribute('aria-pressed', 'true')
-
-    const continueBtn = screen.getByRole('button', { name: /continue/i })
-    fireEvent.click(continueBtn)
-
-    await waitFor(() => {
-      expect(saveProfile).toHaveBeenCalledWith(1, expect.objectContaining({ level: 'Beginner' }))
-    })
-
-    // Should transition to generating state
-    await waitFor(() => {
-      expect(screen.getByText(/designing your learning path/i)).toBeInTheDocument()
-    })
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(21, expect.objectContaining({
+      level: 'Intermediate',
+      selfReportedLevel: 'Intermediate',
+      timeCommitment: '1 hour/day',
+    })))
+    expect(await screen.findByRole('heading', { name: /designing your track/i })).toBeInTheDocument()
   })
 
-  it('regenerates once, displays stream errors, and keeps the last valid roadmap', async () => {
-    const initialCurriculum = { modules: [{ title: 'First path', lessons: [] }] }
-    const replacementCurriculum = { modules: [{ title: 'Updated path', lessons: [] }] }
-    getSettings.mockResolvedValue({ ready: true })
-    createTopic.mockResolvedValue({ topic: { id: 12, title: 'DevOps' } })
-    getSetupQuestions.mockResolvedValue({ questions: [
-      { text: 'What is your current level?', options: ['Beginner', 'Intermediate'] },
-      { text: 'How much time per day?', options: ['30 min', '1 hour'] },
-    ] })
+  it('takes the existing placement check only when selected and saves its result', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 22, title: 'React' } })
+    getSetupQuestions.mockResolvedValue(setupQuestions({ levels: ['Beginner', 'Intermediate'], times: ['30 min/day'] }))
+    startPlacementAssessment.mockResolvedValue({ assessmentId: 4, questions: [{ id: 'q1', text: 'Explain components.' }] })
+    submitPlacementAssessment.mockResolvedValue({ assessmentId: 4, requestedLevel: 'Intermediate', recommendedLevel: 'Beginner', gaps: [], feedback: [] })
     saveProfile.mockResolvedValue({ ok: true })
-    generateCurriculum.mockResolvedValue(curriculumResponse(initialCurriculum))
-    regenerateCurriculum
-      .mockResolvedValueOnce(curriculumResponse(replacementCurriculum))
-      .mockResolvedValueOnce(curriculumResponseError('Provider connection was lost.'))
+    generateCurriculum.mockImplementation(() => new Promise(() => {}))
 
     render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
-    fireEvent.change(await screen.findByPlaceholderText(/enter a topic/i), { target: { value: 'DevOps' } })
-    fireEvent.click(screen.getByRole('button', { name: /start learning/i }))
-    fireEvent.click(await screen.findByText('Beginner'))
-    fireEvent.click(screen.getByText('30 min'))
-    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your learning destination' }), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set my destination' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Intermediate' }))
 
-    expect(await screen.findByText('First path')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /regenerate/i }))
-    expect(await screen.findByText('Updated path')).toBeInTheDocument()
-    expect(regenerateCurriculum).toHaveBeenCalledTimes(1)
-    expect(generateCurriculum).toHaveBeenCalledTimes(1)
+    expect(startPlacementAssessment).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Take a placement check' }))
+    expect(await screen.findByRole('textbox', { name: 'Explain components.' })).toBeInTheDocument()
+    expect(startPlacementAssessment).toHaveBeenCalledWith(22, 'Intermediate')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Explain components.' }), { target: { value: 'Components describe a view.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check my starting point' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Beginner' }))
+    expect(await screen.findByRole('heading', { name: 'Set your learning rhythm' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '30 min/day' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Build my Track' }))
 
-    fireEvent.click(screen.getByRole('button', { name: /regenerate/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Provider connection was lost.')
-    expect(screen.getByText('Updated path')).toBeInTheDocument()
-    expect(regenerateCurriculum).toHaveBeenCalledTimes(2)
-    expect(generateCurriculum).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(22, expect.objectContaining({
+      level: 'Beginner',
+      selfReportedLevel: 'Intermediate',
+      placementAssessmentId: 4,
+      timeCommitment: '30 min/day',
+    })))
   })
 
-  it('offers an explicit retry for a roadmap generation that failed after leaving the tab', async () => {
+  it('retries setup choices and hides raw database errors', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 23, title: 'React' } })
+    getSetupQuestions.mockRejectedValueOnce(new Error('SQLITE_ERROR: no such table: topics')).mockResolvedValueOnce(setupQuestions())
+
+    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your learning destination' }), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set my destination' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('We could not load your starting choices.')
+    expect(screen.queryByText(/sqlite|table: topics/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry choices' }))
+    expect(await screen.findByText('What is your starting point?')).toBeInTheDocument()
+    expect(getSetupQuestions).toHaveBeenCalledTimes(2)
+  })
+
+  it('recovers a failed generation and opens a saved structured Track preview', async () => {
     getCurriculumRecovery.mockResolvedValue({
-      topic: { id: 12, title: 'DevOps', level: 'Beginner', timeCommitment: '30 min/day' },
+      topic: { id: 24, title: 'React', level: 'Beginner', timeCommitment: '30 min/day' },
       curriculumState: 'failed',
       curriculumError: 'The provider connection was lost.',
       curriculum: null,
       resumeAvailable: true,
     })
-    generateCurriculum.mockResolvedValue(curriculumResponse({ modules: [{ title: 'Recovered path', lessons: [] }] }))
+    generateCurriculum.mockResolvedValue(curriculumResponse(makeCurriculum('Recovered Chapter')))
 
-    render(<MemoryRouter initialEntries={['/onboarding?topicId=12']}><OnboardingFlow /></MemoryRouter>)
-
-    expect(await screen.findByText(/resume your roadmap generation/i)).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent(/provider connection was lost/i)
+    render(<MemoryRouter initialEntries={['/onboarding?topicId=24']}><OnboardingFlow /></MemoryRouter>)
+    expect(await screen.findByRole('heading', { name: 'Your Track is ready to resume' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('The provider connection was lost.')
     expect(generateCurriculum).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume Track generation' }))
 
-    fireEvent.click(screen.getByRole('button', { name: /resume roadmap generation/i }))
-
-    expect(await screen.findByText('Recovered path')).toBeInTheDocument()
-    expect(generateCurriculum).toHaveBeenCalledWith(12)
+    expect(await screen.findByRole('heading', { name: /Recovered Chapter/ })).toBeInTheDocument()
+    expect(generateCurriculum).toHaveBeenCalledWith(24)
+    expect(screen.getByRole('button', { name: 'Add to my Trail' })).toBeInTheDocument()
   })
 
-  it('opens a saved roadmap draft for review instead of generating it again', async () => {
-    const draft = { modules: [{ title: 'Saved path', lessons: [] }] }
+  it('keeps the onboarding layout stable while restoring a generation job', () => {
+    getCurriculumRecovery.mockImplementation(() => new Promise(() => {}))
+    render(<MemoryRouter initialEntries={['/onboarding?topicId=26']}><OnboardingFlow /></MemoryRouter>)
+
+    expect(screen.getByRole('status', { name: 'Loading onboarding' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /what do you want to be able to do/i })).not.toBeInTheDocument()
+  })
+
+  it('loads an already-saved Track preview without regenerating it', async () => {
     getCurriculumRecovery.mockResolvedValue({
-      topic: { id: 13, title: 'React', level: 'Intermediate', timeCommitment: '1 hour/day' },
+      topic: { id: 25, title: 'React', level: 'Intermediate', timeCommitment: '1 hour/day' },
       curriculumState: 'draft_ready',
       curriculumError: null,
-      curriculum: draft,
+      curriculum: makeCurriculum('Saved Chapter'),
       resumeAvailable: true,
     })
 
-    render(<MemoryRouter initialEntries={['/onboarding?topicId=13']}><OnboardingFlow /></MemoryRouter>)
-
-    expect(await screen.findByText('Saved path')).toBeInTheDocument()
+    render(<MemoryRouter initialEntries={['/onboarding?topicId=25']}><OnboardingFlow /></MemoryRouter>)
+    expect(await screen.findByRole('heading', { name: /Saved Chapter/ })).toBeInTheDocument()
     expect(generateCurriculum).not.toHaveBeenCalled()
   })
 })
 
 describe('CurriculumConfirmation', () => {
-  const mockCurriculum = {
-    modules: [
-      {
-        title: 'Basics',
-        lessons: [
-          { title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: ['Understand basics'], prerequisites: [] },
-          { title: 'Components', depth: 'Intermediate', estimated_time: 15, outcomes: ['Build components'], prerequisites: [{ lessonId: 1, title: 'Intro' }] },
-        ],
-      },
-    ],
-  }
+  const curriculum = makeCurriculum()
 
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
+  beforeEach(() => vi.clearAllMocks())
 
-  it('renders modules and lessons with metadata', async () => {
-    render(
-      <MemoryRouter>
-        <CurriculumConfirmation curriculum={mockCurriculum} />
-      </MemoryRouter>
-    )
+  it('previews a finite Track with outcome summaries, Chapters, and Build markers', () => {
+    render(<CurriculumConfirmation curriculum={curriculum} topicName="React" timeCommitment="30 min/day" pace="Steady pace" />)
 
-    await waitFor(() => {
-      expect(screen.getByText('Basics')).toBeInTheDocument()
-    })
+    expect(screen.getByRole('heading', { name: 'React Track preview' })).toBeInTheDocument()
+    expect(screen.getByText(/3 outcomes · 2 core · 1 breadth/i)).toBeInTheDocument()
+    expect(screen.getByText('Chapter 1 · Basics')).toBeInTheDocument()
     expect(screen.getByText('Intro')).toBeInTheDocument()
     expect(screen.getByText('Components')).toBeInTheDocument()
-    expect(screen.getByText(/Beginner/)).toBeInTheDocument()
-    expect(screen.getByText(/~10 min/)).toBeInTheDocument()
+    expect(screen.getByText('Build')).toBeInTheDocument()
+    expect(screen.getByText('30 min/day · Steady pace')).toBeInTheDocument()
+    expect(screen.getByText(/each chapter ends with a checkpoint/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /test out/i })).not.toBeInTheDocument()
   })
 
-  it('expands outcomes and prerequisites on demand', () => {
-    render(<CurriculumConfirmation curriculum={mockCurriculum} />)
-    const expand = screen.getAllByRole('button', { name: 'Expand lesson details' })[0]
+  it('reveals structured outcomes and Session prerequisites on demand', () => {
+    render(<CurriculumConfirmation curriculum={curriculum} />)
+    const expand = screen.getAllByRole('button', { name: 'Expand Session details' })[1]
     fireEvent.click(expand)
     expect(expand).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Understand basics')).toBeInTheDocument()
-    expect(screen.getByText(/Intro/)).toBeInTheDocument()
+    const details = screen.getByRole('region', { name: 'Components details' })
+    expect(within(details).getByText('Build a reusable component')).toBeInTheDocument()
+    expect(within(details).getByText(/Session prerequisites/i)).toBeInTheDocument()
+    expect(within(details).getByText('Intro')).toBeInTheDocument()
   })
 
-  it('calls onConfirm when Accept is clicked', async () => {
+  it('confirms the Track when Add to my Trail is selected', async () => {
     const onConfirm = vi.fn()
-    render(
-      <MemoryRouter>
-        <CurriculumConfirmation curriculum={mockCurriculum} onConfirm={onConfirm} />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Basics')).toBeInTheDocument()
-    })
-
-    const acceptBtn = screen.getByRole('button', { name: /accept/i })
-    fireEvent.click(acceptBtn)
-
-    await waitFor(() => {
-      expect(onConfirm).toHaveBeenCalled()
-    })
+    render(<CurriculumConfirmation curriculum={curriculum} onConfirm={onConfirm} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add to my Trail' }))
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledOnce())
   })
 
-  it('calls onTweak when tweak is submitted', async () => {
+  it('applies requested plan adjustments', async () => {
     const onTweak = vi.fn()
-    render(
-      <MemoryRouter>
-        <CurriculumConfirmation curriculum={mockCurriculum} onTweak={onTweak} />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Basics')).toBeInTheDocument()
-    })
-
-    const tweakBtn = screen.getByRole('button', { name: /tweak/i })
-    fireEvent.click(tweakBtn)
-
-    const tweakInput = screen.getByPlaceholderText(/request changes/i)
-    fireEvent.change(tweakInput, { target: { value: 'Add a module on testing' } })
-
-    const applyBtn = screen.getByRole('button', { name: /apply tweak/i })
-    fireEvent.click(applyBtn)
-
-    await waitFor(() => {
-      expect(onTweak).toHaveBeenCalledWith('Add a module on testing')
-    })
+    render(<CurriculumConfirmation curriculum={curriculum} onTweak={onTweak} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Adjust plan' }))
+    fireEvent.change(screen.getByLabelText('What would you like to adjust?'), { target: { value: 'Add a chapter on testing' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply adjustments' }))
+    await waitFor(() => expect(onTweak).toHaveBeenCalledWith('Add a chapter on testing'))
   })
 
-  it('calls onRegenerate when Regenerate is clicked', async () => {
+  it('allows refreshing the preview from adjustment options', async () => {
     const onRegenerate = vi.fn()
-    render(
-      <MemoryRouter>
-        <CurriculumConfirmation curriculum={mockCurriculum} onRegenerate={onRegenerate} />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText('Basics')).toBeInTheDocument()
-    })
-
-    const regenBtn = screen.getByRole('button', { name: /regenerate/i })
-    fireEvent.click(regenBtn)
-
-    await waitFor(() => {
-      expect(onRegenerate).toHaveBeenCalled()
-    })
+    render(<CurriculumConfirmation curriculum={curriculum} onRegenerate={onRegenerate} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Adjust plan' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh preview' }))
+    await waitFor(() => expect(onRegenerate).toHaveBeenCalledOnce())
   })
 })
-
-function curriculumResponse(curriculum) {
-  const text = JSON.stringify(curriculum)
-  const events = `data: ${JSON.stringify(text)}\n\ndata: ${JSON.stringify('[DONE]')}\n\n`
-  return textStreamResponse(events)
-}
-
-function curriculumResponseError(message) {
-  return textStreamResponse(`event: error\ndata: ${JSON.stringify({ message })}\n\n`)
-}
-
-function textStreamResponse(text) {
-  const encoded = new TextEncoder().encode(text)
-  let read = false
-  return {
-    ok: true,
-    body: {
-      getReader: () => ({
-        async read() {
-          if (read) return { done: true, value: undefined }
-          read = true
-          return { done: false, value: encoded }
-        },
-      }),
-    },
-  }
-}
