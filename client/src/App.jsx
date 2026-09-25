@@ -3,7 +3,7 @@ import SettingsPage from './pages/SettingsPage'
 import Dashboard from './pages/Dashboard'
 import OnboardingFlow from './pages/OnboardingFlow'
 import ContinuationFlow from './pages/ContinuationFlow.jsx'
-import LessonChat from './components/LessonChat.jsx'
+import SessionPage from './pages/SessionPage.jsx'
 import ReviewQueue from './pages/ReviewQueue.jsx'
 import ReviewSession from './components/ReviewSession.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -23,7 +23,7 @@ function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/reviews" element={<ReviewQueue />} />
             <Route path="/review/:sessionId" element={<ReviewSession />} />
-            <Route path="/topic/:topicId/lesson/:lessonId" element={<LessonChat />} />
+            <Route path="/topic/:topicId/lesson/:lessonId" element={<SessionPage />} />
           </Routes>
         </AppShell>
       </ErrorBoundary>
