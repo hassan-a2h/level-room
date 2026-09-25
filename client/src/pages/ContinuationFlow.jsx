@@ -1,47 +1,122 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import AppHeader from '../components/AppHeader.jsx'
-import CurriculumConfirmation from './CurriculumConfirmation.jsx'
-import { readCurriculumStream } from '../curriculumStream.js'
 import {
   confirmContinuation,
   generateContinuation,
-  getContinuationOptions,
   getContinuationReadiness,
+  getDashboard,
   tweakContinuation,
 } from '../api.js'
+import { readCurriculumStream } from '../curriculumStream.js'
+import AppHeader from '../components/AppHeader.jsx'
 
 const LEVELS = ['Beginner', 'Intermediate', 'Advanced']
 const TIME_COMMITMENTS = ['15 min/day', '30 min/day', '1 hour/day', '2+ hours/day']
+const GENERATION_STAGES = [
+  'Reading your Trail',
+  'Balancing depth and breadth',
+  'Designing practical sessions',
+  'Validating the plan',
+]
 
-function courseLabel(course) {
-  if (!course) return 'Course'
-  const stage = Number(course.course_stage || 0)
-  return stage > 0 ? `Advanced · Stage ${stage}` : 'Core · 80/20 foundation'
+function displayOutcome(outcome) {
+  return typeof outcome === 'string' ? outcome : outcome?.title || ''
 }
 
-function Lineage({ lineage = [] }) {
-  if (lineage.length < 2) return null
+function uniqueOutcomes(dashboard, summary) {
+  const outcomes = Array.isArray(summary?.outcomes) ? summary.outcomes : []
+  if (outcomes.length) return outcomes
+  const seen = new Set()
+  return (dashboard?.modules || []).flatMap((module) => module.skill_outcomes || []).filter((outcome) => {
+    if (!outcome?.id || seen.has(outcome.id)) return false
+    seen.add(outcome.id)
+    return true
+  })
+}
+
+function CompletionSummary({ readiness, dashboard, onReview }) {
+  const chapters = dashboard?.modules || []
+  const outcomes = uniqueOutcomes(dashboard, readiness?.summary)
+  const builds = chapters.flatMap((chapter) => (chapter.lessons || [])
+    .filter((session) => session.artifact_required)
+    .map((session) => ({ ...session, chapterTitle: chapter.title })))
+  const strengths = readiness?.summary?.strengths || []
+  const focusAreas = readiness?.summary?.gaps || []
+
   return (
-    <div className="ui-surface ui-surface-inset p-4" aria-label="Course lineage">
-      <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide mb-2">What this builds on</p>
-      <ol className="flex flex-wrap items-center gap-2 text-sm ui-text-secondary">
-        {lineage.map((course, index) => (
-          <li key={course.id} className="flex items-center gap-2">
-            {index > 0 && <span aria-hidden="true">→</span>}
-            <span className={index === lineage.length - 1 ? 'font-semibold ui-text' : ''}>
-              {course.title} {course.course_stage > 0 ? `(Stage ${course.course_stage})` : '(Core)'}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </div>
+    <section className="ui-panel p-5 sm:p-7" aria-labelledby="track-complete-heading">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">Track complete</p>
+          <h1 id="track-complete-heading" className="mt-2 text-2xl sm:text-3xl font-bold ui-text">Your Track is complete</h1>
+          <p className="mt-2 max-w-2xl ui-text-secondary">
+            {readiness?.course?.title || 'This Track'} is a finished chapter in your learning. Your progress stays on your Trail while the next plan takes shape.
+          </p>
+        </div>
+        <button type="button" className="ui-button ui-button-secondary shrink-0" onClick={onReview}>
+          Review this Track
+        </button>
+      </div>
+
+      <div className="mt-6 grid gap-5 sm:grid-cols-2">
+        <section aria-labelledby="completed-chapters-heading">
+          <h2 id="completed-chapters-heading" className="text-sm font-semibold ui-text">Chapters</h2>
+          {chapters.length ? (
+            <ol className="mt-2 space-y-2">
+              {chapters.map((chapter, index) => (
+                <li key={chapter.id ?? chapter.title} className="flex gap-3 text-sm ui-text-secondary">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold" style={{ backgroundColor: 'var(--ui-success-bg)', color: 'var(--ui-success-text)' }} aria-hidden="true">{index + 1}</span>
+                  <span>{chapter.title}</span>
+                </li>
+              ))}
+            </ol>
+          ) : <p className="mt-2 text-sm ui-text-muted">Your completed Chapters are saved on this Track.</p>}
+        </section>
+
+        <section aria-labelledby="completed-outcomes-heading">
+          <h2 id="completed-outcomes-heading" className="text-sm font-semibold ui-text">Outcomes practiced</h2>
+          {outcomes.length ? (
+            <ul className="mt-2 space-y-2">
+              {outcomes.slice(0, 8).map((outcome, index) => <li key={outcome?.id || `${displayOutcome(outcome)}-${index}`} className="text-sm ui-text-secondary">{displayOutcome(outcome)}</li>)}
+            </ul>
+          ) : <p className="mt-2 text-sm ui-text-muted">Your outcomes will appear here as your Trail grows.</p>}
+        </section>
+
+        <section aria-labelledby="completed-builds-heading">
+          <h2 id="completed-builds-heading" className="text-sm font-semibold ui-text">Builds completed <span className="ui-text-muted">({builds.length})</span></h2>
+          {builds.length ? (
+            <ul className="mt-2 space-y-2">
+              {builds.slice(0, 8).map((build) => <li key={build.id ?? build.title} className="text-sm ui-text-secondary">{build.title}<span className="ui-text-muted"> · {build.chapterTitle}</span></li>)}
+            </ul>
+          ) : <p className="mt-2 text-sm ui-text-muted">You have completed the practical work in this Track.</p>}
+        </section>
+
+        <div className="space-y-4">
+          {strengths.length > 0 && (
+            <section aria-labelledby="strengths-heading">
+              <h2 id="strengths-heading" className="text-sm font-semibold ui-text">Strengths to build on</h2>
+              <ul className="mt-2 space-y-1 text-sm ui-text-secondary">
+                {strengths.slice(0, 4).map((strength, index) => <li key={strength?.id || `${displayOutcome(strength)}-${index}`}>{displayOutcome(strength)}</li>)}
+              </ul>
+            </section>
+          )}
+          {focusAreas.length > 0 && (
+            <section aria-labelledby="focus-areas-heading">
+              <h2 id="focus-areas-heading" className="text-sm font-semibold ui-text">Focus areas to carry forward</h2>
+              <ul className="mt-2 space-y-1 text-sm ui-text-secondary">
+                {focusAreas.slice(0, 4).map((area, index) => <li key={`${area}-${index}`}>{area}</li>)}
+              </ul>
+            </section>
+          )}
+        </div>
+      </div>
+    </section>
   )
 }
 
 function ProfileControls({ level, timeCommitment, onLevelChange, onTimeChange, disabled }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="ui-field-label">
         Learner level
         <select className="ui-field mt-1 w-full" value={level} onChange={(event) => onLevelChange(event.target.value)} disabled={disabled}>
@@ -58,217 +133,295 @@ function ProfileControls({ level, timeCommitment, onLevelChange, onTimeChange, d
   )
 }
 
-function LaneOption({ option, selected, onSelect, disabled }) {
+function GeneratingState() {
   return (
-    <button
-      type="button"
-      className={`ui-surface ui-surface-raised w-full p-4 text-left transition-shadow ${selected ? 'ui-choice is-selected' : ''}`}
-      onClick={() => onSelect(option)}
-      disabled={disabled}
-      aria-pressed={selected}
-    >
-      <span className="flex items-start justify-between gap-3">
-        <span className="font-semibold ui-text">{option.title}</span>
-        {selected && <span aria-hidden="true" className="ui-text-link">✓</span>}
-      </span>
-      <span className="mt-1 block text-sm ui-text-secondary">{option.rationale}</span>
-      <span className="mt-3 block text-xs ui-text-muted">Builds on: {option.builds_on.join(', ')}</span>
-      <span className="mt-1 block text-xs ui-text-muted">Outcome: {option.target_outcomes.join(' · ')}</span>
-      <span className="mt-2 block text-xs ui-text-muted">Free path: {option.free_stack.primary.description} Fallback: {option.free_stack.fallback.description}</span>
-    </button>
+    <section className="ui-panel p-6 sm:p-8" aria-labelledby="generating-heading">
+      <div className="flex items-center gap-3">
+        <span className="ui-spinner" role="status" aria-label="Preparing your next Track" />
+        <div>
+          <h2 id="generating-heading" className="text-lg font-semibold ui-text">Designing your next Track</h2>
+          <p className="text-sm ui-text-secondary" aria-live="polite">A thoughtful plan is taking shape from what you have learned.</p>
+        </div>
+      </div>
+      <ol className="mt-5 grid gap-2 text-sm ui-text-secondary sm:grid-cols-2" aria-label="Plan design stages">
+        {GENERATION_STAGES.map((stage, index) => <li key={stage} className="ui-surface ui-surface-inset p-3"><span className="ui-text-muted mr-2">{index + 1}.</span>{stage}</li>)}
+      </ol>
+    </section>
+  )
+}
+
+function OutcomeTag({ outcome }) {
+  const breadth = outcome?.role === 'breadth'
+  return (
+    <li className="flex items-center justify-between gap-2 text-sm ui-text-secondary" data-outcome-role={outcome?.role || 'core'}>
+      <span>{displayOutcome(outcome)}</span>
+      {breadth && <span className="ui-status ui-status-neutral">Breadth</span>}
+    </li>
+  )
+}
+
+function ContinuationPreview({ curriculum, readiness, level, timeCommitment, profileStale, onLevelChange, onTimeChange, onRefresh, onTweak, onConfirm, onDefer, onReview, working, error }) {
+  const lessons = (curriculum.modules || []).flatMap((chapter) => chapter.lessons || [])
+  const totalMinutes = lessons.reduce((total, lesson) => total + (Number.isInteger(lesson.estimated_time) ? lesson.estimated_time : 0), 0)
+  const priorOutcomes = uniqueOutcomes(null, readiness?.summary)
+
+  return (
+    <section className="ui-panel p-5 sm:p-7" aria-labelledby="continuation-preview-heading">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">Your next finite Track</p>
+          <h2 id="continuation-preview-heading" className="mt-2 text-2xl font-bold ui-text">{curriculum.title || 'Your next Track'}</h2>
+          <p className="mt-2 max-w-2xl ui-text-secondary">About 80% core learning and 20% breadth: keep building the skills that matter while exploring useful neighboring ideas.</p>
+        </div>
+        <button type="button" className="ui-button ui-button-secondary shrink-0" onClick={onReview} disabled={working}>Review this Track</button>
+      </div>
+
+      {priorOutcomes.length > 0 && (
+        <section className="ui-surface ui-surface-inset mt-5 p-4" aria-labelledby="builds-on-heading">
+          <h3 id="builds-on-heading" className="text-sm font-semibold ui-text">Builds on what you already know</h3>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {priorOutcomes.slice(0, 8).map((outcome, index) => <li className="ui-status ui-status-neutral" key={outcome?.id || `${displayOutcome(outcome)}-${index}`}>{displayOutcome(outcome)}</li>)}
+          </ul>
+        </section>
+      )}
+
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {curriculum.modules.map((chapter, index) => {
+          const builds = (chapter.lessons || []).filter((lesson) => lesson.artifact_required)
+          const outcomes = chapter.skill_outcomes || []
+          return (
+            <article className="ui-surface ui-surface-raised p-4" key={`${chapter.title}-${index}`}>
+              <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">Chapter {index + 1}</p>
+              <h3 className="mt-1 font-semibold ui-text">{chapter.title}</h3>
+              {chapter.summary && <p className="mt-1 text-sm ui-text-secondary">{chapter.summary}</p>}
+              <ul className="mt-3 space-y-2">
+                {outcomes.map((outcome) => <OutcomeTag key={outcome.id} outcome={outcome} />)}
+              </ul>
+              <p className="mt-3 text-xs ui-text-muted">{(chapter.lessons || []).length} Sessions · {builds.length} practical Build{builds.length === 1 ? '' : 's'}</p>
+              {builds.length > 0 && <p className="mt-1 text-sm ui-text-secondary">Build: {builds.map((build) => build.title).join(', ')}</p>}
+            </article>
+          )
+        })}
+      </div>
+
+      <div className="ui-surface ui-surface-inset mt-5 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-semibold ui-text">A rhythm that fits your week</h3>
+            <p className="mt-1 text-sm ui-text-secondary">{lessons.length} Sessions · about {totalMinutes} minutes of learning · planned for {timeCommitment}.</p>
+          </div>
+          <p className="text-sm ui-text-muted">Level: {level}</p>
+        </div>
+        <div className="mt-4"><ProfileControls level={level} timeCommitment={timeCommitment} onLevelChange={onLevelChange} onTimeChange={onTimeChange} disabled={working} /></div>
+      </div>
+
+      {profileStale && (
+        <div className="ui-alert ui-alert-warning mt-4 flex flex-wrap items-center justify-between gap-3" role="status">
+          <span>Your pace changed. Update the plan before adding it to your Trail.</span>
+          <button type="button" className="ui-button ui-button-secondary min-h-0 px-3 py-1.5 text-sm" onClick={onRefresh} disabled={working}>Update plan for this rhythm</button>
+        </div>
+      )}
+      {error && <div className="ui-alert ui-alert-danger mt-4" role="alert">{error}</div>}
+      <div className="mt-5 flex flex-wrap gap-3">
+        <button type="button" className="ui-button ui-button-primary" onClick={onConfirm} disabled={working || profileStale}>
+          {working ? 'Adding to your Trail…' : 'Add to my Trail'}
+        </button>
+        <button type="button" className="ui-button ui-button-secondary" onClick={onTweak} disabled={working}>Adjust plan</button>
+        <button type="button" className="ui-button ui-button-quiet" onClick={onDefer} disabled={working}>Not now</button>
+      </div>
+    </section>
   )
 }
 
 export default function ContinuationFlow() {
   const { topicId } = useParams()
   const navigate = useNavigate()
+  const requestRef = useRef(0)
+  const curriculumRef = useRef(null)
   const [readiness, setReadiness] = useState(null)
-  const [options, setOptions] = useState([])
-  const [optionsLoading, setOptionsLoading] = useState(false)
-  const [optionsError, setOptionsError] = useState('')
-  const [selectedOption, setSelectedOption] = useState(null)
-  const [customLane, setCustomLane] = useState('')
+  const [dashboard, setDashboard] = useState(null)
+  const [curriculum, setCurriculum] = useState(null)
+  const [draftProfile, setDraftProfile] = useState(null)
   const [level, setLevel] = useState('Intermediate')
   const [timeCommitment, setTimeCommitment] = useState('30 min/day')
-  const [curriculum, setCurriculum] = useState(null)
-  const [step, setStep] = useState('choose')
-  const [loading, setLoading] = useState(true)
+  const [phase, setPhase] = useState('loading')
   const [working, setWorking] = useState(false)
+  const [adjusting, setAdjusting] = useState(false)
+  const [adjustment, setAdjustment] = useState('')
   const [error, setError] = useState('')
 
-  const lane = useMemo(() => customLane.trim() || selectedOption?.title || '', [customLane, selectedOption])
-
-  const loadOptions = useCallback(async (isActive = () => true) => {
-    setOptionsLoading(true)
-    setOptionsError('')
+  const generateDraft = useCallback(async (profile, sequence, keepPreview = false) => {
+    const priorDraft = curriculumRef.current
+    setWorking(true)
+    setError('')
+    setPhase('generating')
     try {
-      const suggestions = await getContinuationOptions(topicId)
-      if (isActive()) setOptions(suggestions.options || [])
-    } catch (err) {
-      if (isActive()) setOptionsError(err.message || 'Could not load lane suggestions.')
+      const response = await generateContinuation(topicId, profile)
+      const draft = await readCurriculumStream(response)
+      if (requestRef.current !== sequence) return
+      curriculumRef.current = draft
+      setCurriculum(draft)
+      setDraftProfile(profile)
+      setPhase('preview')
+    } catch (generationError) {
+      if (requestRef.current !== sequence) return
+      setError(generationError.message || 'The next Track could not be prepared. Please try again.')
+      setPhase(keepPreview && priorDraft ? 'preview' : 'error')
     } finally {
-      if (isActive()) setOptionsLoading(false)
+      if (requestRef.current === sequence) setWorking(false)
     }
   }, [topicId])
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      setError('')
-      try {
-        const data = await getContinuationReadiness(topicId)
-        if (cancelled) return
-        setReadiness(data)
-        if (data.course?.level) setLevel(data.course.level)
-        if (data.course?.time_per_week) setTimeCommitment(data.course.time_per_week)
-        if (!data.eligible) return
-        if (data.eligible) await loadOptions(() => !cancelled)
-      } catch (err) {
-        if (!cancelled) setError(err.message || 'Could not load continuation choices.')
-      } finally {
-        if (!cancelled) setLoading(false)
+  const loadCompletion = useCallback(async () => {
+    const sequence = ++requestRef.current
+    setPhase('loading')
+    setError('')
+    curriculumRef.current = null
+    setCurriculum(null)
+    setDraftProfile(null)
+    try {
+      const completion = await getContinuationReadiness(topicId)
+      if (requestRef.current !== sequence) return
+      setReadiness(completion)
+      if (completion.course?.level) setLevel(completion.course.level)
+      if (completion.course?.time_per_week) setTimeCommitment(completion.course.time_per_week)
+      if (!completion.eligible) {
+        setPhase('ineligible')
+        return
       }
+      const track = await getDashboard(topicId)
+      if (requestRef.current !== sequence) return
+      setDashboard(track)
+      await generateDraft({
+        level: completion.course?.level || 'Intermediate',
+        timeCommitment: completion.course?.time_per_week || '30 min/day',
+      }, sequence)
+    } catch (loadError) {
+      if (requestRef.current !== sequence) return
+      setError(loadError.message || 'Could not load your completed Track.')
+      setPhase('error')
     }
-    load()
-    return () => { cancelled = true }
-  }, [loadOptions, topicId])
+  }, [generateDraft, topicId])
 
-  const handleGenerate = useCallback(async () => {
-    if (!lane) {
-      setError('Choose a suggested lane or name a specialization lane.')
-      return
-    }
-    setWorking(true)
-    setError('')
-    setStep('generating')
-    const previousCurriculum = curriculum
-    try {
-      const response = await generateContinuation(topicId, { lane, level, timeCommitment })
-      const draft = await readCurriculumStream(response)
-      setCurriculum(draft)
-      setStep('review')
-    } catch (err) {
-      setError(err.message || 'Failed to generate the advanced course.')
-      setStep(previousCurriculum ? 'review' : 'choose')
-    } finally {
-      setWorking(false)
-    }
-  }, [curriculum, lane, level, timeCommitment, topicId])
+  useEffect(() => {
+    loadCompletion()
+    return () => { requestRef.current += 1 }
+  }, [loadCompletion])
 
-  const handleTweak = useCallback(async (request) => {
+  const handleGenerate = useCallback(() => {
+    const sequence = ++requestRef.current
+    generateDraft({ level, timeCommitment }, sequence, true)
+  }, [generateDraft, level, timeCommitment])
+
+  const handleTweak = useCallback(async () => {
+    if (!curriculum || !adjustment.trim()) return
     setWorking(true)
     setError('')
     try {
-      const result = await tweakContinuation(topicId, { lane, level, timeCommitment, curriculum, request })
-      if (!result?.curriculum) throw new Error('The revised course draft was incomplete.')
+      const result = await tweakContinuation(topicId, { level, timeCommitment, curriculum, request: adjustment.trim() })
+      if (!result?.curriculum) throw new Error('The revised Track draft was incomplete.')
+      curriculumRef.current = result.curriculum
       setCurriculum(result.curriculum)
-    } catch (err) {
-      setError(err.message || 'Failed to revise the draft.')
+      setDraftProfile({ level, timeCommitment })
+      setAdjustment('')
+      setAdjusting(false)
+    } catch (tweakError) {
+      setError(tweakError.message || 'The plan could not be adjusted. Your current preview is still here.')
     } finally {
       setWorking(false)
     }
-  }, [curriculum, lane, level, timeCommitment, topicId])
-
-  const handleRegenerate = useCallback(() => {
-    handleGenerate()
-  }, [handleGenerate])
+  }, [adjustment, curriculum, level, timeCommitment, topicId])
 
   const handleConfirm = useCallback(async () => {
+    if (!curriculum) return
     setWorking(true)
     setError('')
     try {
-      const result = await confirmContinuation(topicId, { lane, level, timeCommitment, curriculum })
-      if (!result?.topic?.id || !result?.firstLessonId) throw new Error('The new course was created without a starting lesson.')
-      navigate(`/topic/${result.topic.id}/lesson/${result.firstLessonId}`)
-    } catch (err) {
-      setError(err.message || 'Failed to start the advanced course.')
+      const result = await confirmContinuation(topicId, { level, timeCommitment, curriculum })
+      if (!result?.topic?.id) throw new Error('The new Track was not returned by the server.')
+      const destination = typeof result.dashboardPath === 'string' && /^\/\?topicId=\d+$/.test(result.dashboardPath)
+        ? result.dashboardPath
+        : `/?topicId=${result.topic.id}`
+      navigate(destination)
+    } catch (confirmError) {
+      setError(confirmError.message || 'The Track could not be added. Your preview is still here.')
     } finally {
       setWorking(false)
     }
-  }, [curriculum, lane, level, timeCommitment, topicId, navigate])
+  }, [curriculum, level, navigate, timeCommitment, topicId])
 
-  if (loading) {
-    return <div className="ui-page min-h-screen"><AppHeader /><main className="ui-container max-w-3xl px-4 py-10"><div className="ui-spinner mx-auto" role="status" aria-label="Loading continuation choices" /></main></div>
-  }
-
-  if (error && !readiness) {
-    return <div className="ui-page min-h-screen"><AppHeader /><main className="ui-container max-w-3xl px-4 py-10"><div className="ui-alert ui-alert-danger" role="alert">{error}</div><button type="button" className="ui-button ui-button-secondary mt-4" onClick={() => navigate('/')}>Back to Dashboard</button></main></div>
-  }
-
-  if (!readiness?.eligible) {
-    return (
-      <div className="ui-page min-h-screen">
-        <AppHeader />
-        <main className="ui-container max-w-3xl px-4 py-8">
-          <div className="ui-panel p-6 sm:p-8">
-            <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">{courseLabel(readiness?.course)}</p>
-            <h1 className="mt-2 text-2xl font-bold ui-text">Finish this course before going deeper</h1>
-            <p className="mt-3 ui-text-secondary">{readiness?.reason || 'Complete every module checkpoint to unlock an advanced lane.'}</p>
-            <button type="button" className="ui-button ui-button-primary mt-6" onClick={() => navigate('/')}>Back to Dashboard</button>
-          </div>
-        </main>
-      </div>
-    )
-  }
+  const goToParent = useCallback(() => navigate(`/?topicId=${encodeURIComponent(topicId)}`), [navigate, topicId])
 
   return (
     <div className="ui-page min-h-screen">
       <AppHeader />
-      <main className="ui-container max-w-4xl px-4 py-6 sm:py-8">
-        {step === 'choose' && (
-          <div className="space-y-6">
-            <div>
-              <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">{courseLabel(readiness.course)}</p>
-              <h1 className="mt-2 text-3xl font-bold ui-text">Choose your next specialization</h1>
-              <p className="mt-2 ui-text-secondary">{readiness.course.title} is complete. Start a separate finite course that deepens one lane while preserving everything you have already learned.</p>
+      <main className="ui-container max-w-5xl space-y-5 px-4 py-6 sm:py-8">
+        {phase === 'loading' && <div className="ui-panel p-10 text-center"><span className="ui-spinner mx-auto" role="status" aria-label="Loading completed Track" /></div>}
+
+        {readiness && <CompletionSummary readiness={readiness} dashboard={dashboard} onReview={() => navigate('/reviews')} />}
+
+        {phase === 'ineligible' && (
+          <section className="ui-panel p-6" aria-labelledby="ineligible-heading">
+            <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">{readiness?.course?.title || 'Your Track'}</p>
+            <h2 id="ineligible-heading" className="mt-2 text-xl font-bold ui-text">Finish this Track first</h2>
+            <p className="mt-2 ui-text-secondary">{readiness?.reason || 'Complete each Chapter checkpoint to unlock your next Track.'}</p>
+            <button type="button" className="ui-button ui-button-primary mt-5" onClick={goToParent}>Back to my Trail</button>
+          </section>
+        )}
+
+        {phase === 'generating' && <GeneratingState />}
+
+        {phase === 'error' && (
+          <section className="ui-panel p-5 sm:p-7" aria-labelledby="generation-error-heading">
+            <h2 id="generation-error-heading" className="text-xl font-semibold ui-text">Your next Track is still within reach</h2>
+            {error && <div className="ui-alert ui-alert-warning mt-4" role="alert">{error}</div>}
+            <div className="mt-5 flex flex-wrap gap-3">
+              {readiness?.eligible && dashboard && <button type="button" className="ui-button ui-button-primary" onClick={handleGenerate} disabled={working}>{working ? 'Trying again…' : 'Retry generation'}</button>}
+              {readiness?.eligible && !dashboard && <button type="button" className="ui-button ui-button-primary" onClick={loadCompletion} disabled={working}>Retry loading Track</button>}
+              <button type="button" className="ui-button ui-button-secondary" onClick={goToParent}>Back to my Trail</button>
             </div>
-            <Lineage lineage={readiness.lineage} />
-            <section className="space-y-3" aria-labelledby="lane-options-heading">
-              <h2 id="lane-options-heading" className="text-lg font-semibold ui-text">Suggested lanes</h2>
-              {optionsError && (
-                <div className="ui-alert ui-alert-warning flex flex-wrap items-center justify-between gap-3" role="alert">
-                  <span>{optionsError}</span>
-                  <button type="button" className="ui-button ui-button-secondary min-h-0 px-3 py-1.5 text-sm" onClick={() => loadOptions()} disabled={optionsLoading}>{optionsLoading ? 'Retrying...' : 'Retry suggestions'}</button>
+          </section>
+        )}
+
+        {phase === 'preview' && curriculum && (
+          <>
+            <ContinuationPreview
+              curriculum={curriculum}
+              readiness={readiness}
+              level={level}
+              timeCommitment={timeCommitment}
+              profileStale={Boolean(draftProfile && (draftProfile.level !== level || draftProfile.timeCommitment !== timeCommitment))}
+              onLevelChange={setLevel}
+              onTimeChange={setTimeCommitment}
+              onRefresh={handleGenerate}
+              onTweak={() => { setAdjusting((open) => !open); setError('') }}
+              onConfirm={handleConfirm}
+              onDefer={goToParent}
+              onReview={() => navigate('/reviews')}
+              working={working}
+              error={error}
+            />
+            {adjusting && (
+              <section className="ui-panel p-5" aria-labelledby="adjust-plan-heading">
+                <h2 id="adjust-plan-heading" className="font-semibold ui-text">Adjust this plan</h2>
+                <p className="mt-1 text-sm ui-text-secondary">Tell us what to change. Your current preview stays available if the adjustment fails.</p>
+                <label htmlFor="continuation-adjustment" className="ui-field-label mt-4 block">What would you like to adjust?</label>
+                <textarea
+                  id="continuation-adjustment"
+                  className="ui-field mt-1 min-h-28 w-full"
+                  maxLength={1000}
+                  value={adjustment}
+                  onChange={(event) => setAdjustment(event.target.value)}
+                  disabled={working}
+                />
+                <p className="mt-1 text-xs ui-text-muted">{adjustment.length}/1000 characters</p>
+                <div className="mt-4 flex gap-3">
+                  <button type="button" className="ui-button ui-button-primary" onClick={handleTweak} disabled={working || !adjustment.trim()}>{working ? 'Adjusting…' : 'Apply adjustment'}</button>
+                  <button type="button" className="ui-button ui-button-secondary" onClick={() => setAdjusting(false)} disabled={working}>Keep current plan</button>
                 </div>
-              )}
-              {options.length > 0 ? options.map((option) => <LaneOption key={option.id} option={option} selected={selectedOption?.id === option.id && !customLane} onSelect={(value) => { setSelectedOption(value); setCustomLane(''); setError('') }} disabled={working} />) : <p className="ui-text-muted">No suggestions are available yet. You can name your own lane below.</p>}
-            </section>
-            <section className="ui-panel p-4 sm:p-5 space-y-4" aria-labelledby="custom-lane-heading">
-              <div>
-                <h2 id="custom-lane-heading" className="text-lg font-semibold ui-text">Or name a lane</h2>
-                <p className="text-sm ui-text-muted mt-1">Use a short specialization such as “Kubernetes security” or “incident response”.</p>
-              </div>
-              <label className="ui-field-label" htmlFor="custom-lane">Specialization lane</label>
-              <input id="custom-lane" className="ui-field w-full" value={customLane} maxLength={100} onChange={(event) => { setCustomLane(event.target.value); setSelectedOption(null); setError('') }} placeholder="e.g. Kubernetes security" disabled={working} />
-              <ProfileControls level={level} timeCommitment={timeCommitment} onLevelChange={setLevel} onTimeChange={setTimeCommitment} disabled={working} />
-              {error && <div className="ui-alert ui-alert-danger" role="alert">{error}</div>}
-              <div className="flex flex-wrap gap-3 pt-2">
-                <button type="button" className="ui-button ui-button-primary" onClick={handleGenerate} disabled={working || !lane}>{working ? 'Preparing...' : 'Generate advanced course'}</button>
-                <button type="button" className="ui-button ui-button-secondary" onClick={() => navigate('/')}>Cancel</button>
-              </div>
-            </section>
-          </div>
-        )}
-
-        {step === 'generating' && (
-          <div className="ui-panel p-8 text-center">
-            <div className="ui-spinner mx-auto mb-4" role="status" aria-label="Generating advanced course" />
-            <h1 className="text-xl font-bold ui-text">Designing {lane}</h1>
-            <p className="mt-2 ui-text-secondary">Using your completed outcomes, strengths, and gaps to shape a finite practical course.</p>
-          </div>
-        )}
-
-        {step === 'review' && curriculum && (
-          <div className="space-y-4">
-            <div className="ui-panel p-4 sm:p-5">
-              <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">Advanced lane · Stage {(readiness.course.course_stage || 0) + 1}</p>
-              <h1 className="mt-1 text-2xl font-bold ui-text">Review {lane}</h1>
-              <p className="mt-2 text-sm ui-text-secondary">This draft is temporary. Confirm only when the modules and hands-on tasks fit your goal.</p>
-              <ProfileControls level={level} timeCommitment={timeCommitment} onLevelChange={setLevel} onTimeChange={setTimeCommitment} disabled={working} />
-            </div>
-            <CurriculumConfirmation curriculum={curriculum} onConfirm={handleConfirm} onTweak={handleTweak} onRegenerate={handleRegenerate} onBack={() => { setStep('choose'); setError('') }} submitting={working} error={error} />
-          </div>
+              </section>
+            )}
+          </>
         )}
       </main>
     </div>
