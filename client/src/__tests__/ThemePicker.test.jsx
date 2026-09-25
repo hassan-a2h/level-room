@@ -12,7 +12,11 @@ describe('ThemePicker', () => {
     expect(screen.getByRole('group', { name: 'Dark themes' })).toBeInTheDocument()
     expect(screen.getAllByRole('radio')).toHaveLength(16)
     expect(screen.getByRole('radio', { name: /Morning Mist/ })).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Morning Mist/ }).closest('.theme-card')).toHaveClass('is-selected')
+    expect(screen.getByText('Selected')).toBeInTheDocument()
     expect(screen.getByText(/applies immediately and is saved in this browser when you choose it/i)).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-theme-preview]')).toHaveLength(16)
+    expect(screen.getByTestId('theme-preview-morning-mist').querySelectorAll('[role="presentation"]')).toHaveLength(7)
   })
 
   it('applies a selected theme immediately and can reset to Morning Mist', () => {
