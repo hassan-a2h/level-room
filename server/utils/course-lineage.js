@@ -1,7 +1,6 @@
 import { all, get, run, transaction } from '../db.js'
 import { publicOutcome } from './outcome-manifest.js'
 
-const MAX_ACTIVE_TOPICS = 3
 const MAX_SUMMARY_ITEMS = 20
 const MAX_SUMMARY_TEXT = 500
 const MAX_SUMMARY_OUTCOMES = 50
@@ -39,10 +38,27 @@ function appendUnique(target, value) {
 }
 
 function appendUniqueOutcome(target, seen, value) {
+  if (typeof value === 'string') {
+    const title = capText(value)
+    const key = `title:${title.normalize('NFKC').toLocaleLowerCase('en-US')}`
+    if (!title || seen.has(key) || target.length >= MAX_SUMMARY_OUTCOMES) return
+    seen.add(key)
+    target.push(title)
+    return
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.id !== 'string' || typeof value.title !== 'string') return
   if (seen.has(value.id) || target.length >= MAX_SUMMARY_OUTCOMES) return
   seen.add(value.id)
   target.push(publicOutcome(value))
+}
+
+export function getActiveRootTrailCount() {
+  return get(
+    `SELECT COUNT(*) AS count
+     FROM topics t
+     WHERE t.status = 'active'
+       AND NOT EXISTS (SELECT 1 FROM course_links cl WHERE cl.child_topic_id = t.id)`,
+  ).count
 }
 
 export function getCourseReadiness(topicId) {
@@ -286,7 +302,7 @@ function persistCurriculumInTransaction(topicId, curriculum) {
 
 export function createLinkedCourse(parentTopicId, { lane, level = null, timeCommitment = null, curriculum } = {}) {
   const normalizedLane = normalizeLane(lane)
-  if (!normalizedLane || normalizedLane.length > 100) throw new CourseLineageError('A valid lane is required.', 'INVALID_LANE', 400)
+  if (normalizedLane !== 'balanced-next') throw new CourseLineageError('Continuation Tracks use the balanced-next lane.', 'INVALID_LANE', 400)
   if (!curriculum || !Array.isArray(curriculum.modules) || curriculum.modules.length === 0) {
     throw new CourseLineageError('A prepared curriculum is required.', 'INVALID_CURRICULUM', 400)
   }
@@ -298,11 +314,9 @@ export function createLinkedCourse(parentTopicId, { lane, level = null, timeComm
     if (!readiness.eligible || parent.status !== 'completed') {
       throw new CourseLineageError('The prerequisite course is not complete.', 'PARENT_NOT_COMPLETE', 409)
     }
-    if (get('SELECT 1 FROM course_links WHERE parent_topic_id = ? AND normalized_lane = ?', parentTopicId, normalizedLane)) {
-      throw new CourseLineageError('A course already exists for this lane.', 'DUPLICATE_LANE', 409)
+    if (get('SELECT 1 FROM course_links WHERE parent_topic_id = ?', parentTopicId)) {
+      throw new CourseLineageError('This Track already has its one continuation.', 'TRAIL_ALREADY_CONTINUED', 409)
     }
-    const activeCount = get("SELECT COUNT(*) AS count FROM topics WHERE status = 'active'")
-    if (activeCount.count >= MAX_ACTIVE_TOPICS) throw new CourseLineageError('The active course limit has been reached.', 'ACTIVE_TOPIC_LIMIT', 409)
     const title = String(curriculum.title || `${parent.title}: ${lane}`).trim().slice(0, 100)
     const child = run(
       `INSERT INTO topics (title, status, level, time_per_week, goal, course_kind, course_stage, course_focus, last_active_at)

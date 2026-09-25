@@ -218,6 +218,19 @@ describe('Dashboard API', () => {
       const res = await request(app).post('/api/topics').send({ title: 'D' })
       expect(res.status).toBe(201)
     })
+
+    it('counts active root Trails but not their linked continuation Tracks toward the limit', async () => {
+      dbModule.run("INSERT INTO topics (title, status) VALUES ('Root one', 'active')")
+      dbModule.run("INSERT INTO topics (title, status) VALUES ('Root two', 'active')")
+      const parent = dbModule.run("INSERT INTO topics (title, status) VALUES ('Completed parent', 'completed')")
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Continuation', 'active', 'advanced', 1)")
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'balanced-next', 'balanced-next')
+
+      const response = await request(app).post('/api/topics').send({ title: 'Root three' })
+
+      expect(response.status).toBe(201)
+      expect(dbModule.get("SELECT COUNT(*) AS count FROM topics t WHERE t.status = 'active' AND NOT EXISTS (SELECT 1 FROM course_links cl WHERE cl.child_topic_id = t.id)").count).toBe(3)
+    })
   })
 
   describe('POST /api/topics/:id/select', () => {

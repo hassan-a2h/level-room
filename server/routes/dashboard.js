@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
-import { getLineage, CourseLineageError } from '../utils/course-lineage.js'
+import { getLineage, getActiveRootTrailCount, CourseLineageError } from '../utils/course-lineage.js'
 import { isGenerationStale } from '../utils/curriculum-recovery.js'
 import { publicOutcome } from '../utils/outcome-manifest.js'
 
@@ -322,8 +322,8 @@ router.post('/topics', (req, res) => {
     const sanitized = trimmed.replace(/<[^>]+>/g, '')
 
     // Check active topic limit
-    const activeCount = get("SELECT COUNT(*) as count FROM topics WHERE status = 'active'")
-    if (activeCount.count >= MAX_ACTIVE_TOPICS) {
+    const activeCount = getActiveRootTrailCount()
+    if (activeCount >= MAX_ACTIVE_TOPICS) {
       return res.status(400).json({
         error: `You can have up to ${MAX_ACTIVE_TOPICS} active topics. Archive one to start another.`,
       })

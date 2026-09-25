@@ -123,13 +123,13 @@ describe('course lineage utilities', () => {
     expect(() => dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId, child.topicId, 'Self', 'self')).toThrow(/CHECK/i)
   })
 
-  it('creates a linked advanced course with its curriculum and next stage atomically', () => {
+  it('creates a linked advanced Track with its curriculum and next stage atomically', () => {
     const parent = seedCourse(dbModule.default, { title: 'DevOps' })
     dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
     lineage.completeCourseIfEligible(parent.topicId)
 
     const created = lineage.createLinkedCourse(parent.topicId, {
-      lane: 'Cloud Security',
+      lane: 'balanced-next',
       curriculum: {
         modules: [{
           title: 'Identity foundations',
@@ -141,24 +141,53 @@ describe('course lineage utilities', () => {
     const link = dbModule.get('SELECT parent_topic_id, normalized_lane FROM course_links WHERE child_topic_id = ?', created.topic.id)
     const progress = dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', created.topic.id, created.firstLessonId)
 
-    expect(child).toMatchObject({ course_kind: 'advanced', course_stage: 1, course_focus: 'Cloud Security', status: 'active' })
-    expect(link).toMatchObject({ parent_topic_id: parent.topicId, normalized_lane: 'cloud security' })
+    expect(child).toMatchObject({ course_kind: 'advanced', course_stage: 1, course_focus: 'balanced-next', status: 'active' })
+    expect(link).toMatchObject({ parent_topic_id: parent.topicId, normalized_lane: 'balanced-next' })
     expect(progress.state).toBe('not_started')
   })
 
-  it('rejects duplicate lanes and active-topic capacity without partial child rows', () => {
+  it('rejects non-balanced continuation lane names without creating child rows', () => {
     const parent = seedCourse(dbModule.default, { title: 'DevOps' })
     dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
     lineage.completeCourseIfEligible(parent.topicId)
     const curriculum = { modules: [{ title: 'Basics', lessons: [{ title: 'One', outcomes: [], prerequisites: [] }] }] }
-    lineage.createLinkedCourse(parent.topicId, { lane: 'Cloud Security', curriculum })
+    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'Cloud Security', curriculum })).toThrow(/balanced-next/i)
+    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics WHERE course_kind = ?', 'advanced').count).toBe(0)
+  })
 
-    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: ' CLOUD   SECURITY ', curriculum })).toThrow(/already exists/i)
-    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics WHERE course_kind = ?', 'advanced').count).toBe(1)
+  it('allows a balanced continuation when the root limit is full of active root Trails', () => {
+    const parent = seedCourse(dbModule.default, { title: 'Completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    for (const title of ['Root one', 'Root two', 'Root three']) {
+      dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", title)
+    }
+    const otherParent = seedCourse(dbModule.default, { title: 'Other completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', otherParent.topicId)
+    lineage.completeCourseIfEligible(otherParent.topicId)
+    const alreadyLinked = seedCourse(dbModule.default, { title: 'Existing continuation' })
+    dbModule.run('UPDATE topics SET course_kind = ?, course_stage = ? WHERE id = ?', 'advanced', 1, alreadyLinked.topicId)
+    dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', alreadyLinked.topicId, otherParent.topicId, 'balanced-next', 'balanced-next')
 
-    dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", 'Existing 1')
-    dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", 'Existing 2')
-    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'Networking', curriculum })).toThrow(/active course limit/i)
+    const created = lineage.createLinkedCourse(parent.topicId, {
+      lane: 'balanced-next',
+      curriculum: { title: 'Next Track', modules: [{ title: 'Foundations', lessons: [{ title: 'Session one', outcomes: [], prerequisites: [] }] }] },
+    })
+
+    expect(created.topic.course_kind).toBe('advanced')
+    expect(dbModule.get("SELECT COUNT(*) AS count FROM topics WHERE status = 'active' AND id NOT IN (SELECT child_topic_id FROM course_links)").count).toBe(3)
+  })
+
+  it('permits only one child per completed Track and leaves no partial rows on a second attempt', () => {
+    const parent = seedCourse(dbModule.default, { title: 'Completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    const curriculum = { title: 'Next Track', modules: [{ title: 'Foundations', lessons: [{ title: 'Session one', outcomes: [], prerequisites: [] }] }] }
+    lineage.createLinkedCourse(parent.topicId, { lane: 'balanced-next', curriculum })
+    const topicCount = dbModule.get('SELECT COUNT(*) AS count FROM topics').count
+
+    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'balanced-next', curriculum })).toThrow(/one continuation|already has a child/i)
+    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics').count).toBe(topicCount)
     expect(dbModule.get('SELECT COUNT(*) AS count FROM course_links WHERE parent_topic_id = ?', parent.topicId).count).toBe(1)
   })
 })
