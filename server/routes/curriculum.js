@@ -4,7 +4,8 @@ import { streamText, generateText, LlmClientError } from '../llm/client.js'
 import { requireLlmConfig } from '../utils/llm-config.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 import { validateCurriculum as validateCurriculumDraft, collectCurriculumDraft, CurriculumDraftError, writeCurriculumSSE, writeCurriculumSSEError } from '../utils/curriculum-draft.js'
-import { persistCurriculumInTransaction } from '../utils/course-lineage.js'
+import { persistCurriculumInTransaction, collectLineageOutcomes } from '../utils/course-lineage.js'
+import { outcomeTitles, publicOutcome } from '../utils/outcome-manifest.js'
 import { evaluatePlacementScores, normalizePlacementQuestions, placementPublicQuestions } from '../utils/placement-assessment.js'
 import {
   CurriculumGenerationError,
@@ -100,19 +101,20 @@ async function generateCurriculum(topicTitle, level, timeCommitment, config, sig
   const system = `You are an expert curriculum designer. Generate an adaptive learning curriculum.
 Respond as a stream of JSON text representing a single object with this exact structure:
 {
-  "course": { "kind": "core", "stage": 0, "scope": "80/20 foundation" },
+  "course": { "kind": "core", "stage": 0, "focus": "" },
   "modules": [
     {
       "title": "Module Name",
       "summary": "The practical capability this module builds.",
-      "skill_outcomes": ["..."],
+      "skill_outcomes": [{"id":"stable-kebab-id","title":"...","kind":"knowledge|skill","role":"core|breadth","evidence":["activity|checkpoint|artifact"]}],
       "lessons": [
         {
           "title": "Lesson Name",
           "depth": "Beginner|Intermediate|Advanced",
           "estimated_time": 15,
-          "outcomes": ["By the end of this lesson, the learner can..."],
+          "outcomes": [{"id":"stable-kebab-id","title":"By the end of this session, the learner can...","kind":"knowledge|skill","role":"core|breadth","evidence":["activity|checkpoint|artifact"]}],
           "prerequisites": ["Lesson Name"],
+          "artifact_required": true,
           "task": {
             "title": "Build and verify a small local setup",
             "scenario": "A safe local scenario.",
@@ -135,7 +137,11 @@ Rules:
 - 3-5 modules total.
 - Each module has 3-5 lessons.
 - This is a finite 80/20 foundation course, not an endless syllabus.
-- Every lesson must have depth, estimated_time (minutes), outcomes (1-3 strings), and prerequisites (names of other lessons in the curriculum; empty for foundation lessons).
+- Every Chapter must declare unique outcome objects with stable lowercase kebab-case IDs, plain titles, kind (knowledge or skill), role (core or breadth), and a nonempty evidence subset of activity, checkpoint, and artifact.
+- Every Session outcome must exactly match its full Chapter outcome declaration. Every Chapter includes at least one knowledge and one skill outcome, and at least one core outcome.
+- Skill outcomes must include activity evidence. Each Session teaches one or more Chapter outcomes.
+- Every Session must have depth, estimated_time (minutes), and prerequisites (names of other Sessions in the curriculum; empty for foundation Sessions).
+- Select exactly one or two Builds per Chapter with artifact_required: true and a valid task. Other Sessions set artifact_required: false and omit task.
 - Prerequisites must reference lesson titles that exist in the curriculum.
 - No circular prerequisites. No lesson may list itself as a prerequisite.
 - The curriculum must form a valid DAG.
@@ -161,7 +167,13 @@ async function streamGeneratedCurriculum(topicId, topic, req, res) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const streamResult = await generateCurriculum(topic.title, topic.level, topic.time_per_week, config, request.signal)
       try {
-        const curriculum = await collectCurriculumDraft(streamResult.textStream, { enforceBounds: true, requireTasks: true })
+        const trackKind = topic.course_kind === 'advanced' ? 'continuation' : 'initial'
+        const curriculum = await collectCurriculumDraft(streamResult.textStream, {
+          enforceBounds: true,
+          requireTasks: true,
+          trackKind,
+          lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+        })
         completeCurriculumGeneration(topicId, token, curriculum)
         return writeCurriculumSSE(res, curriculum)
       } catch (error) {
@@ -596,7 +608,7 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
     const topic = get(
-      'SELECT id, title, level, time_per_week, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
+      'SELECT id, title, level, time_per_week, course_kind, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
       topicId,
     )
     if (!topic) {
@@ -649,7 +661,13 @@ router.post('/topics/:id/curriculum/confirm', (req, res) => {
     const existingModules = get('SELECT COUNT(*) AS count FROM modules WHERE topic_id = ?', topicId)?.count || 0
     const existingTask = get("SELECT 1 FROM lessons l JOIN modules m ON l.module_id = m.id WHERE m.topic_id = ? AND COALESCE(l.task_spec, '') <> '' LIMIT 1", topicId)
     const boundedCourse = existingModules === 0 || Boolean(existingTask) || curriculum.course !== undefined
-    const validation = validateCurriculumDraft(curriculum, { enforceBounds: boundedCourse, requireTasks: boundedCourse })
+    const trackKind = topic.course_kind === 'advanced' ? 'continuation' : 'initial'
+    const validation = validateCurriculumDraft(curriculum, {
+      enforceBounds: boundedCourse,
+      requireTasks: boundedCourse,
+      trackKind,
+      lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+    })
     if (!validation.valid) {
       return res.status(400).json({ error: validation.error })
     }
@@ -756,7 +774,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
           title: lesson.title,
           depth: lesson.depth,
           estimated_time: lesson.estimated_time,
-          outcomes,
+          outcomes: outcomes.map(publicOutcome).filter(Boolean),
           prerequisites,
           artifact_required: !!lesson.artifact_required,
           task_spec: taskSpec,
@@ -770,7 +788,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
         id: mod.id,
         title: mod.title,
         summary: mod.summary,
-        skill_outcomes: mod.skill_outcomes,
+        skill_outcomes: (() => { try { return JSON.parse(mod.skill_outcomes || '[]').map(publicOutcome).filter(Boolean) } catch { return [] } })(),
         lessons: lessonsWithProgress,
       }
     })
@@ -816,7 +834,7 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
       existingLessons.push(...lessons.map((l) => ({
         moduleTitle: mod.title,
         ...l,
-        outcomes: JSON.parse(l.outcomes || '[]'),
+        outcomes: JSON.parse(l.outcomes || '[]').map(publicOutcome).filter(Boolean),
         prerequisites: JSON.parse(l.prerequisites || '[]'),
         task: l.task_spec ? JSON.parse(l.task_spec) : undefined,
       })))
@@ -873,9 +891,15 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
       messages: [{ role: 'user', content: userContent }],
     })
 
+    const trackKind = get('SELECT course_kind FROM topics WHERE id = ?', topicId)?.course_kind === 'advanced' ? 'continuation' : 'initial'
     const updated = await collectCurriculumDraft(
       (async function* () { yield result.text || '' })(),
-      { enforceBounds: taskBackedCourse, requireTasks: taskBackedCourse },
+      {
+        enforceBounds: taskBackedCourse,
+        requireTasks: taskBackedCourse,
+        trackKind,
+        lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+      },
     )
 
     if (existingModules.length === 0) {
@@ -909,7 +933,7 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
 router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT title, level, time_per_week FROM topics WHERE id = ?', topicId)
+    const topic = get('SELECT title, level, time_per_week, course_kind FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -983,7 +1007,7 @@ Questions should cover the lesson's learning outcomes directly. Do not include m
     const result = await generateText({
       ...llmRequestOptions(config),
       system,
-      messages: [{ role: 'user', content: `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}` }],
+      messages: [{ role: 'user', content: `Lesson: ${lesson.title}\nOutcomes: ${outcomeTitles(outcomes).join(', ')}` }],
     })
 
     const parsed = JSON.parse(result.text)
@@ -1046,7 +1070,7 @@ Respond in strict JSON:
 }
 Pass requires score >= 80 AND no critical gaps. Be strict but fair. Do not include markdown formatting.`
 
-    const userContent = `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}\n\nUser answers:\n${answers.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
+    const userContent = `Lesson: ${lesson.title}\nOutcomes: ${outcomeTitles(outcomes).join(', ')}\n\nUser answers:\n${answers.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
 
     const result = await generateText({
       ...llmRequestOptions(config),

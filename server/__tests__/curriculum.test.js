@@ -20,17 +20,28 @@ vi.mock('../llm/client.js', () => ({
       hints: [],
       safety_notes: ['Use only systems you own.'],
     }
-    const modules = Array.from({ length: 3 }, (_, moduleIndex) => ({
-      title: `Foundations ${moduleIndex + 1}`,
-      lessons: Array.from({ length: 3 }, (_, lessonIndex) => ({
-        title: `Lesson ${moduleIndex + 1}.${lessonIndex + 1}`,
-        depth: 'Beginner',
-        estimated_time: 10,
-        outcomes: ['Understand basics'],
-        prerequisites: [],
-        task,
-      })),
-    }))
+    const modules = Array.from({ length: 3 }, (_, moduleIndex) => {
+      const outcomes = Array.from({ length: 3 }, (_, outcomeIndex) => ({
+        id: `chapter-${moduleIndex + 1}-outcome-${outcomeIndex + 1}`,
+        title: `Chapter ${moduleIndex + 1} capability ${outcomeIndex + 1}`,
+        kind: outcomeIndex === 1 ? 'skill' : 'knowledge',
+        role: 'core',
+        evidence: outcomeIndex === 1 ? ['activity'] : ['checkpoint'],
+      }))
+      return {
+        title: `Foundations ${moduleIndex + 1}`,
+        skill_outcomes: outcomes,
+        lessons: outcomes.map((outcome, lessonIndex) => ({
+          title: `Lesson ${moduleIndex + 1}.${lessonIndex + 1}`,
+          depth: 'Beginner',
+          estimated_time: 10,
+          outcomes: [outcome],
+          prerequisites: [],
+          artifact_required: lessonIndex === 2,
+          ...(lessonIndex === 2 ? { task } : {}),
+        })),
+      }
+    })
     const payload = JSON.stringify({ course: { kind: 'core', stage: 0 }, modules })
     return Promise.resolve({
       textStream: (async function* () {
@@ -66,17 +77,29 @@ vi.mock('../llm/client.js', () => ({
     }
     // Tweak / regenerate prompts contain existing curriculum context and ask for changes
     if (content.includes('User request:') || content.includes('updated full curriculum') || content.includes('Existing curriculum:')) {
+      const task = {
+        title: 'Local setup', scenario: 'Use a safe local fixture.', goal: 'Create and verify the requested behavior.',
+        constraints: ['Use test data only'], deliverables: ['Commands', 'Observed output'],
+        success_criteria: ['The behavior is observable', 'The result is reproducible'], estimated_time: 10,
+        primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+        free_fallback: { kind: 'no_software', description: 'Explain the expected local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+        hints: [], safety_notes: ['Use only systems you own.'],
+      }
       return Promise.resolve({
         text: JSON.stringify({
-          modules: [
-            {
-              title: 'Foundations',
-              lessons: [
-                { title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: ['Understand basics'], prerequisites: [] },
-                { title: 'Testing', depth: 'Intermediate', estimated_time: 20, outcomes: ['Write tests'], prerequisites: ['Intro'] },
-              ],
-            },
-          ],
+          modules: [{
+            title: 'Foundations',
+            skill_outcomes: [
+              { id: 'intro-knowledge', title: 'Explain the foundations', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] },
+              { id: 'testing-skill', title: 'Write and run tests', kind: 'skill', role: 'core', evidence: ['activity'] },
+              { id: 'testing-knowledge', title: 'Explain test coverage', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] },
+            ],
+            lessons: [
+              { title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: [{ id: 'intro-knowledge', title: 'Explain the foundations', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] }], prerequisites: [], artifact_required: false },
+              { title: 'Testing', depth: 'Intermediate', estimated_time: 20, outcomes: [{ id: 'testing-skill', title: 'Write and run tests', kind: 'skill', role: 'core', evidence: ['activity'] }], prerequisites: ['Intro'], artifact_required: false },
+              { title: 'Coverage Build', depth: 'Intermediate', estimated_time: 20, outcomes: [{ id: 'testing-knowledge', title: 'Explain test coverage', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] }], prerequisites: ['Testing'], artifact_required: true, task },
+            ],
+          }],
         }),
       })
     }
@@ -317,8 +340,17 @@ describe('Curriculum API', () => {
         modules: [
           {
             title: 'Foundations',
+            skill_outcomes: [
+              { id: 'react-knowledge', title: 'Explain React foundations', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] },
+              { id: 'react-skill', title: 'Build a React component', kind: 'skill', role: 'core', evidence: ['activity'] },
+            ],
             lessons: [
-              { title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: ['Understand basics'], prerequisites: [] },
+              { title: 'Intro', depth: 'Beginner', estimated_time: 10, outcomes: [{ id: 'react-knowledge', title: 'Explain React foundations', kind: 'knowledge', role: 'core', evidence: ['checkpoint'] }], prerequisites: [], artifact_required: false },
+              { title: 'Component Build', depth: 'Beginner', estimated_time: 10, outcomes: [{ id: 'react-skill', title: 'Build a React component', kind: 'skill', role: 'core', evidence: ['activity'] }], prerequisites: ['Intro'], artifact_required: true, task: {
+                title: 'Local setup', scenario: 'Use a safe local fixture.', goal: 'Create and verify the requested behavior.', constraints: ['Use test data only'], deliverables: ['Commands', 'Observed output'], success_criteria: ['The behavior is observable', 'The result is reproducible'], estimated_time: 10,
+                primary_setup: { kind: 'local', description: 'Run locally.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false },
+                free_fallback: { kind: 'no_software', description: 'Explain the expected local result.', requires_account: false, requires_payment: false, requires_secret: false, requires_external_target: false }, hints: [], safety_notes: ['Use only systems you own.'],
+              } },
             ],
           },
         ],
@@ -332,7 +364,7 @@ describe('Curriculum API', () => {
 
       // First lesson should have progress row in not_started (available)
       const allLessons = dbModule.all('SELECT l.id FROM lessons l JOIN modules m ON l.module_id = m.id WHERE m.topic_id = ?', topic.lastInsertRowid)
-      expect(allLessons.length).toBe(1)
+      expect(allLessons.length).toBe(2)
       const prog = dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topic.lastInsertRowid, allLessons[0].id)
       expect(prog.state).toBe('not_started')
     })

@@ -27,6 +27,7 @@ import {
   validatePersistedQuiz,
   validateWrittenEvaluation,
 } from '../utils/mixed-quiz.js'
+import { outcomeTitles } from '../utils/outcome-manifest.js'
 
 const router = Router()
 
@@ -173,7 +174,7 @@ function inferInteractionMode(title) {
  */
 function buildSystemPrompt({ mode, lessonTitle, lessonOutcomes, chunkNum, totalChunks, isFinal, difficultyInstruction = '' }) {
   const base = `You are an expert tutor teaching the lesson "${lessonTitle}".
-Learning outcomes: ${lessonOutcomes.join('; ')}.
+Learning outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}.
 This is chunk ${chunkNum} of ${totalChunks}.`
 
   let prompt = base
@@ -526,7 +527,7 @@ function buildQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficultyInst
   return `You are an expert tutor. Based on the following lesson context, generate 3-8 free-text quiz questions that test the learner's understanding of what was taught.
 
 Lesson: ${lessonTitle}
-Outcomes: ${lessonOutcomes.join('; ')}${adaptive}
+Outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
 
 Conversation context:
 ${context}
@@ -546,7 +547,7 @@ function buildMixedQuizPrompt({ lessonTitle, lessonOutcomes, messages, difficult
   const counts = mode === 'retest' ? 'exactly one multiple_choice and one written question' : 'exactly two multiple_choice and two written questions'
   return `You are an expert tutor. Generate ${counts} for the lesson "${lessonTitle}" based only on the material below.
 
-Lesson outcomes: ${lessonOutcomes.join('; ')}${adaptive}
+Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
 
 Conversation context:
 ${context}
@@ -564,7 +565,7 @@ function buildMixedEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, an
     .map((question) => `Question ${question.id}: ${question.prompt}\nAnswer: ${answers[question.id]}`)
     .join('\n\n')
   return `Evaluate only the written answers below for the lesson "${lessonTitle}". Do not evaluate or infer multiple-choice answers.
-Lesson outcomes: ${lessonOutcomes.join('; ')}
+Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
 Conversation context:
 ${context}
 
@@ -583,7 +584,7 @@ function buildRetestPrompt({ lessonTitle, lessonOutcomes, gaps, messages, diffic
   return `You are an expert tutor. The learner previously failed a quiz on "${lessonTitle}" and specifically struggled with these gaps:
 ${gaps.map((g) => `- ${g}`).join('\n')}
 
-Lesson outcomes: ${lessonOutcomes.join('; ')}${adaptive}
+Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}${adaptive}
 
 Conversation context:
 ${context}
@@ -610,7 +611,7 @@ function buildEvaluationPrompt({ lessonTitle, lessonOutcomes, questions, answers
   return `You are an expert tutor. Evaluate the following quiz answers against the lesson content.
 
 Lesson: ${lessonTitle}
-Outcomes: ${lessonOutcomes.join('; ')}
+Outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
 
 Conversation context:
 ${context}
@@ -1230,7 +1231,7 @@ router.post('/topics/:id/lessons/:lid/remediate/chat', async (req, res) => {
     const system = `You are an expert tutor. The learner is struggling with the lesson "${lesson.title}" and specifically these gaps:
 ${gaps.map((g) => `- ${g}`).join('\n')}
 
-Learning outcomes: ${outcomes.join('; ')}.
+Learning outcomes: ${outcomeTitles(outcomes).join('; ')}.
 This is a REMEDIATION message. Focus ONLY on the gaps above. Use a DIFFERENT explanation strategy from the original lesson (new analogy, new example, different framing). Keep the message under ~500 characters or 3 short paragraphs. Be encouraging, not punitive.
 
 ${difficultyInstruction}`
@@ -1453,7 +1454,7 @@ function buildArtifactEvaluationPrompt({ lessonTitle, lessonOutcomes, artifactCo
     : ''
   return `You are an expert reviewer evaluating a learner's artifact for the lesson "${lessonTitle}".
 
-Lesson outcomes: ${lessonOutcomes.join('; ')}
+Lesson outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
 ${taskContext}
 
 Artifact type: ${artifactType || 'code/text'}

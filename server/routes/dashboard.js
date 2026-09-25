@@ -2,10 +2,20 @@ import { Router } from 'express'
 import { get, run, all } from '../db.js'
 import { getLineage, CourseLineageError } from '../utils/course-lineage.js'
 import { isGenerationStale } from '../utils/curriculum-recovery.js'
+import { publicOutcome } from '../utils/outcome-manifest.js'
 
 const router = Router()
 
 const MAX_ACTIVE_TOPICS = 3
+
+function parsePublicOutcomes(value) {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed.map(publicOutcome).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
 
 function getTopicLineageRefs(topicId) {
   let lineage = []
@@ -227,7 +237,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
           title: lesson.title,
           depth: lesson.depth,
           estimated_time: lesson.estimated_time,
-          outcomes: lesson.outcomes,
+          outcomes: parsePublicOutcomes(lesson.outcomes),
           prerequisites,
           task_spec: taskSpec,
           state,
@@ -252,7 +262,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
         id: mod.id,
         title: mod.title,
         summary: mod.summary,
-        skill_outcomes: mod.skill_outcomes,
+        skill_outcomes: parsePublicOutcomes(mod.skill_outcomes),
         status: examStatus?.status || 'active',
         completedAt: examStatus?.completed_at || null,
         examReady,

@@ -11,6 +11,7 @@ import {
   scheduleCumulativeReviews,
 } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
+import { outcomeTitles } from '../utils/outcome-manifest.js'
 
 const router = Router()
 
@@ -32,7 +33,7 @@ function buildReviewQuestionsPrompt({ lessonTitle, lessonOutcomes, messages, num
   const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
   return `You are an expert tutor designing spaced-repetition retrieval questions for the lesson "${lessonTitle}".
 
-Learning outcomes: ${lessonOutcomes.join('; ')}
+Learning outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
 
 Conversation context (key concepts taught):
 ${context}
@@ -50,7 +51,7 @@ Return ONLY valid JSON with a "questions" array.`
  */
 function buildCumulativeReviewPrompt({ moduleTitle, lessons, numQuestions }) {
   const lessonsContext = lessons.map((l) => {
-    return `Lesson: ${l.title}\nOutcomes: ${l.outcomes.join('; ')}`
+    return `Lesson: ${l.title}\nOutcomes: ${outcomeTitles(l.outcomes).join('; ')}`
   }).join('\n\n')
 
   return `You are an expert tutor designing a cumulative review for the module "${moduleTitle}".

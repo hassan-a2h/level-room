@@ -7,6 +7,7 @@ import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
 import { completeCourseIfEligibleInTransaction } from '../utils/course-lineage.js'
+import { outcomeTitles } from '../utils/outcome-manifest.js'
 
 const router = Router()
 
@@ -78,7 +79,7 @@ function buildExamGenerationPrompt({ moduleTitle, lessons, topicTitle }) {
 
   const lessonsContext = lessons.map((l) => {
     return `Lesson: ${l.title}
-Outcomes: ${l.outcomes.join('; ')}
+Outcomes: ${outcomeTitles(l.outcomes).join('; ')}
 lessonId: ${l.id}`
   }).join('\n\n')
 
@@ -152,7 +153,7 @@ Scoring rules:
  */
 function buildPartialRetestPrompt({ weakLessons, moduleTitle, topicTitle }) {
   const lessonsContext = weakLessons.map((l) => {
-    return `Lesson: ${l.title}\nOutcomes: ${l.outcomes.join('; ')}\nlessonId: ${l.id}`
+    return `Lesson: ${l.title}\nOutcomes: ${outcomeTitles(l.outcomes).join('; ')}\nlessonId: ${l.id}`
   }).join('\n\n')
 
   return `You are an expert assessment designer. The learner failed the module exam for "${topicTitle}" — module "${moduleTitle}".

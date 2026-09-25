@@ -112,9 +112,10 @@ describe('Dashboard API', () => {
 
     it('returns dashboard data with modules, lessons, and progress', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Basics")
-      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, prerequisites) VALUES (?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 0, "JSX", "Beginner", 10, "[]")
+      const outcome = { id: 'write-jsx', title: 'Write JSX', kind: 'skill', role: 'core', evidence: ['activity'] }
+      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)", topic.lastInsertRowid, 0, "Basics", JSON.stringify([outcome]))
+      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        mod.lastInsertRowid, 0, "JSX", "Beginner", 10, JSON.stringify([outcome]), "[]")
       const l2 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, prerequisites) VALUES (?, ?, ?, ?, ?, ?)",
         mod.lastInsertRowid, 1, "Components", "Beginner", 15, JSON.stringify([{ lessonId: l1.lastInsertRowid, title: "JSX" }]))
 
@@ -129,6 +130,8 @@ describe('Dashboard API', () => {
       expect(res.body.modules).toHaveLength(1)
       expect(res.body.modules[0].lessons).toHaveLength(2)
       expect(res.body.modules[0].lessons[0].state).toBe("passed")
+      expect(res.body.modules[0].skill_outcomes).toEqual([outcome])
+      expect(res.body.modules[0].lessons[0].outcomes).toEqual([outcome])
       expect(res.body.modules[0].lessons[1].state).toBe("not_started")
       expect(res.body.modules[0].lessons[1].prerequisites).toHaveLength(1)
     })

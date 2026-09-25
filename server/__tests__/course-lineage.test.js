@@ -12,14 +12,19 @@ function seedCourse(db, { title = 'DevOps', moduleCount = 1, lessonsPerModule = 
   const lessonIds = []
   const moduleIds = []
   for (let moduleIndex = 0; moduleIndex < moduleCount; moduleIndex += 1) {
-    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(topic.lastInsertRowid, moduleIndex, `Module ${moduleIndex + 1}`)
+    const moduleOutcomes = Array.from({ length: lessonsPerModule }, (_, lessonIndex) => ({
+      id: `outcome-${moduleIndex + 1}-${lessonIndex + 1}`,
+      title: `Outcome ${moduleIndex + 1}.${lessonIndex + 1}`,
+      kind: 'skill', role: 'core', evidence: ['activity'],
+    }))
+    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)').run(topic.lastInsertRowid, moduleIndex, `Module ${moduleIndex + 1}`, JSON.stringify(moduleOutcomes))
     moduleIds.push(Number(module.lastInsertRowid))
     for (let lessonIndex = 0; lessonIndex < lessonsPerModule; lessonIndex += 1) {
       const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title, outcomes) VALUES (?, ?, ?, ?)').run(
         module.lastInsertRowid,
         lessonIndex,
         `Lesson ${moduleIndex + 1}.${lessonIndex + 1}`,
-        JSON.stringify([`Outcome ${moduleIndex + 1}.${lessonIndex + 1}`]),
+        JSON.stringify([moduleOutcomes[lessonIndex]]),
       )
       lessonIds.push(Number(lesson.lastInsertRowid))
       db.prepare('INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)').run(topic.lastInsertRowid, lesson.lastInsertRowid, 'passed', 80)
@@ -71,7 +76,8 @@ describe('course lineage utilities', () => {
     const summary = lineage.buildCourseSummary(seeded.topicId)
 
     expect(summary).toMatchObject({ topicId: seeded.topicId, title: 'DevOps' })
-    expect(summary.outcomes).toContain('Outcome 1.1')
+    expect(summary.outcomes).toContainEqual(expect.objectContaining({ id: 'outcome-1-1', title: 'Outcome 1.1' }))
+    expect(summary.strengths).toContainEqual(expect.objectContaining({ id: 'outcome-1-1', title: 'Outcome 1.1' }))
     expect(JSON.stringify(summary).length).toBeLessThan(12000)
   })
 
@@ -97,6 +103,18 @@ describe('course lineage utilities', () => {
 
     expect(lineage.getLineage(child.topicId).map((entry) => entry.id)).toEqual([parent.topicId, child.topicId])
     expect(() => dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId + 1, parent.topicId, 'CLOUD   SECURITY', 'cloud security')).toThrow(/UNIQUE/i)
+  })
+
+  it('collects prior structured outcomes across ancestry without duplicate IDs', () => {
+    const parent = seedCourse(dbModule.default, { title: 'DevOps', moduleCount: 1, lessonsPerModule: 1 })
+    dbModule.run('INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)', parent.topicId, 1, 'Duplicate', JSON.stringify([{ id: 'outcome-1-1', title: 'Repeated' }]))
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    const child = seedCourse(dbModule.default, { title: 'Cloud Security', moduleCount: 1, lessonsPerModule: 1 })
+    dbModule.run('UPDATE topics SET course_kind = ?, course_stage = ? WHERE id = ?', 'advanced', 1, child.topicId)
+    dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId, parent.topicId, 'Cloud Security', 'cloud security')
+
+    expect(lineage.collectLineageOutcomes(child.topicId)).toEqual([{ id: 'outcome-1-1', title: 'Outcome 1.1' }])
   })
 
   it('rejects a link to a missing parent and self-links at the database boundary', () => {
