@@ -128,7 +128,7 @@ function ChatMessage({ message, isStreaming }) {
         }`}
       >
         <span className="sr-only">{isUser ? 'You: ' : 'Tutor: '}</span>
-        {isUser ? message.content : <MarkdownContent content={message.content} />}
+        {message.role === 'assistant' ? <MarkdownContent content={message.content} /> : message.content}
         {isStreaming && (
           <span className="inline-block ml-1 w-1.5 h-4 bg-current opacity-50 animate-pulse" />
         )}
