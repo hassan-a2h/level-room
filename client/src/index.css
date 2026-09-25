@@ -92,6 +92,54 @@ body {
 .ui-message { overflow-wrap: anywhere; border: 1px solid; }
 .ui-message-user { color: var(--ui-user-bubble-text); background: var(--ui-user-bubble); border-color: var(--ui-user-bubble-border); }
 .ui-message-tutor { color: var(--ui-tutor-bubble-text); background: var(--ui-tutor-bubble); border-color: var(--ui-divider); }
+.ui-markdown { min-width: 0; overflow-wrap: anywhere; }
+.ui-markdown > :first-child { margin-top: 0; }
+.ui-markdown > :last-child { margin-bottom: 0; }
+.ui-markdown p { margin: 0.5rem 0; }
+.ui-markdown h1, .ui-markdown h2, .ui-markdown h3, .ui-markdown h4, .ui-markdown h5, .ui-markdown h6 {
+  margin: 0.9rem 0 0.35rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.ui-markdown h1 { font-size: 1.5rem; }
+.ui-markdown h2 { font-size: 1.3rem; }
+.ui-markdown h3 { font-size: 1.15rem; }
+.ui-markdown h4, .ui-markdown h5, .ui-markdown h6 { font-size: 1rem; }
+.ui-markdown ul, .ui-markdown ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+.ui-markdown li + li { margin-top: 0.25rem; }
+.ui-markdown a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 0.12em; }
+.ui-markdown code {
+  border: 1px solid var(--ui-divider);
+  border-radius: 0.3rem;
+  padding: 0.1em 0.3em;
+  color: var(--ui-text);
+  background: var(--ui-surface-inset);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.875em;
+}
+.ui-markdown pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  color: var(--ui-text);
+  background: var(--ui-surface-inset);
+  white-space: pre;
+}
+.ui-markdown pre code {
+  display: block;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 0.875rem;
+  overflow-wrap: normal;
+  white-space: pre;
+}
 .ui-composer { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
 .ui-skeleton { border-radius: 0.5rem; background: var(--ui-track); opacity: 0.78; }
 .ui-offline-banner { position: fixed; z-index: 100; inset: 0 0 auto; display: flex; min-height: 3rem; align-items: center; justify-content: center; gap: 0.75rem; border: 0; border-bottom: 1px solid var(--ui-warning-border); border-radius: 0; padding: 0.5rem 1rem; color: var(--ui-warning-text); background: var(--ui-warning-bg); font-size: 0.875rem; text-align: center; }
