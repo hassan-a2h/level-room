@@ -106,6 +106,8 @@ body {
 .ui-markdown h3 { font-size: 1.15rem; }
 .ui-markdown h4, .ui-markdown h5, .ui-markdown h6 { font-size: 1rem; }
 .ui-markdown ul, .ui-markdown ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+.ui-markdown ul { list-style-type: disc; }
+.ui-markdown ol { list-style-type: decimal; }
 .ui-markdown li + li { margin-top: 0.25rem; }
 .ui-markdown a { color: var(--ui-link); text-decoration: underline; text-underline-offset: 0.12em; }
 .ui-markdown code {
