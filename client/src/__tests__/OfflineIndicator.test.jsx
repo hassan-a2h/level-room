@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import OfflineIndicator from '../components/OfflineIndicator.jsx'
 
 describe('OfflineIndicator', () => {
@@ -34,9 +34,11 @@ describe('OfflineIndicator', () => {
     await waitFor(() => {
       expect(screen.getByTestId('offline-banner')).toBeInTheDocument()
     })
-    expect(screen.getByText(/cannot reach the learning engine/i)).toBeInTheDocument()
+    expect(screen.getByText(/learning service is unavailable/i)).toBeInTheDocument()
+    expect(screen.getByText(/saved learning data remains on this device/i)).toBeInTheDocument()
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveClass('ui-alert-warning')
+    expect(document.querySelector('.animate-pulse')).not.toBeInTheDocument()
   })
 
   it('can be dismissed', async () => {
@@ -59,9 +61,19 @@ describe('OfflineIndicator', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
     // Advance timers to trigger next poll
-    vi.advanceTimersByTime(15000)
+    act(() => vi.advanceTimersByTime(15000))
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
     })
+  })
+
+  it('offers a manual retry and clears the banner when the service returns', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('Connection refused')).mockResolvedValueOnce({ ok: true })
+    render(<OfflineIndicator />)
+    const retry = await screen.findByRole('button', { name: /retry connection/i })
+    fireEvent.click(retry)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByTestId('offline-banner')).not.toBeInTheDocument())
   })
 })

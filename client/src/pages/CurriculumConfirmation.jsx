@@ -1,187 +1,220 @@
-import { useState, useCallback, useId } from 'react'
+import { useMemo, useState, useCallback, useId } from 'react'
 
-function LessonCard({ lesson }) {
+function getChapters(curriculum) {
+  return Array.isArray(curriculum?.modules) ? curriculum.modules : []
+}
+
+function getOutcomes(chapter) {
+  return Array.isArray(chapter?.skill_outcomes) ? chapter.skill_outcomes.filter((outcome) => outcome && typeof outcome.title === 'string') : []
+}
+
+function getSessionOutcomes(session) {
+  return Array.isArray(session?.outcomes) ? session.outcomes.filter((outcome) => outcome && typeof outcome.title === 'string') : []
+}
+
+function isBuild(session) {
+  return Boolean(session?.artifact_required || session?.task_spec || getSessionOutcomes(session).some((outcome) => outcome.evidence?.includes('artifact')))
+}
+
+function ChapterSession({ session, index }) {
   const [expanded, setExpanded] = useState(false)
   const detailsId = useId()
+  const outcomes = getSessionOutcomes(session)
+  const prerequisites = Array.isArray(session?.prerequisites)
+    ? session.prerequisites.filter((prerequisite) => typeof prerequisite?.title === 'string' && prerequisite.title.trim())
+    : []
 
   return (
-    <div className="ui-surface-flat rounded-lg border border-gray-200 p-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="text-gray-500 hover:text-gray-700 focus:outline-none"
-            aria-label={expanded ? 'Collapse lesson details' : 'Expand lesson details'}
-            aria-expanded={expanded}
-            aria-controls={detailsId}
-          >
-            {expanded ? '▼' : '▶'}
-          </button>
-          <span className="font-medium text-gray-900">{lesson.title}</span>
+    <article className="ui-session-preview ui-surface ui-surface-flat">
+      <div className="ui-session-preview-heading">
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="ui-disclosure-button"
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} Session details`}
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+        >
+          <span aria-hidden="true">{expanded ? '−' : '+'}</span>
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="ui-text-muted text-xs">Session {index + 1}</p>
+          <h3 className="ui-text font-semibold">{session.title}</h3>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600">
-            {lesson.depth}
-          </span>
-          <span className="text-xs text-gray-500">~{lesson.estimated_time} min</span>
-          {lesson.artifact_required && (
-            <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-700" title="This lesson requires an artifact submission">
-              📝 Artifact
-            </span>
-          )}
+        <div className="ui-session-preview-meta">
+          {Number.isFinite(session.estimated_time) && <span className="ui-text-muted text-sm">About {session.estimated_time} min</span>}
+          {isBuild(session) && <span className="ui-build-marker" aria-label="Practical Build">Build</span>}
         </div>
       </div>
-
       {expanded && (
-        <div id={detailsId} className="mt-3 pl-6 text-sm text-gray-700 space-y-2">
+        <div id={detailsId} className="ui-session-preview-details" role="region" aria-label={`${session.title} details`}>
           <div>
-            <span className="font-medium text-gray-900">Outcomes:</span>
-            <ul className="list-disc list-inside mt-1 space-y-0.5">
-              {lesson.outcomes?.map((o, i) => (
-                <li key={i}>{o}</li>
-              ))}
-            </ul>
+            <h4 className="ui-text-secondary text-sm font-semibold">Outcomes</h4>
+            {outcomes.length > 0 ? (
+              <ul className="ui-outcome-list">
+                {outcomes.map((outcome) => <li key={outcome.id}>{outcome.title}</li>)}
+              </ul>
+            ) : <p className="ui-text-muted text-sm">This Session contributes to its Chapter outcomes.</p>}
           </div>
-          {lesson.prerequisites && lesson.prerequisites.length > 0 && (
-            <div>
-              <span className="font-medium text-gray-900">Prerequisites:</span>{' '}
-              {lesson.prerequisites.map((pr) => pr.title || `Lesson ${pr.lessonId}`).join(', ')}
+          {prerequisites.length > 0 && (
+            <div className="ui-session-prerequisites">
+              <h4 className="ui-text-secondary text-sm font-semibold">Session prerequisites</h4>
+              <ul className="ui-outcome-list">{prerequisites.map((prerequisite) => <li key={prerequisite.lessonId || prerequisite.title}>{prerequisite.title}</li>)}</ul>
             </div>
           )}
+          {session.task_spec?.title && <p className="ui-text-secondary text-sm"><strong>Build:</strong> {session.task_spec.title}</p>}
         </div>
       )}
-    </div>
+    </article>
   )
 }
 
 export default function CurriculumConfirmation({
   curriculum,
+  topicName = '',
+  timeCommitment = '',
+  pace = '',
   onConfirm,
   onTweak,
   onRegenerate,
   onBack,
-  submitting,
-  error,
+  submitting = false,
+  error = '',
+  isTrackSetup = false,
 }) {
-  const [tweakText, setTweakText] = useState('')
-  const [showTweakInput, setShowTweakInput] = useState(false)
+  const [adjusting, setAdjusting] = useState(false)
+  const [adjustment, setAdjustment] = useState('')
+  const chapters = getChapters(curriculum)
+  const summary = useMemo(() => {
+    const outcomesById = new Map()
+    for (const chapter of chapters) {
+      for (const outcome of getOutcomes(chapter)) {
+        if (outcome.id && !outcomesById.has(outcome.id)) outcomesById.set(outcome.id, outcome)
+      }
+    }
+    const outcomes = [...outcomesById.values()]
+    return {
+      outcomes: outcomes.length,
+      core: outcomes.filter((outcome) => outcome.role === 'core').length,
+      breadth: outcomes.filter((outcome) => outcome.role === 'breadth').length,
+      builds: chapters.flatMap((chapter) => Array.isArray(chapter.lessons) ? chapter.lessons : []).filter(isBuild),
+    }
+  }, [chapters])
 
-  const handleTweakSubmit = useCallback(() => {
-    if (!tweakText.trim()) return
-    onTweak(tweakText.trim())
-    setTweakText('')
-    setShowTweakInput(false)
-  }, [tweakText, onTweak])
-
-  const modules = curriculum?.modules || []
-  const isAdvanced = curriculum?.course?.kind === 'advanced'
-  const stage = Number(curriculum?.course?.stage || 0)
+  const handleAdjustmentSubmit = useCallback((event) => {
+    event.preventDefault()
+    const request = adjustment.trim()
+    if (!request || submitting) return
+    onTweak?.(request)
+    setAdjustment('')
+    setAdjusting(false)
+  }, [adjustment, onTweak, submitting])
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">
-            {isAdvanced ? `Advanced lane · Stage ${stage}` : 'Core course · 80/20 foundation'}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold ui-text">{isAdvanced ? 'Review your next specialization' : 'Your 80/20 Learning Foundation'}</h1>
-        </div>
-        <button
-          onClick={onBack}
-          className="text-sm text-gray-500 hover:text-gray-700 underline"
-        >
-          Back
-        </button>
-      </div>
+    <section className="ui-track-preview space-y-6" aria-labelledby="track-preview-title">
+      <header className="ui-track-preview-header">
+        <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">Track preview</p>
+        <h1 id="track-preview-title" className="mt-1 text-2xl font-bold ui-text">
+          {topicName ? `${topicName} Track preview` : 'Your Track preview'}
+        </h1>
+        <p className="ui-text-secondary mt-3">
+          This Track focuses on the outcomes you will use most, then adds a smaller breadth set to connect them to the wider field.
+        </p>
+        <p className="ui-outcome-summary mt-4" aria-label="Track outcome summary">
+          {summary.outcomes} outcomes · {summary.core} core · {summary.breadth} breadth
+        </p>
+      </header>
 
-      {error && (
-        <div className="ui-alert ui-alert-danger" role="alert">
-          {error}
-        </div>
+      {error && <div className="ui-alert ui-alert-danger" role="alert">{error}</div>}
+
+      <section className="ui-preview-summary-grid" aria-label="Track at a glance">
+        <article className="ui-summary-card">
+          <h2 className="ui-text-secondary text-sm font-semibold">Chapters</h2>
+          <p className="ui-text mt-1 text-2xl font-bold">{chapters.length}</p>
+          <p className="ui-text-muted text-sm">Each Chapter ends with a checkpoint that revisits its core outcomes.</p>
+        </article>
+        <article className="ui-summary-card">
+          <h2 className="ui-text-secondary text-sm font-semibold">Learning rhythm</h2>
+          <p className="ui-text mt-1 font-semibold">{[timeCommitment, pace].filter(Boolean).join(' · ') || 'Set for your schedule'}</p>
+          <p className="ui-text-muted text-sm">A practical pace that leaves room to revisit important ideas.</p>
+        </article>
+        <article className="ui-summary-card">
+          <h2 className="ui-text-secondary text-sm font-semibold">Practical Builds</h2>
+          <p className="ui-text mt-1 text-2xl font-bold">{summary.builds.length}</p>
+          <p className="ui-text-muted text-sm">Apply the outcomes in useful, concrete work.</p>
+        </article>
+      </section>
+
+      {summary.breadth > 0 && (
+        <section className="ui-breadth-note" aria-label="Breadth outcomes">
+          <h2 className="ui-text-secondary text-sm font-semibold">A little wider context</h2>
+          <ul className="ui-outcome-list">
+            {chapters.flatMap((chapter) => getOutcomes(chapter).filter((outcome) => outcome.role === 'breadth').map((outcome) => (
+              <li key={outcome.id}><span className="ui-outcome-role ui-outcome-breadth">Breadth</span> {outcome.title}</li>
+            )))}
+          </ul>
+        </section>
       )}
 
-      {!isAdvanced && (
-        <div className="ui-alert ui-alert-neutral" role="note">
-          This is a finite first course: complete each module checkpoint to reach the end milestone. You can then start a separate advanced lane.
-        </div>
-      )}
-
-      <div className="space-y-6">
-        {modules.map((mod, mi) => (
-          <div key={mi} className="space-y-3">
-            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-              <span className="ui-module-number inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-bold">
-                {mi + 1}
-              </span>
-              {mod.title}
-            </h3>
-            <div className="space-y-2 pl-9">
-              {mod.lessons.map((lesson) => (
-                <LessonCard
-                  key={lesson.id || lesson.title}
-                  lesson={lesson}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+      <div className="ui-chapter-list" aria-label="Track outline">
+        {chapters.map((chapter, chapterIndex) => {
+          const outcomes = getOutcomes(chapter)
+          const sessions = Array.isArray(chapter.lessons) ? chapter.lessons : []
+          return (
+            <section key={chapter.id || chapter.title} className="ui-chapter-preview" aria-labelledby={`chapter-${chapterIndex + 1}`}>
+              <header className="ui-chapter-preview-heading">
+                <h2 id={`chapter-${chapterIndex + 1}`} className="ui-text text-lg font-semibold">Chapter {chapterIndex + 1} · {chapter.title}</h2>
+                <p className="ui-text-muted text-sm">{sessions.length} Sessions · {outcomes.length} outcomes</p>
+              </header>
+              <ul className="ui-chapter-outcomes">
+                {outcomes.map((outcome) => (
+                  <li key={outcome.id} className="ui-chapter-outcome">
+                    <span className={`ui-outcome-role ${outcome.role === 'breadth' ? 'ui-outcome-breadth' : 'ui-outcome-core'}`}>
+                      {outcome.role === 'breadth' ? 'Breadth' : 'Core'}
+                    </span>
+                    <span className="ui-text">{outcome.title}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="ui-session-list">
+                {sessions.map((session, sessionIndex) => <ChapterSession key={session.id || session.title} session={session} index={sessionIndex} />)}
+              </div>
+            </section>
+          )
+        })}
       </div>
 
-      {/* Actions */}
-      <div className="ui-curriculum-actions flex flex-col gap-3 pt-4 border-t border-gray-200">
-        {!showTweakInput && (
+      <div className="ui-track-preview-actions">
+        {!adjusting ? (
           <div className="flex flex-wrap gap-3">
-            <button
-              onClick={onConfirm}
-              disabled={submitting}
-              className="rounded-lg bg-indigo-600 px-6 py-3 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {submitting ? 'Saving...' : 'Accept & Start'}
+            <button type="button" onClick={onConfirm} disabled={submitting} className="ui-button ui-button-primary">
+              {isTrackSetup ? (submitting ? 'Adding to your Trail…' : 'Add to my Trail') : (submitting ? 'Saving...' : 'Accept & Start')}
             </button>
-            <button
-              onClick={() => setShowTweakInput(true)}
-              disabled={submitting}
-              className="rounded-lg border border-gray-300 px-6 py-3 text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-            >
-              Tweak
-            </button>
-            <button
-              onClick={onRegenerate}
-              disabled={submitting}
-              className="rounded-lg border border-gray-300 px-6 py-3 text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-            >
-              Regenerate
-            </button>
+            <button type="button" onClick={() => setAdjusting(true)} disabled={submitting} className="ui-button ui-button-secondary">{isTrackSetup ? 'Adjust plan' : 'Tweak'}</button>
+            {isTrackSetup
+              ? <button type="button" onClick={onBack} disabled={submitting} className="ui-button ui-button-quiet">Not now</button>
+              : <button type="button" onClick={onRegenerate} disabled={submitting} className="ui-button ui-button-secondary">Regenerate</button>}
           </div>
-        )}
-
-        {showTweakInput && (
-          <div className="flex flex-col gap-2">
+        ) : (
+          <form className="ui-adjustment-panel space-y-3" onSubmit={handleAdjustmentSubmit}>
+            <label htmlFor="track-adjustment" className="ui-field-label">{isTrackSetup ? 'What would you like to adjust?' : 'Request changes'}</label>
             <textarea
-              value={tweakText}
-              onChange={(e) => setTweakText(e.target.value)}
-              placeholder="Request changes, e.g., 'Add a module on testing' or 'Make it more beginner-friendly'"
+              id="track-adjustment"
+              value={adjustment}
+              onChange={(event) => setAdjustment(event.target.value)}
+              placeholder={isTrackSetup ? '' : "Request changes, e.g., 'Add a module on testing' or 'Make it more beginner-friendly'"}
               rows={3}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 focus:outline-none"
+              className="ui-field w-full resize-y"
+              disabled={submitting}
             />
-            <div className="flex gap-2">
-              <button
-                onClick={handleTweakSubmit}
-                disabled={submitting || !tweakText.trim()}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-white font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {submitting ? 'Applying...' : 'Apply Tweak'}
-              </button>
-              <button
-                onClick={() => setShowTweakInput(false)}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                Cancel
-              </button>
+            <div className="flex flex-wrap gap-3">
+              <button type="submit" disabled={submitting || !adjustment.trim()} className="ui-button ui-button-primary">{isTrackSetup ? 'Apply adjustments' : 'Apply Tweak'}</button>
+              {isTrackSetup && onRegenerate && <button type="button" onClick={onRegenerate} disabled={submitting} className="ui-button ui-button-secondary">Refresh preview</button>}
+              <button type="button" onClick={() => setAdjusting(false)} disabled={submitting} className="ui-button ui-button-quiet">Cancel</button>
             </div>
-          </div>
+          </form>
         )}
       </div>
-    </div>
+    </section>
   )
 }

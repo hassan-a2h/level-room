@@ -56,11 +56,11 @@ describe('ReviewSession', () => {
     renderReviewSession()
 
     expect(screen.getAllByText('Question 1 of 2')).toHaveLength(2)
-    expect(screen.getByText('3 more reviews queued for later')).toBeInTheDocument()
+    expect(screen.getByText('3 more retrieval items queued for later')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('textbox', { name: /answer/i }), { target: { value: 'A movable line of development.' } })
     fireEvent.click(screen.getByRole('button', { name: /submit answer/i }))
 
-    expect(await screen.findByText('Correct')).toBeInTheDocument()
+    expect(await screen.findByText('Remembered')).toBeInTheDocument()
     expect(screen.getByText('A branch is a movable line of development.')).toBeInTheDocument()
     expect(submitReview).toHaveBeenCalledWith('session-1', { q1: 'A movable line of development.' }, '2026-09-14')
     expect(getLocalDate).toHaveBeenCalledOnce()
@@ -70,16 +70,40 @@ describe('ReviewSession', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /answer/i }), { target: { value: 'Combines changes.' } })
     fireEvent.click(screen.getByRole('button', { name: /submit answer/i }))
 
-    expect(await screen.findByRole('heading', { name: /review complete/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /ready to continue/i })).toBeInTheDocument()
     expect(screen.getAllByText('100%')).toHaveLength(2)
     expect(screen.getByText('Git basics')).toBeInTheDocument()
-    expect(screen.getByText('Passed')).toBeInTheDocument()
+    expect(screen.getByText('Ready to continue')).toBeInTheDocument()
     expect(submitReview).toHaveBeenLastCalledWith('session-1', {
       q1: 'A movable line of development.',
       q2: 'Combines changes.',
     }, '2026-09-14')
-    fireEvent.click(screen.getByRole('button', { name: /back to dashboard/i }))
+    fireEvent.click(screen.getByRole('button', { name: /continue trail/i }))
     expect(screen.getByTestId('current-path')).toHaveTextContent('/')
+  })
+
+  it('uses gentle almost and revisit language for a close answer', async () => {
+    submitReview.mockResolvedValueOnce({ feedback: [{ questionId: 'q1', correct: false, almost: true, explanation: 'You have the main idea; add how references are updated.' }] })
+    renderReviewSession()
+
+    fireEvent.change(screen.getByRole('textbox', { name: /answer/i }), { target: { value: 'A pointer to a line of development.' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }))
+
+    expect(await screen.findByText('Almost')).toBeInTheDocument()
+    expect(screen.getByText('You have the main idea; add how references are updated.')).toBeInTheDocument()
+    expect(screen.queryByText('Incorrect')).not.toBeInTheDocument()
+  })
+
+  it('invites another pass without shame when an answer needs retrieval practice', async () => {
+    submitReview.mockResolvedValueOnce({ feedback: [{ questionId: 'q1', correct: false, explanation: 'Revisit how a branch name points to a commit.' }] })
+    renderReviewSession()
+
+    fireEvent.change(screen.getByRole('textbox', { name: /answer/i }), { target: { value: 'It is a separate repository.' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }))
+
+    expect(await screen.findByText('Revisit')).toBeInTheDocument()
+    expect(screen.getByText('Revisit how a branch name points to a commit.')).toBeInTheDocument()
+    expect(screen.queryByText(/failed|incorrect|needs review/i)).not.toBeInTheDocument()
   })
 
   it('preserves an answer and shows a recoverable submission error', async () => {
@@ -93,6 +117,18 @@ describe('ReviewSession', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Network unavailable')
     expect(answer).toHaveValue('Keep this answer')
     expect(screen.getByRole('button', { name: /submit answer/i })).toBeEnabled()
+  })
+
+  it('keeps an answer but does not expose raw database details in submission errors', async () => {
+    submitReview.mockRejectedValueOnce(new Error('SQLITE_ERROR: constraint failed in review_queue'))
+    renderReviewSession()
+    const answer = screen.getByRole('textbox', { name: /answer/i })
+    fireEvent.change(answer, { target: { value: 'A pointer to a commit.' } })
+    fireEvent.click(screen.getByRole('button', { name: /submit answer/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not save this answer/i)
+    expect(screen.queryByText(/SQLITE_ERROR|constraint failed|review_queue/i)).not.toBeInTheDocument()
+    expect(answer).toHaveValue('A pointer to a commit.')
   })
 
   it('cancels the review and returns to the review queue', async () => {

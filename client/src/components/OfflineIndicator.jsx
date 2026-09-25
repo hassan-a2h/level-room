@@ -6,25 +6,31 @@ const CHECK_INTERVAL_MS = 15000
 export default function OfflineIndicator() {
   const [online, setOnline] = useState(true)
   const [dismissed, setDismissed] = useState(false)
+  const [checking, setChecking] = useState(false)
   const intervalRef = useRef(null)
+  const retryRef = useRef(null)
 
   useEffect(() => {
     async function checkHealth() {
+      setChecking(true)
+      let timeout
       try {
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 5000)
+        timeout = setTimeout(() => controller.abort(), 5000)
         const res = await fetch(`${API_BASE}/health`, {
           method: 'GET',
           signal: controller.signal,
         })
-        clearTimeout(timeout)
         setOnline(res.ok)
       } catch {
         setOnline(false)
+      } finally {
+        clearTimeout(timeout)
+        setChecking(false)
       }
     }
 
-    // Check immediately on mount
+    retryRef.current = checkHealth
     checkHealth()
 
     intervalRef.current = setInterval(checkHealth, CHECK_INTERVAL_MS)
@@ -51,10 +57,17 @@ export default function OfflineIndicator() {
       role="status"
       data-testid="offline-banner"
     >
-      <span className="inline-flex items-center gap-1.5">
-        <span className="ui-warning-dot w-2 h-2 rounded-full animate-pulse" />
-        Cannot reach the learning engine. Make sure the server is running on port 3200.
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="ui-warning-dot w-2 h-2 rounded-full" aria-hidden="true" />
+        <span>Learning service is unavailable. Saved learning data remains on this device. We’ll retry automatically.</span>
       </span>
+      <button
+        onClick={() => { setDismissed(false); retryRef.current?.() }}
+        disabled={checking}
+        className="ui-text-link underline text-xs font-medium disabled:opacity-60"
+      >
+        {checking ? 'Checking…' : 'Retry connection'}
+      </button>
       <button
         onClick={() => setDismissed(true)}
         className="ui-text-link underline text-xs font-medium"

@@ -5,15 +5,23 @@ import AppHeader from '../components/AppHeader.jsx'
 import Button from '../components/ui/Button.jsx'
 import StatusBadge from '../components/ui/StatusBadge.jsx'
 
+function safeReviewError(error, fallback) {
+  const message = typeof error?.message === 'string' ? error.message.trim() : ''
+  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
+    return fallback
+  }
+  return message
+}
+
 function EmptyQueue({ onReturn }) {
   return (
     <section className="ui-surface ui-surface-raised mx-auto flex min-h-[35vh] max-w-2xl flex-col items-center justify-center px-6 py-10 text-center" aria-labelledby="empty-reviews-title">
       <div className="mb-4 text-5xl" aria-hidden="true">🌿</div>
-      <h2 id="empty-reviews-title" className="mb-2 text-xl font-bold ui-text">No reviews due today</h2>
+      <h2 id="empty-reviews-title" className="mb-2 text-xl font-bold ui-text">No retrieval practice due today</h2>
       <p className="mb-6 max-w-md ui-text-secondary">
-        You are all caught up! Come back when new reviews are scheduled.
+        Your queue is clear. Continue your Trail, and new practice will appear here when it is ready.
       </p>
-      <Button variant="secondary" onClick={onReturn}>Back to learning</Button>
+      <Button variant="secondary" onClick={onReturn}>Continue Trail</Button>
     </section>
   )
 }
@@ -21,8 +29,8 @@ function EmptyQueue({ onReturn }) {
 function ReviewLoadError({ onRetry }) {
   return (
     <section className="ui-surface ui-surface-raised mx-auto max-w-2xl p-6 text-center" aria-labelledby="reviews-error-title">
-      <h2 id="reviews-error-title" className="mb-2 text-lg font-semibold ui-text">Reviews could not be loaded</h2>
-      <p className="mb-5 ui-text-secondary">Check your connection and try again.</p>
+      <h2 id="reviews-error-title" className="mb-2 text-lg font-semibold ui-text">Practice could not be loaded</h2>
+      <p className="mb-5 ui-text-secondary">Check your connection, then try again.</p>
       <Button onClick={onRetry}>Try again</Button>
     </section>
   )
@@ -47,7 +55,7 @@ export default function ReviewQueue() {
       setReviews(reviewsData)
       setCounts(countData)
     } catch (err) {
-      setError(err.message || 'Failed to load review queue.')
+      setError(safeReviewError(err, 'Could not load retrieval practice. Check your connection and try again.'))
     } finally {
       setLoading(false)
     }
@@ -71,7 +79,7 @@ export default function ReviewQueue() {
         },
       })
     } catch (err) {
-      setError(err.message || 'Failed to start review session.')
+      setError(safeReviewError(err, 'Could not start retrieval practice. Try again.'))
       setStartingSession(false)
     }
   }
@@ -83,7 +91,7 @@ export default function ReviewQueue() {
     <div className="ui-page min-h-screen">
       <AppHeader dueCount={loading ? undefined : totalDue} />
       <main className="ui-container max-w-5xl space-y-6 px-4 py-6 sm:py-8">
-        <h1 className="text-3xl font-bold ui-text">Review Queue</h1>
+        <h1 className="text-3xl font-bold ui-text">Retrieval practice</h1>
         {loading && (
           <p className="ui-text-secondary" role="status" aria-live="polite">Loading review queue…</p>
         )}
@@ -101,11 +109,11 @@ export default function ReviewQueue() {
           <>
           <section className="ui-surface ui-surface-flat flex flex-wrap items-center justify-between gap-4 p-4" aria-label="Review summary">
             <p className="flex flex-wrap items-center gap-2 text-sm ui-text-secondary">
-              <strong className="ui-text">{totalDue} review{totalDue !== 1 ? 's' : ''} due</strong>
+              <strong className="ui-text">{totalDue} retrieval item{totalDue !== 1 ? 's' : ''} due</strong>
               {counts?.overdue > 0 && <StatusBadge status="danger">{counts.overdue} overdue</StatusBadge>}
             </p>
             <Button onClick={handleStartReview} disabled={startingSession}>
-              {startingSession ? 'Starting…' : 'Start Review'}
+              {startingSession ? 'Starting…' : 'Start retrieval practice'}
             </Button>
           </section>
           <div className="space-y-3" aria-label="Reviews due" role="list">
@@ -117,17 +125,20 @@ export default function ReviewQueue() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wider ui-text-muted">{item.topicTitle}</span>
+                  <span className="ui-text-muted text-xs">Track: {item.topicTitle || 'Your Track'}</span>
                     {item.isOverdue && (
                       <StatusBadge status="danger">Overdue</StatusBadge>
                     )}
                     {item.reviewType === 'cumulative' && (
-                      <StatusBadge status="progress">Module review</StatusBadge>
+                      <StatusBadge status="progress">Cumulative review</StatusBadge>
                     )}
                   </div>
-                  <h2 className="truncate font-semibold ui-text">{item.lessonTitle}</h2>
+                  <h2 className="truncate font-semibold ui-text">{item.lessonTitle || 'Retrieval practice item'}</h2>
                   <p className="mt-1 text-sm ui-text-secondary">
-                    Due: {item.dueDate} · Interval: {item.intervalIndex + 1} of 5
+                    {item.moduleTitle && <><span>Chapter: {item.moduleTitle}</span><span aria-hidden="true"> · </span></>}
+                    {item.isOverdue
+                      ? (item.dueDate ? `Ready to revisit from ${item.dueDate}.` : 'Ready to revisit.')
+                      : (item.dueDate ? `Scheduled retrieval practice is ready on ${item.dueDate}.` : 'This retrieval practice is scheduled.')}
                   </p>
                 </div>
               </article>

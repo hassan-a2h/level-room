@@ -49,13 +49,20 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('option', { name: 'OpenAI Codex subscription' })).toBeInTheDocument()
   })
 
-  it('places the 16-choice appearance gallery before LLM and data settings', async () => {
+  it('organizes appearance, learning, provider, privacy and destructive data controls', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: [] }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument())
     expect(screen.getAllByRole('radio')).toHaveLength(16)
-    expect(screen.getByRole('heading', { name: 'LLM Configuration' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Data Management' })).toBeInTheDocument()
+    for (const section of ['Learning preferences', 'AI connection', 'Data and privacy', 'Danger zone']) {
+      expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
+    }
+    expect(screen.getByText(/learning data lives in local SQLite/i)).toBeInTheDocument()
+    expect(screen.getByText(/theme lives in browser storage/i)).toBeInTheDocument()
+    expect(screen.getByText(/bounded learning context/i)).toBeInTheDocument()
+    expect(screen.getByText(/credentials are never included in exports/i)).toBeInTheDocument()
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)
+    expect(headings).toEqual(['Appearance', 'Learning preferences', 'AI connection', 'Data and privacy', 'Danger zone'])
   })
 
   it('shows model selector that updates when provider changes', async () => {
@@ -221,5 +228,22 @@ describe('SettingsPage', () => {
     )
     await waitFor(() => expect(screen.getByText(/environment configuration/i)).toBeInTheDocument())
     expect(screen.getByText(/No API key is configured/i)).toBeInTheDocument()
+  })
+
+  it('shows a calm save error instead of raw system details', async () => {
+    fetch
+      .mockImplementationOnce(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS }))
+      .mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: 'SQLITE_ERROR: constraint failed in provider_settings' }),
+      }))
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await screen.findByLabelText(/provider/i)
+    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not save ai connection/i)
+    expect(screen.queryByText(/SQLITE_ERROR|constraint failed|provider_settings/i)).not.toBeInTheDocument()
   })
 })

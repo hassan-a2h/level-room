@@ -163,22 +163,34 @@ export function SkeletonSettings() {
       </header>
       <main className="ui-container max-w-3xl space-y-6 px-4 py-6 sm:py-8" aria-hidden="true">
         <div className="h-9 w-36 ui-skeleton" />
-        <section className="ui-panel space-y-4 p-5 sm:p-6">
+        <section data-skeleton-section="appearance" className="ui-panel space-y-4 p-5 sm:p-6">
           <div className="h-6 w-28 ui-skeleton" />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Array.from({ length: 16 }).map((_, i) => <div key={i} className="h-20 ui-skeleton" />)}
           </div>
           <div className="h-10 w-36 ui-skeleton" />
         </section>
-        <section className="ui-panel space-y-4 p-5 sm:p-6">
+        <section data-skeleton-section="learning-preferences" className="ui-panel space-y-4 p-5 sm:p-6">
           <div className="h-6 w-48 ui-skeleton" />
+          <div className="h-4 w-full ui-skeleton" />
+          <div className="h-4 w-4/5 ui-skeleton" />
+        </section>
+        <section data-skeleton-section="ai-connection" className="ui-panel space-y-4 p-5 sm:p-6">
+          <div className="h-6 w-40 ui-skeleton" />
           <div className="h-10 w-full ui-skeleton" />
           <div className="h-10 w-full ui-skeleton" />
           <div className="h-10 w-36 ui-skeleton" />
         </section>
-        <section className="ui-panel space-y-4 p-5 sm:p-6">
+        <section data-skeleton-section="data-privacy" className="ui-panel space-y-4 p-5 sm:p-6">
           <div className="h-6 w-40 ui-skeleton" />
+          <div className="h-4 w-full ui-skeleton" />
+          <div className="h-4 w-5/6 ui-skeleton" />
           <div className="h-10 w-48 ui-skeleton" />
+        </section>
+        <section data-skeleton-section="danger-zone" className="ui-panel space-y-4 p-5 sm:p-6">
+          <div className="h-6 w-32 ui-skeleton" />
+          <div className="h-4 w-full ui-skeleton" />
+          <div className="h-10 w-36 ui-skeleton" />
         </section>
       </main>
     </div>

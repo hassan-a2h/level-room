@@ -4,11 +4,11 @@ import Button from './ui/Button.jsx'
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props)
-    this.state = { hasError: false, error: null }
+    this.state = { hasError: false }
   }
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error }
+  static getDerivedStateFromError() {
+    return { hasError: true }
   }
 
   componentDidCatch(error, errorInfo) {
@@ -20,11 +20,6 @@ class ErrorBoundary extends Component {
     window.location.reload()
   }
 
-  handleGoHome = () => {
-    this.setState({ hasError: false, error: null })
-    window.location.href = '/'
-  }
-
   render() {
     if (this.state.hasError) {
       return (
@@ -34,19 +29,9 @@ class ErrorBoundary extends Component {
             <div role="alert" className="ui-alert ui-alert-danger mb-6 text-left">
               <h1 className="text-xl font-bold ui-text mb-2">Something went wrong</h1>
               <p className="text-sm ui-text-secondary">
-                We encountered an unexpected issue. Your progress is safely saved in the local database. Try reloading the page or going back to the dashboard.
+                We hit a snag. Try reloading, or return to your Trail and continue when you’re ready.
               </p>
             </div>
-            {this.state.error && (
-              <details className="mb-6 text-left">
-                <summary className="text-xs ui-text-muted cursor-pointer">
-                  Technical details
-                </summary>
-                <pre className="ui-alert ui-alert-danger mt-2 text-xs overflow-auto max-h-32">
-                  {this.state.error.toString()}
-                </pre>
-              </details>
-            )}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <Button
                 onClick={this.handleReload}
@@ -54,13 +39,7 @@ class ErrorBoundary extends Component {
               >
                 Reload Page
               </Button>
-              <Button
-                variant="secondary"
-                onClick={this.handleGoHome}
-                className="w-full sm:w-auto"
-              >
-                Go to Dashboard
-              </Button>
+              <a href="/" className="ui-button ui-button-secondary w-full sm:w-auto">Continue Trail</a>
             </div>
           </div>
         </div>

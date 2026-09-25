@@ -32,7 +32,7 @@ function mockFetch(data, status = 200) {
     })
 }
 
-describe('SettingsPage Data Management', () => {
+describe('SettingsPage privacy and backup controls', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -44,7 +44,7 @@ describe('SettingsPage Data Management', () => {
         <SettingsPage />
       </MemoryRouter>
     )
-    await waitFor(() => expect(screen.getByText(/data management/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: /data and privacy/i })).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /export data/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument()
   })
