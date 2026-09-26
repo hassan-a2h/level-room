@@ -26,6 +26,10 @@ export function getLocalDate() {
   return new Date().toLocaleDateString('en-CA')
 }
 
+export function getLocalTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
+
 export async function getSettings() {
   return settingsRequest('')
 }
@@ -101,8 +105,9 @@ export async function getDefaultTopic() {
   return res.json()
 }
 
-export async function getDashboard(topicId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard`)
+export async function getDashboard(topicId, localDate = getLocalDate(), timeZone = getLocalTimeZone()) {
+  const query = new URLSearchParams({ localDate, timeZone })
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard?${query}`)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `HTTP ${res.status}`)
@@ -272,19 +277,11 @@ export async function getContinuationReadiness(topicId) {
   return continuationJson(topicId, 'continuation-readiness')
 }
 
-export async function getContinuationOptions(topicId) {
-  return continuationJson(topicId, 'continuation-options', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  })
-}
-
-export async function generateContinuation(topicId, { lane, level, timeCommitment }) {
+export async function generateContinuation(topicId, { level, timeCommitment }) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/continuations/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ lane, level, timeCommitment }),
+    body: JSON.stringify({ level, timeCommitment }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -293,19 +290,19 @@ export async function generateContinuation(topicId, { lane, level, timeCommitmen
   return res
 }
 
-export async function tweakContinuation(topicId, { lane, level, timeCommitment, curriculum, request }) {
+export async function tweakContinuation(topicId, { level, timeCommitment, curriculum, request }) {
   return continuationJson(topicId, 'continuations/tweak', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lane, level, timeCommitment, curriculum, request }),
+    body: JSON.stringify({ level, timeCommitment, curriculum, request }),
   })
 }
 
-export async function confirmContinuation(topicId, { lane, level, timeCommitment, curriculum }) {
+export async function confirmContinuation(topicId, { level, timeCommitment, curriculum }) {
   return continuationJson(topicId, 'continuations/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lane, level, timeCommitment, curriculum }),
+    body: JSON.stringify({ level, timeCommitment, curriculum }),
   })
 }
 

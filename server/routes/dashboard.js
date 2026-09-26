@@ -1,12 +1,64 @@
 import { Router } from 'express'
 import { get, run, all } from '../db.js'
-import { getLineage, CourseLineageError } from '../utils/course-lineage.js'
+import { getLineage, getActiveRootTrailCount, CourseLineageError } from '../utils/course-lineage.js'
 import { isGenerationStale } from '../utils/curriculum-recovery.js'
 import { publicOutcome } from '../utils/outcome-manifest.js'
+import { deriveNextAction, deriveWeeklyRhythm } from '../utils/dashboard-summary.js'
+import { isValidDate } from '../utils/streak-tracker.js'
 
 const router = Router()
 
 const MAX_ACTIVE_TOPICS = 3
+const MAX_DASHBOARD_EVENTS = 500
+
+function calendarDateForZone(timeZone, date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function dashboardCalendar(query = {}) {
+  let timeZone = typeof query.timeZone === 'string' && query.timeZone.length <= 80 ? query.timeZone.trim() : 'UTC'
+  try { new Intl.DateTimeFormat('en-US', { timeZone }) } catch { timeZone = 'UTC' }
+  if (!timeZone) timeZone = 'UTC'
+  let localDate = typeof query.localDate === 'string' && isValidDate(query.localDate) ? query.localDate : null
+  if (!localDate) localDate = calendarDateForZone(timeZone)
+  return { localDate, timeZone }
+}
+
+function currentActivityTitle(activityBlocks, activityState) {
+  if (typeof activityBlocks !== 'string' || typeof activityState !== 'string') return ''
+  try {
+    const document = JSON.parse(activityBlocks)
+    const state = JSON.parse(activityState)
+    if (typeof state.currentBlockId !== 'string' || !Array.isArray(document.blocks)) return ''
+    const block = document.blocks.find((item) => item?.id === state.currentBlockId)
+    return typeof block?.title === 'string' ? block.title.slice(0, 120) : ''
+  } catch {
+    return ''
+  }
+}
+
+function parseCourseSummary(value) {
+  if (!value) return null
+  try {
+    const summary = typeof value === 'string' ? JSON.parse(value) : value
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null
+    return {
+      outcomes: Array.isArray(summary.outcomes) ? summary.outcomes.slice(0, 12) : [],
+      strengths: Array.isArray(summary.strengths) ? summary.strengths.slice(0, 8) : [],
+      gaps: Array.isArray(summary.gaps) ? summary.gaps.slice(0, 8) : [],
+      artifactFeedback: Array.isArray(summary.artifactFeedback) ? summary.artifactFeedback.slice(0, 5) : [],
+    }
+  } catch {
+    return null
+  }
+}
 
 function parsePublicOutcomes(value) {
   try {
@@ -23,21 +75,23 @@ function getTopicLineageRefs(topicId) {
     lineage = getLineage(topicId).map((entry) => ({
       id: entry.id,
       title: entry.title,
+      status: entry.status,
       courseKind: entry.course_kind || 'core',
       courseStage: entry.course_stage || 0,
       courseFocus: entry.course_focus || '',
+      courseSummary: parseCourseSummary(entry.course_summary),
     }))
   } catch {
     lineage = []
   }
   const parent = get(
-    `SELECT t.id, t.title, cl.lane
+    `SELECT t.id, t.title, t.status, t.course_kind, t.course_stage, t.course_focus, t.course_summary, cl.lane
      FROM course_links cl JOIN topics t ON t.id = cl.parent_topic_id
      WHERE cl.child_topic_id = ?`,
     topicId,
   )
   const children = all(
-    `SELECT t.id, t.title, t.status, t.course_kind, t.course_stage, t.course_focus, cl.lane
+    `SELECT t.id, t.title, t.status, t.course_kind, t.course_stage, t.course_focus, t.course_summary, cl.lane
      FROM course_links cl JOIN topics t ON t.id = cl.child_topic_id
      WHERE cl.parent_topic_id = ? ORDER BY t.created_at, t.id`,
     topicId,
@@ -48,11 +102,21 @@ function getTopicLineageRefs(topicId) {
     courseKind: child.course_kind || 'advanced',
     courseStage: child.course_stage || 0,
     courseFocus: child.course_focus || '',
+    courseSummary: parseCourseSummary(child.course_summary),
     lane: child.lane,
   }))
   return {
     lineage,
-    parent: parent ? { id: parent.id, title: parent.title, lane: parent.lane } : null,
+    parent: parent ? {
+      id: parent.id,
+      title: parent.title,
+      status: parent.status,
+      courseKind: parent.course_kind || 'core',
+      courseStage: parent.course_stage || 0,
+      courseFocus: parent.course_focus || '',
+      courseSummary: parseCourseSummary(parent.course_summary),
+      lane: parent.lane,
+    } : null,
     children,
   }
 }
@@ -122,6 +186,7 @@ function getTopicMistakes(topicId) {
 router.get('/topics', (_req, res) => {
   try {
     const topics = all('SELECT * FROM topics ORDER BY last_active_at DESC, created_at DESC')
+    const protectedTopicIds = new Set(all('SELECT DISTINCT parent_topic_id FROM course_links').map((row) => row.parent_topic_id))
     const enriched = topics.map((topic) => {
       const stats = getTopicProgress(topic.id)
       return {
@@ -130,6 +195,7 @@ router.get('/topics', (_req, res) => {
         status: topic.status,
         last_active_at: topic.last_active_at,
         created_at: topic.created_at,
+        hasChildren: protectedTopicIds.has(topic.id),
         difficulty: topic.difficulty || 'normal',
         consecutivePasses: topic.consecutive_passes || 0,
         consecutiveFails: topic.consecutive_fails || 0,
@@ -190,11 +256,55 @@ router.get('/topics/:id/dashboard', (req, res) => {
       return res.status(404).json({ error: 'Topic not found.' })
     }
 
+    const { localDate, timeZone } = dashboardCalendar(req.query)
     const modules = all('SELECT * FROM modules WHERE topic_id = ? ORDER BY module_index', topicId)
+    const pendingCheckpoints = all(
+      `SELECT e.id, e.module_id AS moduleId, e.status, e.created_at, m.title AS moduleTitle
+       FROM exam_attempts e JOIN modules m ON m.id = e.module_id
+       WHERE e.topic_id = ? AND e.status = 'pending'
+       ORDER BY m.module_index, e.id DESC LIMIT 100`,
+      topicId,
+    )
+    const reviewCounts = get(
+      `SELECT
+         SUM(CASE WHEN due_date = ? THEN 1 ELSE 0 END) AS dueToday,
+         SUM(CASE WHEN due_date < ? THEN 1 ELSE 0 END) AS overdue,
+         COUNT(*) AS totalDue
+       FROM srs_queue WHERE topic_id = ? AND status = 'pending' AND due_date <= ?`,
+      localDate, localDate, topicId, localDate,
+    )
+    const reviewSummary = {
+      dueToday: reviewCounts?.dueToday || 0,
+      overdue: reviewCounts?.overdue || 0,
+      totalDue: reviewCounts?.totalDue || 0,
+    }
+    const recentReviews = all(
+      `SELECT id, last_reviewed FROM srs_queue
+       WHERE topic_id = ? AND last_reviewed IS NOT NULL
+       ORDER BY last_reviewed DESC, id DESC LIMIT ?`,
+      topicId,
+      MAX_DASHBOARD_EVENTS,
+    )
+    const recentProgress = all(
+      `SELECT p.id, p.lesson_id, p.started_at, p.completed_at
+       FROM progress p JOIN lessons l ON l.id = p.lesson_id JOIN modules m ON m.id = l.module_id
+       WHERE p.topic_id = ? AND (p.started_at IS NOT NULL OR p.completed_at IS NOT NULL)
+       ORDER BY COALESCE(p.completed_at, p.started_at) DESC, p.id DESC LIMIT ?`,
+      topicId,
+      MAX_DASHBOARD_EVENTS,
+    )
+    const completedCheckpoints = all(
+      `SELECT id AS module_id, completed_at FROM modules
+       WHERE topic_id = ? AND status = 'completed' AND completed_at IS NOT NULL
+       ORDER BY completed_at DESC, id DESC LIMIT ?`,
+      topicId,
+      MAX_DASHBOARD_EVENTS,
+    )
 
     const modulesWithLessons = modules.map((mod) => {
       const lessons = all(
-        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites, l.task_spec
+        `SELECT l.id, l.lesson_index, l.title, l.depth, l.estimated_time, l.outcomes, l.prerequisites,
+                l.task_spec, l.artifact_required, l.artifact_type, l.activity_blocks
          FROM lessons l
          WHERE l.module_id = ?
          ORDER BY l.lesson_index`,
@@ -203,7 +313,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
 
       const lessonsWithProgress = lessons.map((lesson) => {
         const prog = get(
-          `SELECT state, quiz_score, quiz_attempts, started_at, completed_at
+          `SELECT state, quiz_score, quiz_attempts, started_at, completed_at, activity_state
            FROM progress
            WHERE topic_id = ? AND lesson_id = ?`,
           topicId, lesson.id
@@ -240,12 +350,15 @@ router.get('/topics/:id/dashboard', (req, res) => {
           outcomes: parsePublicOutcomes(lesson.outcomes),
           prerequisites,
           task_spec: taskSpec,
+          buildRequired: lesson.artifact_required === 1,
+          buildType: lesson.artifact_type || '',
           state,
           locked,
           quiz_score: prog?.quiz_score ?? null,
           quiz_attempts: prog?.quiz_attempts ?? 0,
           started_at: prog?.started_at ?? null,
           completed_at: prog?.completed_at ?? null,
+          currentActivity: state === 'practicing' ? currentActivityTitle(lesson.activity_blocks, prog?.activity_state) : '',
         }
       })
 
@@ -266,6 +379,11 @@ router.get('/topics/:id/dashboard', (req, res) => {
         status: examStatus?.status || 'active',
         completedAt: examStatus?.completed_at || null,
         examReady,
+        checkpointStatus: pendingCheckpoints.some((checkpoint) => checkpoint.moduleId === mod.id)
+          ? 'in_progress'
+          : examStatus?.status === 'completed'
+            ? 'completed'
+            : examReady ? 'ready' : 'locked',
         lessonsRemaining: totalLessons - passedLessons,
         lessons: lessonsWithProgress,
       }
@@ -276,6 +394,36 @@ router.get('/topics/:id/dashboard', (req, res) => {
     const difficulty = topic.difficulty || 'normal'
     const consecutivePasses = topic.consecutive_passes || 0
     const consecutiveFails = topic.consecutive_fails || 0
+    const sessions = modulesWithLessons.flatMap((module) => module.lessons.map((lesson) => ({
+      ...lesson,
+      moduleId: module.id,
+      moduleTitle: module.title,
+    })))
+    const nextAction = deriveNextAction({
+      topic,
+      modules: modulesWithLessons,
+      sessions,
+      checkpoints: pendingCheckpoints,
+      overdueReviews: reviewSummary.overdue,
+    })
+    const weeklyRhythm = deriveWeeklyRhythm({
+      localDate,
+      timeZone,
+      sessions: recentProgress,
+      checkpoints: completedCheckpoints,
+      reviews: recentReviews,
+    })
+    const focusAreas = mistakes.slice(0, 3).map((mistake) => {
+      const session = sessions.find((item) => item.id === mistake.lesson_id)
+      return {
+        id: mistake.id,
+        lessonId: mistake.lesson_id,
+        description: mistake.description,
+        recurring: Boolean(mistake.recurring),
+        sessionTitle: session?.title || '',
+        chapterTitle: session?.moduleTitle || '',
+      }
+    })
 
     return res.json({
       topic: {
@@ -294,6 +442,10 @@ router.get('/topics/:id/dashboard', (req, res) => {
       },
       modules: modulesWithLessons,
       mistakes,
+      nextAction,
+      weeklyRhythm,
+      reviewSummary,
+      focusAreas,
     })
   } catch (err) {
     console.error('GET /api/topics/:id/dashboard error:', err.message)
@@ -322,8 +474,8 @@ router.post('/topics', (req, res) => {
     const sanitized = trimmed.replace(/<[^>]+>/g, '')
 
     // Check active topic limit
-    const activeCount = get("SELECT COUNT(*) as count FROM topics WHERE status = 'active'")
-    if (activeCount.count >= MAX_ACTIVE_TOPICS) {
+    const activeCount = getActiveRootTrailCount()
+    if (activeCount >= MAX_ACTIVE_TOPICS) {
       return res.status(400).json({
         error: `You can have up to ${MAX_ACTIVE_TOPICS} active topics. Archive one to start another.`,
       })
