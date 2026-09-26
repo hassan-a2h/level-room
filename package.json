@@ -4,7 +4,7 @@
   "description": "LLM-Powered Personal Learning Engine",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev": "concurrently --kill-others-on-fail \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "HOST=127.0.0.1 PORT=3200 node server/index.js",
     "dev:client": "PORT=3201 npx vite --config client/vite.config.js client --host 127.0.0.1",
     "build": "cd client && npx vite build --config ./vite.config.js",

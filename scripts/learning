@@ -24,6 +24,7 @@ META_PGID=''
 META_START_TICKS=''
 META_REPO=''
 META_STARTED_AT=''
+NODE_RUNTIME_BIN=''
 
 usage() {
   cat <<'EOF'
@@ -88,6 +89,19 @@ require_tools() {
   done
 }
 
+pin_node_runtime() {
+  local selected_node selected_node_realpath runtime_dir
+  selected_node="$(command -v node)" || fail 2 'required command is missing: node'
+  selected_node_realpath="$(realpath -e -- "$selected_node")" || fail 2 'could not resolve the active Node.js runtime'
+  [[ -x "$selected_node_realpath" ]] || fail 2 'the active Node.js runtime is not executable'
+  NODE_RUNTIME_BIN="$selected_node_realpath"
+  runtime_dir="${NODE_RUNTIME_BIN%/*}"
+  PATH="$runtime_dir:$PATH"
+  export PATH
+  selected_node="$(command -v node)" || fail 2 'the active Node.js runtime disappeared from PATH'
+  [[ "$(realpath -e -- "$selected_node")" == "$NODE_RUNTIME_BIN" ]] || fail 2 'could not pin the Node.js runtime for app startup'
+}
+
 require_repo() {
   [[ -n "$REPO_DIR" && -d "$REPO_DIR" ]] || fail 2 "repository checkout is missing; rerun ./scripts/install-learning"
   [[ -f "$REPO_DIR/package.json" ]] || fail 2 "package.json is missing from $REPO_DIR"
@@ -101,20 +115,20 @@ ensure_native_dependencies() {
   [[ -f "$REPO_DIR/node_modules/better-sqlite3/package.json" ]] || return 0
   sqlite_probe="const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.close()"
 
-  if probe_output="$(cd "$REPO_DIR" && node -e "$sqlite_probe" 2>&1)"; then
+  if probe_output="$(cd "$REPO_DIR" && "$NODE_RUNTIME_BIN" -e "$sqlite_probe" 2>&1)"; then
     return 0
   fi
   if [[ "$probe_output" != *'ERR_DLOPEN_FAILED'* && "$probe_output" != *'different Node.js version'* && "$probe_output" != *'self-register'* ]]; then
     fail 1 'better-sqlite3 could not be loaded; run npm install and retry'
   fi
 
-  runtime_version="$(node --version 2>/dev/null || printf 'the active Node runtime')"
-  printf 'learning: rebuilding better-sqlite3 for %s\n' "$runtime_version" >&2
+  runtime_version="$("$NODE_RUNTIME_BIN" --version 2>/dev/null || printf 'the active Node runtime')"
+  printf 'learning: rebuilding better-sqlite3 for %s (%s)\n' "$runtime_version" "$NODE_RUNTIME_BIN" >&2
   if ! (cd "$REPO_DIR" && npm rebuild better-sqlite3 --no-audit --no-fund); then
-    fail 1 "could not rebuild better-sqlite3 for $runtime_version"
+    fail 1 "could not rebuild better-sqlite3 for $runtime_version ($NODE_RUNTIME_BIN)"
   fi
-  if ! (cd "$REPO_DIR" && node -e "$sqlite_probe" >/dev/null 2>&1); then
-    fail 1 "better-sqlite3 is still incompatible with $runtime_version"
+  if ! (cd "$REPO_DIR" && "$NODE_RUNTIME_BIN" -e "$sqlite_probe" >/dev/null 2>&1); then
+    fail 1 "better-sqlite3 is still incompatible with $runtime_version ($NODE_RUNTIME_BIN)"
   fi
 }
 
@@ -315,16 +329,24 @@ status_command() {
 }
 
 start_command() {
-  local pid pgid deadline
+  local pid pgid deadline backend=0 frontend=0
   ensure_runtime_dir
   acquire_lock
-  require_tools npm node setsid flock curl jq ps ss
+  require_tools npm node realpath setsid flock curl jq ps ss
   require_repo
+  pin_node_runtime
 
   if [[ -e "$META_FILE" ]] && identity_valid; then
-    printf 'already running pid=%s\n' "$META_PID"
-    print_service_urls
-    return 0
+    backend_healthy && backend=1 || true
+    frontend_healthy && frontend=1 || true
+    if (( backend && frontend )); then
+      printf 'already running pid=%s\n' "$META_PID"
+      print_service_urls
+      return 0
+    fi
+    printf 'learning: restarting degraded app backend=%s frontend=%s\n' "$([[ $backend == 1 ]] && echo ok || echo down)" "$([[ $frontend == 1 ]] && echo ok || echo down)" >&2
+    terminate_validated_group || fail 1 "could not stop degraded app process group; see $LOG_FILE"
+    remove_metadata
   fi
   [[ ! -e "$META_FILE" ]] || remove_metadata
   if listeners_exist; then
