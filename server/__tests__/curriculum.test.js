@@ -4,6 +4,7 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { streamText } from '../llm/client.js'
 
 vi.mock('../llm/client.js', () => ({
   streamText: vi.fn(() => {
@@ -416,6 +417,53 @@ describe('Curriculum API', () => {
   })
 
   describe('POST /api/topics/:id/curriculum/tweak', () => {
+    it('restores omitted Chapter outcomes from valid structured Session outcomes', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
+      await request(app).post(`/api/topics/${topic.lastInsertRowid}/curriculum/generate`)
+      await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topic.lastInsertRowid).curriculum_state === 'draft_ready')
+      const alternateShape = JSON.parse(dbModule.get('SELECT curriculum_draft FROM topics WHERE id = ?', topic.lastInsertRowid).curriculum_draft)
+      for (const module of alternateShape.modules) delete module.skill_outcomes
+      streamText.mockImplementationOnce(() => Promise.resolve({
+        textStream: (async function* () { yield JSON.stringify(alternateShape) })(),
+      }))
+
+      const response = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/curriculum/tweak`)
+        .send({ request: 'Clarify the practice examples.' })
+
+      expect(response.status, JSON.stringify(response.body)).toBe(200)
+      expect(response.body.modules[0].skill_outcomes).toHaveLength(3)
+      expect(response.body.modules[0].skill_outcomes.map(({ id }) => id)).toEqual([
+        'chapter-1-outcome-1',
+        'chapter-1-outcome-2',
+        'chapter-1-outcome-3',
+      ])
+      const prompt = streamText.mock.calls.at(-1)[0].system
+      expect(prompt).toContain('Chapter must include a skill_outcomes array')
+      expect(prompt).toContain('Session\'s outcomes must be complete structured objects')
+      expect(prompt).toContain('artifact_required')
+    })
+
+    it('hides validator details when legacy string outcomes cannot satisfy the tweak contract', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
+      await request(app).post(`/api/topics/${topic.lastInsertRowid}/curriculum/generate`)
+      await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topic.lastInsertRowid).curriculum_state === 'draft_ready')
+      streamText.mockImplementationOnce(() => Promise.resolve({
+        textStream: (async function* () {
+          yield JSON.stringify({ modules: [{ title: 'Incomplete chapter', lessons: [{ outcomes: ['Explain the concept'] }] }] })
+        })(),
+      }))
+
+      const response = await request(app)
+        .post(`/api/topics/${topic.lastInsertRowid}/curriculum/tweak`)
+        .send({ request: 'Clarify the practice examples.' })
+
+      expect(response.status).toBe(400)
+      expect(response.body.code).toBe('INVALID_CURRICULUM')
+      expect(response.body.error).toMatch(/current preview.*try a smaller change/i)
+      expect(response.body.error).not.toMatch(/Module 0|skill_outcomes|outcome objects/)
+    })
+
     it('accepts a tweak request and returns updated curriculum', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
       const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Foundations")

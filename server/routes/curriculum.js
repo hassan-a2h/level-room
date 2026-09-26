@@ -5,7 +5,7 @@ import { requireLlmConfig } from '../utils/llm-config.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 import { validateCurriculum as validateCurriculumDraft, collectCurriculumDraft, CurriculumDraftError } from '../utils/curriculum-draft.js'
 import { persistCurriculumInTransaction, collectLineageOutcomes } from '../utils/course-lineage.js'
-import { publicOutcome } from '../utils/outcome-manifest.js'
+import { publicOutcome, validateOutcome } from '../utils/outcome-manifest.js'
 import { normalizePlacementEvaluation, normalizePlacementQuestions, PlacementAssessmentError, placementPublicQuestions } from '../utils/placement-assessment.js'
 import {
   CurriculumGenerationError,
@@ -54,6 +54,39 @@ function normalizeTimeCommitment(value) {
   if (canonical) return canonical
   return TIME_ALIASES.get(trimmed.toLowerCase()) || null
 }
+
+function restoreOmittedChapterOutcomes(curriculum) {
+  if (!curriculum || typeof curriculum !== 'object' || !Array.isArray(curriculum.modules)) return curriculum
+
+  return {
+    ...curriculum,
+    modules: curriculum.modules.map((module) => {
+      if (!module || typeof module !== 'object' || Array.isArray(module)
+        || (module.skill_outcomes !== undefined && !(Array.isArray(module.skill_outcomes) && module.skill_outcomes.length === 0))) return module
+      if (!Array.isArray(module.lessons)) return module
+
+      const outcomes = []
+      const byId = new Map()
+      for (const lesson of module.lessons) {
+        if (!Array.isArray(lesson?.outcomes)) return module
+        for (const rawOutcome of lesson.outcomes) {
+          const checked = validateOutcome(rawOutcome)
+          if (!checked.valid) return module
+          const existing = byId.get(checked.value.id)
+          if (existing && JSON.stringify(existing) !== JSON.stringify(checked.value)) return module
+          if (!existing) {
+            byId.set(checked.value.id, checked.value)
+            outcomes.push(checked.value)
+          }
+        }
+      }
+
+      return outcomes.length > 0 ? { ...module, skill_outcomes: outcomes } : module
+    }),
+  }
+}
+
+const SAFE_CURRICULUM_TWEAK_ERROR = 'The revision did not fit the learning plan structure. Your current preview is still available; try a smaller change, such as renaming a Chapter or adjusting one Session, then retry.'
 
 function setupQuestions(topicTitle) {
   const title = typeof topicTitle === 'string' && topicTitle.trim() ? topicTitle.trim() : 'this topic'
@@ -794,20 +827,27 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
 
     const system = `You are a curriculum designer. Modify an existing curriculum based on a user's natural-language request.
 Return the full updated curriculum as plain JSON (no markdown fences) with the same structure as the original.
-${taskBackedCourse ? 'This is a finite task-backed course. Preserve course metadata and include a validated practical task on every lesson.' : ''}
+${taskBackedCourse ? 'This is a finite task-backed course. Preserve course metadata and include one or two validated practical Builds in each Chapter.' : ''}
 Structure:
 {
-  ${taskBackedCourse ? '"course": { "kind": "core", "stage": 0, "scope": "80/20 foundation" },' : ''}
+  ${taskBackedCourse ? '"course": { "kind": "core", "stage": 0, "focus": "80/20 foundation" },' : ''}
   "modules": [
     {
       "title": "Module Name",
+      "summary": "The capability this Chapter builds.",
+      "skill_outcomes": [
+        { "id": "explain-the-concept", "title": "Explain the concept", "kind": "knowledge", "role": "core", "evidence": ["checkpoint"] },
+        { "id": "apply-the-concept", "title": "Apply the concept", "kind": "skill", "role": "core", "evidence": ["activity"] }
+      ],
       "lessons": [
         {
           "title": "Lesson Name",
           "depth": "Beginner|Intermediate|Advanced",
           "estimated_time": 15,
-          "outcomes": ["..."],
-          "prerequisites": ["Lesson Name"]${taskBackedCourse ? ',\n          "task": { "title": "Build and verify a small local setup", "scenario": "A safe local scenario.", "goal": "Create and verify the requested behavior.", "constraints": ["Use test data only"], "deliverables": ["Commands or configuration", "Observed output"], "success_criteria": ["The behavior is observable", "The result is reproducible"], "estimated_time": 25, "primary_setup": { "kind": "local", "description": "Use a local installation or container.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "free_fallback": { "kind": "no_software", "description": "Explain the expected local result with sample data.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "hints": [], "safety_notes": ["Use only systems you own or an isolated local environment."] }' : ''}
+          "outcomes": [{ "id": "explain-the-concept", "title": "Explain the concept", "kind": "knowledge", "role": "core", "evidence": ["checkpoint"] }],
+          "prerequisites": ["Lesson Name"],
+          "artifact_required": true,
+          "task": { "title": "Build and verify a small local setup", "scenario": "A safe local scenario.", "goal": "Create and verify the requested behavior.", "constraints": ["Use test data only"], "deliverables": ["Commands or configuration", "Observed output"], "success_criteria": ["The behavior is observable", "The result is reproducible"], "estimated_time": 25, "primary_setup": { "kind": "local", "description": "Use a local installation or container.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "free_fallback": { "kind": "no_software", "description": "Explain the expected local result with sample data.", "requires_account": false, "requires_payment": false, "requires_secret": false, "requires_external_target": false }, "hints": [], "safety_notes": ["Use only systems you own or an isolated local environment."] }
         }
       ]
     }
@@ -815,11 +855,14 @@ Structure:
 }
 Rules:
 - Maintain ${taskBackedCourse ? '3-5 modules, 3-5 lessons per module' : '3-8 modules, 3-7 lessons per module'}.
-- Every lesson must have depth, estimated_time, outcomes, and prerequisites.
+- Every Chapter must include a skill_outcomes array containing 1-10 complete outcome objects with unique IDs and titles. Include at least one core knowledge outcome and one core skill outcome; every skill outcome must include activity evidence.
+- Every Session's outcomes must be complete structured objects copied from its Chapter's skill_outcomes, not strings. Every Chapter outcome must be taught by at least one Session.
+- Every Session must have depth, estimated_time, outcomes, prerequisites, and artifact_required.
+- Include one or two Build Sessions per Chapter. Mark each with artifact_required: true and include its validated task; set artifact_required: false and omit task on other Sessions.
 - Prerequisites must reference actual lesson titles in the curriculum.
 - No circular prerequisites. No self-references.
 - Preserve as much of the existing structure as possible; only change what the user requested.
-${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or no-software path and provide an account-free fallback.' : ''}`
+- Keep every task on a local, open-source, free-public, or no-software path and provide an account-free fallback.`
 
     const userContent = `Topic: ${topic.title}\nLearner level: ${topic.level || 'Beginner'}\nTime commitment: ${topic.time_per_week || '30 min/day'}\n\nExisting curriculum:\n${JSON.stringify(existingLessons, null, 2)}\n\nUser request: ${tweakRequest.trim()}\n\nReturn the updated full curriculum.`
 
@@ -839,12 +882,21 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
       })()
 
       const trackKind = get('SELECT course_kind FROM topics WHERE id = ?', topicId)?.course_kind === 'advanced' ? 'continuation' : 'initial'
-      const updated = await collectCurriculumDraft(textStream, {
-        enforceBounds: taskBackedCourse,
-        requireTasks: taskBackedCourse,
-        trackKind,
-        lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
-      })
+      let updated
+      try {
+        updated = await collectCurriculumDraft(textStream, {
+          enforceBounds: taskBackedCourse,
+          requireTasks: taskBackedCourse,
+          trackKind,
+          lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+          normalize: restoreOmittedChapterOutcomes,
+        })
+      } catch (error) {
+        if (error instanceof CurriculumDraftError) {
+          throw new CurriculumDraftError(SAFE_CURRICULUM_TWEAK_ERROR, error.code, error.retryable)
+        }
+        throw error
+      }
 
       if (existingModules.length === 0) {
         run(
