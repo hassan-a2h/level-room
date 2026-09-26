@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getExam,
@@ -10,498 +10,258 @@ import {
   submitPartialRetest,
   getLocalDate,
 } from '../api.js'
-import StatusBadge from './ui/StatusBadge.jsx'
-import ProgressBar from './ui/ProgressBar.jsx'
+import CheckpointIntro from './checkpoint/CheckpointIntro.jsx'
+import CheckpointQuestion from './checkpoint/CheckpointQuestion.jsx'
+import CheckpointResults from './checkpoint/CheckpointResults.jsx'
 
-const TYPE_LABELS = {
-  conceptual: 'Conceptual',
-  'open-ended': 'Open-ended',
-  application: 'Application',
-  debugging: 'Debugging',
+const SAVE_DEBOUNCE_MS = 500
+
+function hasAnswer(answer) {
+  return typeof answer === 'string' && answer.trim().length > 0
 }
 
-const TYPE_WEIGHTS = {
-  conceptual: 1,
-  'open-ended': 2,
-  application: 2,
-  debugging: 2,
-}
-
-function QuestionCard({ question, answer, onAnswerChange, index, total, disabled, feedback }) {
-  const questionId = `exam-question-${question.id}`
-  const hasAnswer = Boolean(answer?.trim())
-  return (
-    <section className="ui-panel mb-6 p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <span className="text-xs font-medium text-gray-500">Question {index + 1} of {total}</span>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-gray-400">
-            {TYPE_LABELS[question.type] || question.type} (×{TYPE_WEIGHTS[question.type] || 1})
-          </span>
-          {!feedback && <StatusBadge status={hasAnswer ? 'progress' : 'neutral'}>{hasAnswer ? 'Answered' : 'Not answered'}</StatusBadge>}
-        </div>
-      </div>
-      <p id={questionId} className="text-sm font-medium ui-text mb-3">{question.text}</p>
-      <textarea
-        aria-labelledby={questionId}
-        value={answer || ''}
-        onChange={(e) => onAnswerChange(question.id, e.target.value)}
-        placeholder="Type your answer here..."
-        disabled={disabled}
-        rows={4}
-        className="ui-field w-full resize-none disabled:cursor-not-allowed"
-      />
-      {feedback && (
-        <div className="ui-surface ui-surface-inset mt-3 rounded-lg p-3">
-          <div className="flex items-center gap-2 mb-1">
-            <CorrectnessBadge correctness={feedback.correctness} />
-            <span className="text-xs ui-text-muted">Score: {feedback.score}</span>
-          </div>
-          <p className="text-sm ui-text-secondary">{feedback.explanation}</p>
-        </div>
-      )}
-    </section>
-  )
-}
-
-function CorrectnessBadge({ correctness }) {
-  const labels = {
-    correct: 'Correct',
-    partial: 'Partial',
-    incorrect: 'Incorrect',
-  }
-  const status = { correct: 'success', partial: 'warning', incorrect: 'danger' }[correctness] || 'danger'
-  return <StatusBadge status={status}>{labels[correctness] || correctness}</StatusBadge>
-}
-
-function CelebrationOverlay({ onDismiss }) {
-  useEffect(() => {
-    const timer = setTimeout(onDismiss, 4000)
-    return () => clearTimeout(timer)
-  }, [onDismiss])
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="ui-panel max-w-sm mx-4 p-8 text-center" role="status" aria-live="polite" aria-label="Module completed">
-        <div className="text-6xl mb-4">🎉</div>
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Module Complete!</h2>
-        <p className="text-sm text-gray-600">You demonstrated mastery across all lessons. Great work!</p>
-      </div>
-    </div>
-  )
-}
-
-function ExamResult({ evaluation, onBack, onRetake, onPartialRetest, moduleLessons }) {
-  const isPass = evaluation.passed
-  const navigate = useNavigate()
-
-  const weakLessonDetails = (evaluation.weakLessons || []).map((lessonId) => {
-    const lesson = moduleLessons.find((l) => l.id === lessonId)
-    const score = evaluation.perLessonScores?.[lessonId]?.score ?? 0
-    return { id: lessonId, title: lesson?.title || `Lesson ${lessonId}`, score }
-  })
-
-  return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
-      <section className={`ui-alert ${isPass ? 'ui-alert-success' : 'ui-alert-warning'} mb-6`} aria-live="polite">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="text-3xl ui-text">
-            {isPass ? '✅' : '❌'}
-          </div>
-          <div>
-            <h2 className="text-lg font-bold ui-text">
-              {isPass ? 'You passed the module exam!' : 'Not quite — review your weak areas'}
-            </h2>
-            <p className="text-sm ui-text-secondary">
-              Overall score: <span className="font-semibold">{evaluation.overallScore}%</span>
-              {evaluation.criticalGap && <span className="ml-2"><StatusBadge status="warning">Critical gap detected</StatusBadge></span>}
-            </p>
-          </div>
-        </div>
-
-        {evaluation.gaps && evaluation.gaps.length > 0 && (
-          <div className="mt-3">
-            <p className="text-sm font-medium ui-text-secondary mb-1">Identified gaps:</p>
-            <ul className="list-disc list-inside text-sm ui-text-secondary space-y-0.5">
-              {evaluation.gaps.map((gap, idx) => (
-                <li key={idx}>{gap}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
-
-      {/* Per-lesson breakdown */}
-      <div className="mb-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">Per-Lesson Breakdown</h3>
-        <div className="space-y-2">
-          {Object.entries(evaluation.perLessonScores || {}).map(([lessonId, data]) => {
-            const lesson = moduleLessons.find((l) => String(l.id) === String(lessonId))
-            const title = lesson?.title || `Lesson ${lessonId}`
-            const score = data?.score ?? 0
-            const isWeak = score < 50
-            return (
-              <div key={lessonId} className="ui-surface ui-surface-flat flex items-center justify-between gap-3 p-3">
-                <span className="text-sm ui-text">{title}</span>
-                <StatusBadge status={isWeak ? 'warning' : 'success'}>{score}%</StatusBadge>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Feedback per question */}
-      <div className="space-y-4">
-        {evaluation.feedback && evaluation.feedback.map((fb) => {
-          const q = evaluation._questions?.find((qq) => qq.id === fb.questionId)
-          if (!q) return null
-          return (
-            <QuestionCard
-              key={q.id}
-              question={q}
-              answer={evaluation._answers?.[q.id] || ''}
-              index={evaluation._questions?.indexOf(q) || 0}
-              total={evaluation._questions?.length || 0}
-              disabled={true}
-              feedback={fb}
-              onAnswerChange={() => {}}
-            />
-          )
-        })}
-      </div>
-
-      <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-        {isPass ? (
-          <button
-            onClick={onBack}
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-          >
-            Back to Dashboard
-          </button>
-        ) : (
-          <>
-            {weakLessonDetails.length > 0 && (
-              <button
-                onClick={onPartialRetest}
-                className="rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-colors"
-              >
-                Retest Weak Areas ({weakLessonDetails.length})
-              </button>
-            )}
-            <button
-              onClick={onRetake}
-              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-            >
-              Retake Full Exam
-            </button>
-            <button
-              onClick={onBack}
-              className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
-            >
-              Back to Dashboard
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* Study links for weak lessons */}
-      {!isPass && weakLessonDetails.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-2">Study these lessons before retesting:</h3>
-          <div className="flex flex-wrap gap-2">
-            {weakLessonDetails.map((wl) => (
-              <button
-                key={wl.id}
-                onClick={() => navigate(`/topic/${evaluation._topicId}/lesson/${wl.id}`)}
-                className="rounded-lg bg-white border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-              >
-                {wl.title} ({wl.score}%)
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-export default function ExamPanel({ topicId, moduleId, moduleLessons, onBack }) {
+export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleLessons = [], chapterOutcomes = [], onBack }) {
+  const [phase, setPhase] = useState('intro')
   const [exam, setExam] = useState(null)
   const [questions, setQuestions] = useState([])
   const [answers, setAnswers] = useState({})
   const [evaluation, setEvaluation] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [ready, setReady] = useState(true)
+  const [lessonsRemaining, setLessonsRemaining] = useState(0)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [showCelebration, setShowCelebration] = useState(false)
+  const [saveState, setSaveState] = useState('idle')
+  const [focusQuestionId, setFocusQuestionId] = useState(null)
   const [isPartialRetest, setIsPartialRetest] = useState(false)
   const [retestId, setRetestId] = useState(null)
   const saveTimerRef = useRef(null)
+  const saveChainRef = useRef(Promise.resolve())
+  const answerControlRef = useRef(null)
+  const navigate = useNavigate()
 
-  // Load existing exam on mount
-  useEffect(() => {
-    async function loadExam() {
-      try {
-        const data = await getExam(topicId, moduleId)
-        if (data.questions) {
-          setQuestions(data.questions)
-          setAnswers(data.answers || {})
-          setIsPartialRetest(data.type === 'partial')
-          setRetestId(data.id || null)
-        }
-        if (data.evaluation) {
-          setEvaluation({ ...data.evaluation, _questions: data.questions, _answers: data.answers, _topicId: topicId })
-        }
-        setExam(data)
-      } catch (err) {
-        if (err.message?.includes('No exam started')) {
-          // Not started yet, that's fine
-        } else if (err.message?.includes('examNotReady')) {
-          setError('Complete all lessons in this module to unlock the exam.')
-        } else {
-          setError(err.message || 'Failed to load exam.')
-        }
-      }
-    }
-    loadExam()
+  const outcomes = exam?.outcomes?.length ? exam.outcomes : chapterOutcomes
+  const currentQuestion = questions[currentIndex]
+  const answeredCount = questions.filter((question) => hasAnswer(answers[question.id])).length
+  const firstIncompleteLesson = useMemo(() => moduleLessons.find((lesson) => !['passed', 'tested_out'].includes(lesson.state)), [moduleLessons])
+  const incompleteLessonCount = moduleLessons.filter((lesson) => !['passed', 'tested_out'].includes(lesson.state)).length
+
+  const persistAnswers = useCallback((snapshot) => {
+    const nextSave = saveChainRef.current.catch(() => {}).then(() => saveExamProgress(topicId, moduleId, snapshot))
+    saveChainRef.current = nextSave
+    return nextSave
   }, [topicId, moduleId])
 
-  const handleStartExam = useCallback(async () => {
+  const acceptAttempt = useCallback((data, partial = false) => {
+    setExam(data)
+    setQuestions(data.questions || [])
+    setAnswers(data.answers || {})
+    setEvaluation(null)
+    setCurrentIndex(0)
+    setFocusQuestionId(null)
+    setIsPartialRetest(partial || data.type === 'partial')
+    setRetestId(data.id || null)
+    setReady(true)
+    setLessonsRemaining(0)
+    setError('')
+    setSaveState(Object.keys(data.answers || {}).length ? 'saved' : 'idle')
+    setPhase('player')
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    getExam(topicId, moduleId)
+      .then((data) => { if (active && data.questions?.length) acceptAttempt(data, data.type === 'partial') })
+      .catch((loadError) => {
+        if (!active) return
+        if (loadError.code === 'CHECKPOINT_NOT_READY' || loadError.examNotReady) {
+          setReady(false)
+          setLessonsRemaining(loadError.lessonsRemaining || 0)
+        } else if (loadError.code !== 'CHECKPOINT_NOT_FOUND' && loadError.status !== 404) {
+          setError(loadError.message || 'We couldn’t load your checkpoint.')
+        }
+      })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [topicId, moduleId, acceptAttempt])
+
+  useEffect(() => {
+    if (focusQuestionId && currentQuestion?.id === focusQuestionId) answerControlRef.current?.focus()
+  }, [focusQuestionId, currentQuestion])
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+  }, [])
+
+  const launchAttempt = useCallback(async (action, partial = false) => {
     setLoading(true)
     setError('')
     try {
-      const data = await startExam(topicId, moduleId)
-      if (data.questions) {
-        setQuestions(data.questions)
-        setAnswers(data.answers || {})
-        setEvaluation(null)
-        setCurrentIndex(0)
-        setIsPartialRetest(false)
-        setRetestId(data.id || null)
-        setExam(data)
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to start exam.')
+      const data = await action()
+      acceptAttempt(data, partial)
+    } catch (actionError) {
+      setError(actionError.message || 'We couldn’t prepare this checkpoint. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [topicId, moduleId])
+  }, [acceptAttempt])
 
   const handleAnswerChange = useCallback((questionId, value) => {
-    setAnswers((prev) => {
-      const next = { ...prev, [questionId]: value }
-      // Debounced auto-save
+    setAnswers((previous) => {
+      const next = { ...previous, [questionId]: value }
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      setSaveState('saving')
       saveTimerRef.current = setTimeout(() => {
-        saveExamProgress(topicId, moduleId, next).catch(() => {})
-      }, 1500)
+        persistAnswers(next)
+          .then(() => setSaveState('saved'))
+          .catch(() => setSaveState('error'))
+      }, SAVE_DEBOUNCE_MS)
       return next
     })
-  }, [topicId, moduleId])
+    setError('')
+  }, [persistAnswers])
 
   const handleSubmit = useCallback(async () => {
-    const answeredCount = Object.values(answers).filter((a) => a && a.trim().length > 0).length
-    if (answeredCount < questions.length) {
-      setError(`Please answer all ${questions.length} questions before submitting. ${questions.length - answeredCount} unanswered.`)
-      // Jump to first unanswered
-      const firstUnanswered = questions.findIndex((q) => !answers[q.id] || answers[q.id].trim().length === 0)
-      if (firstUnanswered >= 0) setCurrentIndex(firstUnanswered)
+    const incompleteIndex = questions.findIndex((question) => !hasAnswer(answers[question.id]))
+    if (incompleteIndex >= 0) {
+      const missingQuestion = questions[incompleteIndex]
+      setCurrentIndex(incompleteIndex)
+      setFocusQuestionId(missingQuestion.id)
+      setError(`There ${questions.length - answeredCount === 1 ? 'is' : 'are'} still ${questions.length - answeredCount} unanswered ${questions.length - answeredCount === 1 ? 'question' : 'questions'}. We’ve taken you to the first one.`)
       return
     }
 
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     setLoading(true)
     setError('')
     try {
-      let result
-      if (isPartialRetest && retestId) {
-        result = await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate())
-      } else {
-        result = await submitExam(topicId, moduleId, answers, getLocalDate())
+      await persistAnswers(answers)
+      setSaveState('saved')
+      const result = isPartialRetest && retestId
+        ? await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate())
+        : await submitExam(topicId, moduleId, answers, getLocalDate())
+      setEvaluation(result)
+      setPhase('results')
+    } catch (submitError) {
+      if (submitError.unansweredQuestionIds?.length) {
+        const missingIndex = questions.findIndex((question) => question.id === submitError.unansweredQuestionIds[0])
+        if (missingIndex >= 0) {
+          setCurrentIndex(missingIndex)
+          setFocusQuestionId(questions[missingIndex].id)
+        }
       }
-      setEvaluation({ ...result, _questions: questions, _answers: answers, _topicId: topicId })
-      if (result.passed) {
-        setShowCelebration(true)
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to submit exam.')
+      setError(submitError.message || 'Your checkpoint couldn’t be submitted. Your answers are still here; try again when you’re ready.')
     } finally {
       setLoading(false)
     }
-  }, [topicId, moduleId, answers, questions, isPartialRetest, retestId])
+  }, [answers, answeredCount, isPartialRetest, moduleId, persistAnswers, questions, retestId, topicId])
 
-  const handleRetake = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await retakeExam(topicId, moduleId)
-      if (data.questions) {
-        setQuestions(data.questions)
-        setAnswers({})
-        setEvaluation(null)
-        setCurrentIndex(0)
-        setIsPartialRetest(false)
-        setRetestId(data.id || null)
-        setExam(data)
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to start retake.')
-    } finally {
-      setLoading(false)
-    }
-  }, [topicId, moduleId])
+  const handlePartialRetest = useCallback(() => {
+    const failedOutcomeIds = evaluation?.failedOutcomeIds || []
+    if (!failedOutcomeIds.length) return
+    launchAttempt(() => startPartialRetest(topicId, moduleId, failedOutcomeIds), true)
+  }, [evaluation, launchAttempt, moduleId, topicId])
 
-  const handlePartialRetest = useCallback(async () => {
-    if (!evaluation?.weakLessons?.length) return
-    setLoading(true)
-    setError('')
-    try {
-      const data = await startPartialRetest(topicId, moduleId, evaluation.weakLessons)
-      if (data.questions) {
-        setQuestions(data.questions)
-        setAnswers({})
-        setEvaluation(null)
-        setCurrentIndex(0)
-        setIsPartialRetest(true)
-        setRetestId(data.id || null)
-        setExam(data)
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to start partial retest.')
-    } finally {
-      setLoading(false)
-    }
-  }, [topicId, moduleId, evaluation])
+  const handleReviewLesson = useCallback((lessonId) => {
+    navigate(`/topic/${topicId}/lesson/${lessonId}`)
+  }, [navigate, topicId])
 
-  if (evaluation) {
+  if (loading && phase === 'intro' && !error && !exam) {
+    return <div className="checkpoint-loading" role="status">Getting your Chapter ready…</div>
+  }
+
+  if (phase === 'results' && evaluation) {
     return (
-      <div className="flex-1 overflow-y-auto relative">
-        {showCelebration && (
-          <CelebrationOverlay onDismiss={() => setShowCelebration(false)} />
-        )}
-        <ExamResult
-          evaluation={evaluation}
-          onBack={onBack}
-          onRetake={handleRetake}
-          onPartialRetest={handlePartialRetest}
-          moduleLessons={moduleLessons || []}
-        />
-      </div>
+      <CheckpointResults
+        evaluation={evaluation}
+        outcomes={outcomes}
+        moduleLessons={moduleLessons}
+        questions={questions}
+        answers={answers}
+        loading={loading}
+        error={error}
+        onBack={onBack}
+        onRetake={() => launchAttempt(() => retakeExam(topicId, moduleId))}
+        onPartialRetest={handlePartialRetest}
+        onReviewLesson={handleReviewLesson}
+      />
     )
   }
 
-  if (questions.length === 0) {
+  if (phase === 'intro') {
     return (
-      <div className="flex-1 overflow-y-auto flex items-center justify-center px-4">
-        <div className="text-center max-w-sm">
-          <div className="text-4xl mb-3">📋</div>
-          <h2 className="text-lg font-bold text-gray-900 mb-2">Module Exam</h2>
-          <p className="text-sm text-gray-600 mb-4">
-            When you have passed all lessons in this module, you can take the comprehensive exam to demonstrate mastery.
-          </p>
-          {error && (
-            <div className="ui-alert ui-alert-danger mb-4" role="alert">
-              {error}
-            </div>
-          )}
-          <button
-            onClick={handleStartExam}
-            disabled={loading}
-            className="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Generating questions…' : 'Start Exam'}
-          </button>
-        </div>
-      </div>
+      <CheckpointIntro
+        moduleTitle={exam?.moduleTitle || moduleTitle}
+        outcomes={outcomes}
+        lessonCount={moduleLessons.length}
+        ready={ready}
+        lessonsRemaining={lessonsRemaining || incompleteLessonCount}
+        loading={loading}
+        error={error}
+        onStart={() => launchAttempt(() => startExam(topicId, moduleId))}
+        onContinueLearning={firstIncompleteLesson ? () => handleReviewLesson(firstIncompleteLesson.id) : null}
+      />
     )
   }
-
-  const currentQuestion = questions[currentIndex]
-  const answeredCount = questions.filter((q) => answers[q.id] && answers[q.id].trim().length > 0).length
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-900">
-            {isPartialRetest ? 'Partial Retest' : 'Module Exam'}
-          </h2>
-          <span className="text-xs text-gray-500">{answeredCount}/{questions.length} answered</span>
+    <section className="checkpoint-player" aria-labelledby="checkpoint-player-title">
+      <header className="checkpoint-player-header">
+        <div>
+          <div className="checkpoint-eyebrow">{isPartialRetest ? 'Targeted practice' : 'Chapter checkpoint'}</div>
+          <h2 id="checkpoint-player-title">{exam?.moduleTitle || moduleTitle || 'Your learning, together'}</h2>
         </div>
-
-        <ProgressBar value={answeredCount} max={questions.length} label="Exam questions answered" className="mb-6" />
-
-        {error && (
-          <div className="ui-alert ui-alert-danger mb-4" role="alert">
-            {error}
-          </div>
-        )}
-
-        {/* Question navigator dots */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {questions.map((q, idx) => {
-            const isAnswered = answers[q.id] && answers[q.id].trim().length > 0
-            const isCurrent = idx === currentIndex
-            return (
-              <button
-                key={q.id}
-                onClick={() => setCurrentIndex(idx)}
-                className={`w-8 h-8 rounded-full text-xs font-medium flex items-center justify-center transition-colors ${
-                  isCurrent
-                    ? 'bg-indigo-600 text-white ring-2 ring-offset-2'
-                    : isAnswered
-                      ? 'bg-green-100 text-green-700 border border-green-300'
-                      : 'bg-gray-100 text-gray-500 border border-gray-200'
-                }`}
-                aria-label={`Go to question ${idx + 1}${isCurrent ? ' (current)' : ''}${isAnswered ? ' (answered)' : ' (unanswered)'}`}
-                aria-current={isCurrent ? 'step' : undefined}
-              >
-                <span>{idx + 1}</span>
-                <span aria-hidden="true">{isAnswered ? '✓' : '—'}</span>
-              </button>
-            )
-          })}
+        <div className="checkpoint-save-state" role="status" aria-live="polite">
+          {saveState === 'saving' ? 'Saving your place…' : saveState === 'saved' ? 'Saved as you go' : saveState === 'error' ? 'Save paused — we’ll retry when you continue' : 'Autosave is on'}
         </div>
+      </header>
 
-        {/* Current question */}
-        {currentQuestion && (
-          <QuestionCard
-            question={currentQuestion}
-            answer={answers[currentQuestion.id] || ''}
-            onAnswerChange={handleAnswerChange}
-            index={currentIndex}
-            total={questions.length}
-            disabled={loading}
-          />
-        )}
-
-        {/* Navigation buttons */}
-        <div className="flex items-center justify-between mt-4">
-          <button
-            onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
-            disabled={currentIndex === 0 || loading}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            ← Previous
-          </button>
-          {currentIndex < questions.length - 1 ? (
-            <button
-              onClick={() => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))}
-              disabled={loading}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next →
-            </button>
-          ) : (
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Evaluating…' : 'Submit Exam'}
-            </button>
-          )}
+      <div className="checkpoint-progress-row">
+        <span>{answeredCount} of {questions.length} answered</span>
+        <div className="checkpoint-progress-track" role="progressbar" aria-label="Checkpoint questions answered" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answeredCount}>
+          <span style={{ width: `${questions.length ? (answeredCount / questions.length) * 100 : 0}%` }} />
         </div>
       </div>
-    </div>
+
+      {error && <div className="ui-alert ui-alert-danger checkpoint-inline-error" role="alert">{error}</div>}
+
+      <nav className="checkpoint-question-nav" aria-label="Checkpoint questions">
+        {questions.map((question, index) => {
+          const answered = hasAnswer(answers[question.id])
+          return (
+            <button
+              key={question.id}
+              type="button"
+              className={`checkpoint-question-nav-item${index === currentIndex ? ' is-current' : ''}${answered ? ' is-answered' : ''}`}
+              aria-label={`Question ${index + 1}${index === currentIndex ? ', current' : ''}${answered ? ', answered' : ', unanswered'}`}
+              aria-current={index === currentIndex ? 'step' : undefined}
+              onClick={() => { setCurrentIndex(index); setFocusQuestionId(null) }}
+            >{answered ? '✓' : index + 1}</button>
+          )
+        })}
+      </nav>
+
+      {currentQuestion && (
+        <CheckpointQuestion
+          question={currentQuestion}
+          answer={answers[currentQuestion.id] || ''}
+          index={currentIndex}
+          total={questions.length}
+          onAnswerChange={handleAnswerChange}
+          answerRef={answerControlRef}
+          disabled={loading}
+        />
+      )}
+
+      <footer className="checkpoint-player-actions">
+        <button className="ui-button ui-button-secondary" type="button" onClick={() => { setCurrentIndex((index) => Math.max(0, index - 1)); setFocusQuestionId(null) }} disabled={currentIndex === 0 || loading}>← Previous</button>
+        {currentIndex < questions.length - 1 ? (
+          <button className="ui-button ui-button-primary" type="button" onClick={() => { setCurrentIndex((index) => Math.min(questions.length - 1, index + 1)); setFocusQuestionId(null) }} disabled={loading}>Next question →</button>
+        ) : (
+          <button className="ui-button ui-button-primary" type="button" onClick={handleSubmit} disabled={loading}>{loading ? 'Checking your work…' : 'Finish checkpoint'}</button>
+        )}
+      </footer>
+    </section>
   )
 }

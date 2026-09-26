@@ -367,7 +367,7 @@ export async function getExam(topicId, moduleId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam`)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -379,7 +379,7 @@ export async function startExam(topicId, moduleId) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -392,7 +392,7 @@ export async function saveExamProgress(topicId, moduleId, answers) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -405,7 +405,7 @@ export async function submitExam(topicId, moduleId, answers, localDate) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -417,20 +417,20 @@ export async function retakeExam(topicId, moduleId) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
 
-export async function startPartialRetest(topicId, moduleId, weakLessons) {
+export async function startPartialRetest(topicId, moduleId, failedOutcomeIds) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ weakLessons }),
+    body: JSON.stringify({ failedOutcomeIds }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -443,7 +443,7 @@ export async function submitPartialRetest(topicId, moduleId, retestId, answers, 
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }

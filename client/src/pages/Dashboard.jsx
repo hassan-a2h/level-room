@@ -150,20 +150,20 @@ function ModuleCard({ mod, topicId, onStartExam }) {
         )}
         {allPassed && !isCompleted && (
           <span className="ui-status ui-status-progress">
-            Exam Ready
+            Checkpoint ready
           </span>
         )}
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs ui-text-muted">
-          {mod.lessons.filter((l) => ['passed', 'tested_out'].includes(l.state)).length} / {mod.lessons.length} lessons passed
+          {mod.lessons.filter((l) => l.state === 'passed').length} / {mod.lessons.length} Sessions complete
         </span>
         {allPassed && !isCompleted && (
           <button
             onClick={() => onStartExam(mod.id)}
             className="ui-button ui-button-primary text-xs"
           >
-            Take Exam
+            Chapter checkpoint
           </button>
         )}
         {!allPassed && !isCompleted && mod.lessonsRemaining > 0 && (
@@ -469,7 +469,7 @@ export default function Dashboard() {
                     <div>
                       <h2 className="text-xl sm:text-2xl font-bold ui-text">{dashboard.topic.title}</h2>
                       <p className="text-sm ui-text-muted mt-1">
-                        Module Exam: {dashboard.modules.find((m) => m.id === examModuleId)?.title}
+                        Chapter checkpoint: {dashboard.modules.find((m) => m.id === examModuleId)?.title}
                       </p>
                     </div>
                     <button
@@ -482,6 +482,8 @@ export default function Dashboard() {
                   <ExamPanel
                     topicId={activeTopicId}
                     moduleId={examModuleId}
+                    moduleTitle={dashboard.modules.find((m) => m.id === examModuleId)?.title || ''}
+                    chapterOutcomes={dashboard.modules.find((m) => m.id === examModuleId)?.skill_outcomes || []}
                     moduleLessons={dashboard.modules.find((m) => m.id === examModuleId)?.lessons || []}
                     onBack={handleExamBack}
                   />
