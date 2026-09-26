@@ -6,6 +6,14 @@ import Button from './ui/Button.jsx'
 import ProgressBar from './ui/ProgressBar.jsx'
 import StatusBadge from './ui/StatusBadge.jsx'
 
+function safeReviewError(error) {
+  const message = typeof error?.message === 'string' ? error.message.trim() : ''
+  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
+    return 'Could not save this answer. Your response is still here. Try again.'
+  }
+  return message
+}
+
 function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit, disabled }) {
   return (
     <section className="ui-panel p-5 sm:p-7" aria-labelledby="review-question-title">
@@ -40,13 +48,19 @@ function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit
   )
 }
 
-function FeedbackCard({ feedback, question, onNext }) {
-  const isCorrect = feedback?.correct
+function FeedbackCard({ feedback, onNext }) {
+  const score = Number(feedback?.score)
+  const label = feedback?.correct
+    ? 'Remembered'
+    : feedback?.almost || feedback?.nearCorrect || (Number.isFinite(score) && score > 0)
+      ? 'Almost'
+      : 'Revisit'
+  const status = label === 'Remembered' ? 'success' : label === 'Almost' ? 'progress' : 'warning'
   return (
     <section className="ui-panel p-5 sm:p-7" aria-live="polite">
       <div className="mb-4 flex items-center gap-3">
-        <span aria-hidden="true" className="text-lg">{isCorrect ? '✓' : '↻'}</span>
-        <StatusBadge status={isCorrect ? 'success' : 'warning'}>{isCorrect ? 'Correct' : 'Incorrect'}</StatusBadge>
+        <span aria-hidden="true" className="text-lg">{label === 'Remembered' ? '✓' : '↻'}</span>
+        <StatusBadge status={status}>{label}</StatusBadge>
       </div>
       <p className="mb-5 ui-text-secondary">
         {feedback?.explanation || 'No explanation provided.'}
@@ -59,33 +73,32 @@ function FeedbackCard({ feedback, question, onNext }) {
 }
 
 function SummaryCard({ result, onBack }) {
-  const { overallScore, passed, totalQuestions, perItemResults, accelerated, regressed } = result
+  const { overallScore, passed, perItemResults, accelerated, regressed } = result
   const correctCount = perItemResults?.reduce((sum, item) => sum + (item.correctCount || 0), 0) || 0
   const totalAnswered = perItemResults?.reduce((sum, item) => sum + (item.totalCount || 0), 0) || 0
 
   return (
     <section className="ui-panel p-5 sm:p-7" aria-labelledby="review-complete-title">
-      <h2 id="review-complete-title" className="mb-5 text-2xl font-bold ui-text">Review Complete</h2>
+      <h2 id="review-complete-title" className="mb-5 text-2xl font-bold ui-text">{passed ? 'Ready to continue' : 'Revisit when ready'}</h2>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <div className="text-3xl font-bold ui-text">
           {overallScore}%
         </div>
         <div className="text-sm ui-text-secondary">
-          {correctCount} / {totalAnswered} correct
+          {correctCount} remembered · {Math.max(0, totalAnswered - correctCount)} to revisit
         </div>
-        <StatusBadge status={passed ? 'success' : 'warning'}>{passed ? 'Passed' : 'Needs Review'}</StatusBadge>
-        {accelerated && <StatusBadge status="progress">Accelerated</StatusBadge>}
-        {regressed && <StatusBadge status="warning">Regressed</StatusBadge>}
+        {accelerated && <StatusBadge status="progress">Next review spaced further</StatusBadge>}
+        {regressed && <StatusBadge status="warning">More practice scheduled</StatusBadge>}
       </div>
 
       {perItemResults && perItemResults.length > 0 && (
         <div className="space-y-2 mb-6">
-          <h3 className="text-sm font-semibold ui-text-muted uppercase tracking-wider">Per lesson</h3>
+          <h3 className="text-sm font-semibold ui-text-muted uppercase tracking-wider">By Chapter</h3>
           {perItemResults.map((item, idx) => (
             <div key={idx} className="ui-surface ui-surface-flat flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2">
               <span className="text-sm ui-text-secondary">
-                {item.lessonTitle || item.moduleTitle || 'Module Review'}
+                {item.chapterTitle || item.moduleTitle || item.lessonTitle || 'Chapter review'}
               </span>
               <StatusBadge status={item.score >= 80 ? 'success' : 'warning'}>{item.score}%</StatusBadge>
             </div>
@@ -94,7 +107,7 @@ function SummaryCard({ result, onBack }) {
       )}
 
       <div className="flex justify-end">
-        <Button onClick={onBack}>Back to Dashboard</Button>
+        <Button onClick={onBack}>Continue Trail</Button>
       </div>
     </section>
   )
@@ -145,7 +158,7 @@ export default function ReviewSession() {
         setResult(res)
       }
     } catch (err) {
-      setError(err.message || 'Failed to submit answer.')
+      setError(safeReviewError(err))
     } finally {
       setSubmitting(false)
     }
@@ -171,7 +184,7 @@ export default function ReviewSession() {
   if (!sessionId || !questions || questions.length === 0) {
     return (
       <div className="ui-page min-h-screen">
-        <AppHeader variant="focus" title="Review session" returnTo="/reviews" returnLabel="Review Queue" />
+        <AppHeader variant="focus" title="Retrieval practice" returnTo="/reviews" returnLabel="Review Queue" />
         <main className="ui-container max-w-3xl px-4 py-10">
           <section className="ui-panel p-6 text-center" aria-labelledby="missing-review-title">
             <h2 id="missing-review-title" className="mb-2 text-xl font-semibold ui-text">No active review session</h2>
@@ -212,7 +225,7 @@ export default function ReviewSession() {
           <ProgressBar value={currentIndex + 1} max={questions.length} label="Review question progress" />
           {remainingCount > 0 && (
             <p className="mt-2 text-sm ui-text-muted">
-              {remainingCount} more review{remainingCount !== 1 ? 's' : ''} queued for later
+              {remainingCount} more retrieval item{remainingCount !== 1 ? 's' : ''} queued for later
             </p>
           )}
         </section>
@@ -223,11 +236,7 @@ export default function ReviewSession() {
         )}
 
         {isSubmitted && currentFeedback ? (
-          <FeedbackCard
-            feedback={currentFeedback}
-            question={currentQuestion}
-            onNext={handleNext}
-          />
+          <FeedbackCard feedback={currentFeedback} onNext={handleNext} />
         ) : (
           <QuestionCard
             question={currentQuestion}

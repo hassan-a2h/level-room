@@ -10,6 +10,14 @@ const SCORE_LABELS = {
   0: 'Missing',
 }
 
+function safeArtifactError(error, fallback) {
+  const message = typeof error?.message === 'string' ? error.message.trim() : ''
+  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
+    return fallback
+  }
+  return message
+}
+
 function RubricPreview() {
   return (
     <section className="ui-panel mb-4 p-4" aria-labelledby="artifact-rubric-title">
@@ -28,9 +36,9 @@ function RubricPreview() {
               {dim === 'Edge Cases' && 'Does it handle boundary conditions?'}
             </div>
             <div className="mt-1.5 flex items-center gap-1 text-[10px] ui-text-muted" aria-hidden="true">
-              <span className="inline-block w-2 h-2 rounded-sm bg-red-200" />0
-              <span className="inline-block w-2 h-2 rounded-sm bg-yellow-200 ml-1" />1
-              <span className="inline-block w-2 h-2 rounded-sm bg-green-200 ml-1" />2
+              <span className="rubric-score-swatch rubric-score-missing" />0
+              <span className="rubric-score-swatch rubric-score-developing ml-1" />1
+              <span className="rubric-score-swatch rubric-score-strong ml-1" />2
             </div>
           </div>
         ))}
@@ -48,26 +56,52 @@ function ScoreBadge({ score }) {
   return <StatusBadge status={status}>{score}/2 — {label}</StatusBadge>
 }
 
-function EvaluationResult({ evaluation, onRevise, artifactContent }) {
+function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence }) {
   const isPass = evaluation.passed
+  const heading = isPass ? 'Build complete' : 'Ready to revise'
+  const nextStepFor = (score, feedback) => {
+    if (score >= 2) return 'Keep this approach in your next Build.'
+    if (score === 1) return feedback ? `Strengthen this by addressing: ${feedback}` : 'Add one specific detail to make this stronger.'
+    return feedback ? `Start here: ${feedback}` : 'Add a concrete example that demonstrates this skill.'
+  }
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
+    <div className="build-evaluation max-w-3xl mx-auto px-4 py-6">
       <section className={`ui-alert ${isPass ? 'ui-alert-success' : 'ui-alert-warning'} mb-6`} aria-live="polite">
         <div className="flex items-center gap-3 mb-2">
           <div className="text-3xl ui-text">
-            {isPass ? '✅' : '❌'}
+            {taskEvidence ? (isPass ? '✓' : '↻') : (isPass ? '✅' : '❌')}
           </div>
           <div>
             <h2 className="text-lg font-bold ui-text">
-              {isPass ? 'Artifact Approved' : 'Needs Revision'}
+              {heading}
             </h2>
             <p className="text-sm ui-text-secondary">
               Overall: <span className="font-semibold">{evaluation.overallScore}%</span>
-              <span> (passing requires no zeros and ≥70%)</span>
+              <span> (the checkpoint passes with no missing dimensions and a score of at least 70%)</span>
             </p>
           </div>
         </div>
       </section>
+
+      {taskEvidence && (
+        <section className="ui-panel build-submitted-evidence mb-5 p-4" aria-labelledby="submitted-evidence-title">
+          <h3 id="submitted-evidence-title" className="text-sm font-semibold ui-text mb-2">Your submitted evidence</h3>
+          <dl className="grid gap-3 sm:grid-cols-2">
+            {Object.entries(taskEvidence).map(([field, value]) => (
+              <div key={field}>
+                <dt className="text-xs font-medium ui-text-muted capitalize">{field === 'actions' ? 'Actions taken' : field === 'result' ? 'Observed result' : field}</dt>
+                <dd className="mt-1 whitespace-pre-wrap text-sm ui-text-secondary">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
+      {!taskEvidence && artifactContent && (
+        <section className="ui-panel build-submitted-evidence mb-5 p-4" aria-label="Your submitted work">
+          <h3 className="text-sm font-semibold ui-text mb-2">Your submitted work</h3>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-sm ui-text-secondary">{artifactContent}</pre>
+        </section>
+      )}
 
       <div className="space-y-3 mb-6">
         {RUBRIC_DIMENSIONS.map((dim) => {
@@ -79,7 +113,8 @@ function EvaluationResult({ evaluation, onRevise, artifactContent }) {
                 <span className="text-sm font-semibold ui-text">{dim}</span>
                 <ScoreBadge score={score} />
               </div>
-              {fb && <p className="text-sm ui-text-secondary">{fb}</p>}
+              <p className="mt-2 text-sm ui-text-secondary"><strong>Evidence:</strong> {fb || 'This dimension was included in the evaluation.'}</p>
+              <p className="mt-2 text-sm ui-text-secondary"><strong>Next step:</strong> {nextStepFor(score, fb)}</p>
             </section>
           )
         })}
@@ -89,7 +124,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent }) {
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={onRevise}
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+            className="ui-button ui-button-primary min-h-10 px-5 py-2.5 text-sm transition-colors"
           >
             Revise & Resubmit
           </button>
@@ -99,7 +134,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent }) {
       {isPass && (
         <div className="flex items-center justify-center">
             <p className="text-sm ui-text-secondary font-medium">
-            Great work! Your artifact has been approved.
+            {taskEvidence ? 'Your Build checkpoint is complete. Continue your Trail.' : 'Great work! Your Build has been approved.'}
           </p>
         </div>
       )}
@@ -107,7 +142,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent }) {
   )
 }
 
-export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
+export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPassed }) {
   const [content, setContent] = useState('')
   const [evidence, setEvidence] = useState({ setup: '', actions: '', result: '', reflection: '' })
   const [showHints, setShowHints] = useState(false)
@@ -116,6 +151,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
   const [error, setError] = useState('')
   const [fileName, setFileName] = useState('')
   const [prevContent, setPrevContent] = useState('')
+  const [prevEvidence, setPrevEvidence] = useState(null)
 
   // Load existing artifact on mount
   useEffect(() => {
@@ -187,13 +223,17 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
       if (result.evaluation) {
         setEvaluation(result.evaluation)
         setPrevContent(taskSpec ? JSON.stringify(evidence) : trimmed)
+        setPrevEvidence(taskSpec ? { ...evidence } : null)
+        if (!evaluation?.passed && result.evaluation.passed && !result.alreadyCompleted) onPassed?.(result)
       }
     } catch (err) {
-      setError(err.message || 'Failed to submit artifact.')
+      setError(safeArtifactError(err, taskSpec
+        ? 'Could not evaluate this Build. Your evidence is still here. Try again.'
+        : 'Could not submit that artifact. Your work is still here. Try again.'))
     } finally {
       setLoading(false)
     }
-  }, [topicId, lessonId, content, evidence, lesson])
+  }, [topicId, lessonId, content, evidence, lesson, evaluation?.passed, onPassed])
 
   const handleRevise = useCallback(() => {
     setEvaluation(null)
@@ -213,14 +253,14 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
   if (evaluation) {
     return (
       <div className="flex-1 overflow-y-auto">
-        <EvaluationResult evaluation={evaluation} onRevise={handleRevise} artifactContent={prevContent} />
+        <EvaluationResult evaluation={evaluation} onRevise={handleRevise} artifactContent={prevContent} taskEvidence={prevEvidence} />
         {evaluation.passed && (
           <div className="flex justify-center pb-6">
             <button
               onClick={onBack}
-              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              className="ui-button ui-button-primary min-h-10 px-5 py-2.5 text-sm transition-colors"
             >
-              Back to Lesson
+              {prevEvidence ? 'Continue Trail' : 'Back to Session'}
             </button>
           </div>
         )}
@@ -234,17 +274,18 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold ui-text">{taskSpec ? 'Complete Practical Task' : 'Submit Artifact'}</h2>
+          <h2 className="text-lg font-bold ui-text">Build</h2>
           {artifactType && (
             <StatusBadge status="progress">
-              {artifactType}
+              {taskSpec ? 'Build' : artifactType}
             </StatusBadge>
           )}
         </div>
 
         {taskSpec ? (
-          <section className="ui-panel mb-4 p-4" aria-labelledby="task-title">
+          <section className="ui-panel build-brief mb-4 p-4" aria-labelledby="task-title">
             <h3 id="task-title" className="text-base font-semibold ui-text">{taskSpec.title}</h3>
+            {Number.isFinite(lesson?.estimated_time) && lesson.estimated_time > 0 && <p className="mt-1 text-xs ui-text-muted">Estimated time: {lesson.estimated_time} minutes</p>}
             <p className="mt-2 text-sm ui-text-secondary">{taskSpec.scenario}</p>
             <p className="mt-2 text-sm ui-text"><strong>Goal:</strong> {taskSpec.goal}</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-3 text-xs ui-text-secondary">
@@ -253,9 +294,9 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
               <div><strong>Success criteria</strong><ul className="mt-1 list-disc pl-4">{taskSpec.success_criteria?.map((item) => <li key={item}>{item}</li>)}</ul></div>
             </div>
             <div className="mt-3 rounded-lg ui-surface ui-surface-flat p-3 text-xs ui-text-secondary">
-              <strong>Free path:</strong> {taskSpec.primary_setup?.description} ({taskSpec.primary_setup?.kind})
+              <strong>Safe setup:</strong> {taskSpec.primary_setup?.description} ({taskSpec.primary_setup?.kind})
               <br />
-              <strong>Free fallback:</strong> {taskSpec.free_fallback?.description}
+              <strong>Fallback:</strong> {taskSpec.free_fallback?.description}
             </div>
             {taskSpec.safety_notes?.length > 0 && <p className="mt-3 text-xs ui-text-muted"><strong>Safety:</strong> {taskSpec.safety_notes.join(' ')}</p>}
             {taskSpec.hints?.length > 0 && (
@@ -267,7 +308,9 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
               </div>
             )}
           </section>
-        ) : <RubricPreview />}
+        ) : null}
+
+        <RubricPreview />
 
         {error && (
           <div className="ui-alert ui-alert-danger mb-4" role="alert">
@@ -275,7 +318,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
           </div>
         )}
 
-        <div className="space-y-3 mb-4">
+        <div className="build-evidence-fields space-y-3 mb-4">
           {taskSpec ? (
             [
               ['setup', 'Setup'],
@@ -297,7 +340,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
             ))
           ) : (
             <>
-              <label htmlFor="artifact-submission" className="ui-field-label">Your artifact submission</label>
+              <label htmlFor="artifact-submission" className="ui-field-label">Your Build submission</label>
               <textarea
                 id="artifact-submission"
                 value={content}
@@ -315,7 +358,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
 
           {isDesign && (
             <div className="flex items-center gap-3">
-              <label className="cursor-pointer rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors">
+              <label className="ui-button ui-button-secondary min-h-10 cursor-pointer px-3 py-2 text-sm transition-colors">
                 <input
                   type="file"
                   accept="image/*,.pdf,.svg,.png,.jpg,.jpeg,.gif"
@@ -326,9 +369,9 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
                 📎 Upload File
               </label>
               {fileName && (
-                <span className="text-sm text-gray-600">{fileName}</span>
+                <span className="text-sm ui-text-secondary">{fileName}</span>
               )}
-              <span className="text-xs text-gray-400">Max 5MB</span>
+              <span className="text-xs ui-text-muted">Max 5MB</span>
             </div>
           )}
         </div>
@@ -337,14 +380,14 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack }) {
           <button
             onClick={handleSubmit}
             disabled={loading || (taskSpec ? !evidenceComplete : !content.trim())}
-            className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ui-button ui-button-primary min-h-10 px-6 py-2.5 text-sm transition-colors disabled:cursor-not-allowed"
           >
-            {loading ? 'Evaluating…' : taskSpec ? 'Submit Task Evidence' : 'Submit Artifact'}
+            {loading ? 'Evaluating…' : 'Submit Build'}
           </button>
           <button
             onClick={onBack}
             disabled={loading}
-            className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
+            className="ui-button ui-button-secondary min-h-10 px-5 py-2.5 text-sm transition-colors"
           >
             Cancel
           </button>

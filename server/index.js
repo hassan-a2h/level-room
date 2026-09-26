@@ -8,6 +8,7 @@ import dashboardRouter from './routes/dashboard.js'
 import curriculumRouter, { startCurriculumGenerationWorker } from './routes/curriculum.js'
 import continuationRouter from './routes/continuations.js'
 import lessonsRouter from './routes/lessons.js'
+import activitiesRouter from './routes/activities.js'
 import examsRouter from './routes/exams.js'
 import reviewsRouter from './routes/reviews.js'
 import streakRouter from './routes/streak.js'
@@ -49,6 +50,7 @@ app.use('/api/settings', settingsRouter)
 app.use('/api', dashboardRouter)
 app.use('/api', curriculumRouter)
 app.use('/api', continuationRouter)
+app.use('/api', activitiesRouter)
 app.use('/api', lessonsRouter)
 app.use('/api', examsRouter)
 app.use('/api', reviewsRouter)

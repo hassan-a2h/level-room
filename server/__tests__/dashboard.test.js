@@ -66,6 +66,18 @@ describe('Dashboard API', () => {
       expect(res.body.completedTopics).toHaveLength(0)
     })
 
+    it('marks prerequisite Trails that are protected by linked continuations', async () => {
+      const parent = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'Foundation Track', 'completed')
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind) VALUES (?, ?, ?)", 'Advanced Track', 'active', 'advanced')
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'balanced-next', 'balanced-next')
+
+      const response = await request(app).get('/api/topics')
+
+      expect(response.status).toBe(200)
+      expect(response.body.topics.find((topic) => topic.id === parent.lastInsertRowid)).toMatchObject({ hasChildren: true })
+      expect(response.body.topics.find((topic) => topic.id === child.lastInsertRowid)).toMatchObject({ hasChildren: false })
+    })
+
     it('exposes course metadata and keeps completed courses in the list', async () => {
       const topic = dbModule.run(
         "INSERT INTO topics (title, status, course_kind, course_stage, course_focus, course_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -112,9 +124,10 @@ describe('Dashboard API', () => {
 
     it('returns dashboard data with modules, lessons, and progress', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, "Basics")
-      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, prerequisites) VALUES (?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 0, "JSX", "Beginner", 10, "[]")
+      const outcome = { id: 'write-jsx', title: 'Write JSX', kind: 'skill', role: 'core', evidence: ['activity'] }
+      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)", topic.lastInsertRowid, 0, "Basics", JSON.stringify([outcome]))
+      const l1 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        mod.lastInsertRowid, 0, "JSX", "Beginner", 10, JSON.stringify([outcome]), "[]")
       const l2 = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, prerequisites) VALUES (?, ?, ?, ?, ?, ?)",
         mod.lastInsertRowid, 1, "Components", "Beginner", 15, JSON.stringify([{ lessonId: l1.lastInsertRowid, title: "JSX" }]))
 
@@ -129,6 +142,8 @@ describe('Dashboard API', () => {
       expect(res.body.modules).toHaveLength(1)
       expect(res.body.modules[0].lessons).toHaveLength(2)
       expect(res.body.modules[0].lessons[0].state).toBe("passed")
+      expect(res.body.modules[0].skill_outcomes).toEqual([outcome])
+      expect(res.body.modules[0].lessons[0].outcomes).toEqual([outcome])
       expect(res.body.modules[0].lessons[1].state).toBe("not_started")
       expect(res.body.modules[0].lessons[1].prerequisites).toHaveLength(1)
     })
@@ -162,6 +177,80 @@ describe('Dashboard API', () => {
       expect(res.body.topic.children).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: child.lastInsertRowid, lane: 'Cloud Security' }),
       ]))
+    })
+
+    it('returns deterministic next action, safe current activity, Build markers, and bounded focus areas', async () => {
+      const topic = dbModule.run(
+        "INSERT INTO topics (title, status, course_summary) VALUES (?, ?, ?)",
+        'React', 'active', 'Build reliable user interfaces.',
+      )
+      const mod = dbModule.run(
+        "INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)",
+        topic.lastInsertRowid, 0, 'Components', JSON.stringify([{ id: 'write-components', title: 'Write reusable components', kind: 'skill', role: 'core', evidence: ['activity', 'artifact'] }]),
+      )
+      const lesson = dbModule.run(
+        "INSERT INTO lessons (module_id, lesson_index, title, estimated_time, outcomes, artifact_required, artifact_type, activity_blocks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        mod.lastInsertRowid, 0, 'Build a component', 18,
+        JSON.stringify([{ id: 'write-components', title: 'Write reusable components', kind: 'skill', role: 'core', evidence: ['activity', 'artifact'] }]),
+        1, 'code', JSON.stringify({ blocks: [{ id: 'current-block', title: 'Choose a component boundary' }], answerKey: { secret: 'never expose' } }),
+      )
+      dbModule.run(
+        "INSERT INTO progress (topic_id, lesson_id, state, started_at, activity_state) VALUES (?, ?, ?, ?, ?)",
+        topic.lastInsertRowid, lesson.lastInsertRowid, 'practicing', '2026-09-26T08:00:00.000Z', JSON.stringify({ currentBlockId: 'current-block', answer: 'private' }),
+      )
+      for (let index = 0; index < 4; index += 1) {
+        dbModule.run('INSERT INTO mistakes_log (topic_id, lesson_id, description, created_at) VALUES (?, ?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, `Focus ${index + 1}`, `2026-09-2${index + 3}T00:00:00.000Z`)
+      }
+
+      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/dashboard?localDate=2026-09-26&timeZone=Asia%2FKarachi`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.nextAction).toMatchObject({ kind: 'resume_session', lessonId: lesson.lastInsertRowid, currentActivity: 'Choose a component boundary', estimatedMinutes: 18 })
+      expect(res.body.modules[0].lessons[0]).toMatchObject({ buildRequired: true, buildType: 'code' })
+      expect(res.body.modules[0].lessons[0]).not.toHaveProperty('quiz_score')
+      expect(res.body.modules[0].lessons[0]).not.toHaveProperty('quiz_attempts')
+      expect(res.body.topic.courseSummary).toBe('Build reliable user interfaces.')
+      expect(res.body.focusAreas).toHaveLength(3)
+      expect(res.body.weeklyRhythm.days).toHaveLength(7)
+      const serialized = JSON.stringify(res.body)
+      expect(serialized).not.toContain('answerKey')
+      expect(serialized).not.toContain('activity_state')
+      expect(serialized).not.toContain('"answer":"private"')
+    })
+
+    it('uses the requested local calendar date for review counts and exposes completed rhythm events', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'Databases', 'active')
+      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Queries')
+      const lesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)", mod.lastInsertRowid, 0, 'Select rows')
+      dbModule.run('INSERT INTO progress (topic_id, lesson_id, state, completed_at) VALUES (?, ?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, 'passed', '2026-09-24T20:30:00.000Z')
+      dbModule.run('INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date, status, last_reviewed) VALUES (?, ?, ?, ?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, 0, '2026-09-25', 'pending', '2026-09-24T23:00:00.000Z')
+      dbModule.run('INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date, status) VALUES (?, ?, ?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, 0, '2026-09-26', 'pending')
+
+      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/dashboard?localDate=2026-09-26&timeZone=Asia%2FKarachi`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.reviewSummary).toEqual({ dueToday: 1, overdue: 1, totalDue: 2 })
+      expect(res.body.nextAction).toMatchObject({ kind: 'start_review', overdueReviews: 1 })
+      expect(res.body.weeklyRhythm.days.find((day) => day.date === '2026-09-25')).toMatchObject({ active: true, sessions: 1, reviews: 1 })
+    })
+
+    it('selects a pending Chapter checkpoint before overdue review work', async () => {
+      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'Databases', 'active')
+      const mod = dbModule.run(
+        "INSERT INTO modules (topic_id, module_index, title, status) VALUES (?, ?, ?, ?)",
+        topic.lastInsertRowid, 0, 'Queries', 'active',
+      )
+      const lesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)", mod.lastInsertRowid, 0, 'Select rows')
+      dbModule.run('INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, 'passed')
+      dbModule.run('INSERT INTO exam_attempts (topic_id, module_id, questions, status, type) VALUES (?, ?, ?, ?, ?)', topic.lastInsertRowid, mod.lastInsertRowid, JSON.stringify({ answerKey: 'private' }), 'pending', 'full')
+      dbModule.run('INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date, status) VALUES (?, ?, ?, ?, ?)', topic.lastInsertRowid, lesson.lastInsertRowid, 0, '2026-09-24', 'pending')
+
+      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/dashboard?localDate=2026-09-26&timeZone=Asia%2FKarachi`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.nextAction).toMatchObject({ kind: 'resume_checkpoint', moduleId: mod.lastInsertRowid, chapterTitle: 'Queries' })
+      expect(res.body.modules[0].checkpointStatus).toBe('in_progress')
+      expect(JSON.stringify(res.body)).not.toContain('answerKey')
     })
   })
 
@@ -214,6 +303,19 @@ describe('Dashboard API', () => {
 
       const res = await request(app).post('/api/topics').send({ title: 'D' })
       expect(res.status).toBe(201)
+    })
+
+    it('counts active root Trails but not their linked continuation Tracks toward the limit', async () => {
+      dbModule.run("INSERT INTO topics (title, status) VALUES ('Root one', 'active')")
+      dbModule.run("INSERT INTO topics (title, status) VALUES ('Root two', 'active')")
+      const parent = dbModule.run("INSERT INTO topics (title, status) VALUES ('Completed parent', 'completed')")
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Continuation', 'active', 'advanced', 1)")
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'balanced-next', 'balanced-next')
+
+      const response = await request(app).post('/api/topics').send({ title: 'Root three' })
+
+      expect(response.status).toBe(201)
+      expect(dbModule.get("SELECT COUNT(*) AS count FROM topics t WHERE t.status = 'active' AND NOT EXISTS (SELECT 1 FROM course_links cl WHERE cl.child_topic_id = t.id)").count).toBe(3)
     })
   })
 

@@ -1,8 +1,9 @@
 import { all, get, run, transaction } from '../db.js'
+import { publicOutcome } from './outcome-manifest.js'
 
-const MAX_ACTIVE_TOPICS = 3
 const MAX_SUMMARY_ITEMS = 20
 const MAX_SUMMARY_TEXT = 500
+const MAX_SUMMARY_OUTCOMES = 50
 
 export class CourseLineageError extends Error {
   constructor(message, code, status = 409) {
@@ -34,6 +35,30 @@ function capText(value) {
 function appendUnique(target, value) {
   const text = capText(value)
   if (text && !target.includes(text) && target.length < MAX_SUMMARY_ITEMS) target.push(text)
+}
+
+function appendUniqueOutcome(target, seen, value) {
+  if (typeof value === 'string') {
+    const title = capText(value)
+    const key = `title:${title.normalize('NFKC').toLocaleLowerCase('en-US')}`
+    if (!title || seen.has(key) || target.length >= MAX_SUMMARY_OUTCOMES) return
+    seen.add(key)
+    target.push(title)
+    return
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.id !== 'string' || typeof value.title !== 'string') return
+  if (seen.has(value.id) || target.length >= MAX_SUMMARY_OUTCOMES) return
+  seen.add(value.id)
+  target.push(publicOutcome(value))
+}
+
+export function getActiveRootTrailCount() {
+  return get(
+    `SELECT COUNT(*) AS count
+     FROM topics t
+     WHERE t.status = 'active'
+       AND NOT EXISTS (SELECT 1 FROM course_links cl WHERE cl.child_topic_id = t.id)`,
+  ).count
 }
 
 export function getCourseReadiness(topicId) {
@@ -68,11 +93,18 @@ export function buildCourseSummary(topicId) {
   if (!course) throw new CourseLineageError('Topic not found.', 'TOPIC_NOT_FOUND', 404)
 
   const outcomes = []
+  const outcomeIds = new Set()
   const strengths = []
+  const strengthIds = new Set()
   const gaps = []
   const feedback = []
+  const moduleOutcomeRows = all('SELECT skill_outcomes FROM modules WHERE topic_id = ? ORDER BY module_index', course.id)
+  for (const moduleRow of moduleOutcomeRows) {
+    const declaredOutcomes = parseJson(moduleRow.skill_outcomes, [])
+    for (const outcome of Array.isArray(declaredOutcomes) ? declaredOutcomes : []) appendUniqueOutcome(outcomes, outcomeIds, outcome)
+  }
   const lessonRows = all(
-    `SELECT l.id, l.title, l.outcomes, p.state, p.quiz_score, p.last_gaps
+    `SELECT l.id, l.title, l.outcomes, p.state
      FROM lessons l
      JOIN modules m ON m.id = l.module_id
      LEFT JOIN progress p ON p.topic_id = ? AND p.lesson_id = l.id
@@ -84,11 +116,9 @@ export function buildCourseSummary(topicId) {
 
   for (const lesson of lessonRows) {
     const lessonOutcomes = parseJson(lesson.outcomes, [])
-    for (const outcome of Array.isArray(lessonOutcomes) ? lessonOutcomes : []) appendUnique(outcomes, outcome)
-    if (['passed', 'tested_out'].includes(lesson.state)) appendUnique(strengths, lesson.title)
-    if (typeof lesson.quiz_score === 'number' && lesson.quiz_score < 75) appendUnique(gaps, `${lesson.title}: quiz score ${lesson.quiz_score}`)
-    const lessonGaps = parseJson(lesson.last_gaps, [])
-    for (const gap of Array.isArray(lessonGaps) ? lessonGaps : []) appendUnique(gaps, gap)
+    if (lesson.state === 'passed') {
+      for (const outcome of Array.isArray(lessonOutcomes) ? lessonOutcomes : []) appendUniqueOutcome(strengths, strengthIds, outcome)
+    }
   }
 
   const artifactRows = all(
@@ -177,6 +207,24 @@ export function getLineage(topicId) {
   return chain
 }
 
+export function collectLineageOutcomes(topicId) {
+  const ancestors = getLineage(topicId).slice(0, -1)
+  const outcomes = []
+  const ids = new Set()
+  for (const course of ancestors) {
+    const modules = all('SELECT skill_outcomes FROM modules WHERE topic_id = ? ORDER BY module_index', course.id)
+    for (const module of modules) {
+      const declaredOutcomes = parseJson(module.skill_outcomes, [])
+      for (const outcome of Array.isArray(declaredOutcomes) ? declaredOutcomes : []) {
+        if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome) || typeof outcome.id !== 'string' || typeof outcome.title !== 'string' || ids.has(outcome.id)) continue
+        ids.add(outcome.id)
+        outcomes.push({ id: outcome.id, title: outcome.title })
+      }
+    }
+  }
+  return outcomes
+}
+
 function persistCurriculumInTransaction(topicId, curriculum) {
   const modules = Array.isArray(curriculum?.modules) ? curriculum.modules : []
   const lessonIdMap = new Map()
@@ -251,7 +299,7 @@ function persistCurriculumInTransaction(topicId, curriculum) {
 
 export function createLinkedCourse(parentTopicId, { lane, level = null, timeCommitment = null, curriculum } = {}) {
   const normalizedLane = normalizeLane(lane)
-  if (!normalizedLane || normalizedLane.length > 100) throw new CourseLineageError('A valid lane is required.', 'INVALID_LANE', 400)
+  if (normalizedLane !== 'balanced-next') throw new CourseLineageError('Continuation Tracks use the balanced-next lane.', 'INVALID_LANE', 400)
   if (!curriculum || !Array.isArray(curriculum.modules) || curriculum.modules.length === 0) {
     throw new CourseLineageError('A prepared curriculum is required.', 'INVALID_CURRICULUM', 400)
   }
@@ -263,11 +311,9 @@ export function createLinkedCourse(parentTopicId, { lane, level = null, timeComm
     if (!readiness.eligible || parent.status !== 'completed') {
       throw new CourseLineageError('The prerequisite course is not complete.', 'PARENT_NOT_COMPLETE', 409)
     }
-    if (get('SELECT 1 FROM course_links WHERE parent_topic_id = ? AND normalized_lane = ?', parentTopicId, normalizedLane)) {
-      throw new CourseLineageError('A course already exists for this lane.', 'DUPLICATE_LANE', 409)
+    if (get('SELECT 1 FROM course_links WHERE parent_topic_id = ?', parentTopicId)) {
+      throw new CourseLineageError('This Track already has its one continuation.', 'TRAIL_ALREADY_CONTINUED', 409)
     }
-    const activeCount = get("SELECT COUNT(*) AS count FROM topics WHERE status = 'active'")
-    if (activeCount.count >= MAX_ACTIVE_TOPICS) throw new CourseLineageError('The active course limit has been reached.', 'ACTIVE_TOPIC_LIMIT', 409)
     const title = String(curriculum.title || `${parent.title}: ${lane}`).trim().slice(0, 100)
     const child = run(
       `INSERT INTO topics (title, status, level, time_per_week, goal, course_kind, course_stage, course_focus, last_active_at)

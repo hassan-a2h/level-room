@@ -1,4 +1,5 @@
 import { normalizeTaskSpec } from './task-spec.js'
+import { validateOutcome, validateOutcomeManifest } from './outcome-manifest.js'
 
 export const CURRICULUM_MAX_BYTES = 512 * 1024
 const CURRICULUM_LIMITS = Object.freeze({
@@ -40,7 +41,7 @@ function validateOptionalString(value, field, max) {
   return { valid: true, value: value.trim() }
 }
 
-export function validateCurriculum(curriculum, { enforceBounds = false, requireTasks = false } = {}) {
+export function validateCurriculum(curriculum, { enforceBounds = false, requireTasks = false, trackKind = 'initial', lineageOutcomes = [] } = {}) {
   if (!curriculum || typeof curriculum !== 'object' || Array.isArray(curriculum)) {
     return { valid: false, error: 'Curriculum must be an object.' }
   }
@@ -50,8 +51,7 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
   const curriculumGoal = validateOptionalString(curriculum.goal, 'Curriculum goal', CURRICULUM_LIMITS.goal)
   if (!curriculumGoal.valid) return curriculumGoal
   const hasCourseMetadata = curriculum.course !== undefined
-  const bounded = enforceBounds || hasCourseMetadata
-  const tasksRequired = requireTasks || hasCourseMetadata
+  const bounded = enforceBounds || requireTasks || hasCourseMetadata
 
   if (bounded && (curriculum.modules.length < 3 || curriculum.modules.length > 5)) {
     return { valid: false, error: 'A new course must contain 3-5 modules.' }
@@ -77,8 +77,13 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
     if (mod.title.trim().length > CURRICULUM_LIMITS.moduleTitle) return { valid: false, error: `Module ${mi} title must be at most ${CURRICULUM_LIMITS.moduleTitle} characters.` }
     const moduleSummary = validateOptionalString(mod.summary, `Module ${mi} summary`, CURRICULUM_LIMITS.moduleSummary)
     if (!moduleSummary.valid) return moduleSummary
-    if (mod.skill_outcomes !== undefined && mod.skill_outcomes !== null && !Array.isArray(mod.skill_outcomes)) return { valid: false, error: `Module ${mi} skill_outcomes must be an array.` }
-    if (Array.isArray(mod.skill_outcomes) && (mod.skill_outcomes.length > 10 || !mod.skill_outcomes.every((item) => typeof item === 'string' && item.trim() && item.trim().length <= CURRICULUM_LIMITS.skillOutcome))) return { valid: false, error: `Module ${mi} skill_outcomes are invalid.` }
+    if (!Array.isArray(mod.skill_outcomes) || mod.skill_outcomes.length === 0 || mod.skill_outcomes.length > 10) return { valid: false, error: `Module ${mi} skill_outcomes must contain 1-10 outcome objects.` }
+    const moduleOutcomes = []
+    for (let oi = 0; oi < mod.skill_outcomes.length; oi += 1) {
+      const checked = validateOutcome(mod.skill_outcomes[oi], `curriculum.modules[${mi}].skill_outcomes[${oi}]`)
+      if (!checked.valid) return checked
+      moduleOutcomes.push(checked.value)
+    }
     if (!Array.isArray(mod.lessons) || mod.lessons.length === 0) return { valid: false, error: `Module "${mod.title}" has no lessons.` }
     if (bounded && (mod.lessons.length < 3 || mod.lessons.length > 5)) return { valid: false, error: `Module "${mod.title}" must contain 3-5 lessons.` }
 
@@ -93,12 +98,20 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
       if (!lesson.depth || typeof lesson.depth !== 'string' || lesson.depth.trim().length > CURRICULUM_LIMITS.depth) return { valid: false, error: `Lesson "${lesson.title}" has invalid depth.` }
       if (!Number.isInteger(lesson.estimated_time) || lesson.estimated_time <= 0 || lesson.estimated_time > 180) return { valid: false, error: `Lesson "${lesson.title}" has invalid estimated_time.` }
       if (!Array.isArray(lesson.outcomes) || lesson.outcomes.length === 0 || lesson.outcomes.length > 10) return { valid: false, error: `Lesson "${lesson.title}" has invalid outcomes.` }
-      if (!lesson.outcomes.every((outcome) => typeof outcome === 'string' && outcome.trim() && outcome.trim().length <= CURRICULUM_LIMITS.outcome)) return { valid: false, error: `Lesson "${lesson.title}" has invalid outcomes.` }
+      const lessonOutcomes = []
+      for (let oi = 0; oi < lesson.outcomes.length; oi += 1) {
+        const checked = validateOutcome(lesson.outcomes[oi], `curriculum.modules[${mi}].lessons[${li}].outcomes[${oi}]`)
+        if (!checked.valid) return checked
+        lessonOutcomes.push(checked.value)
+      }
       if (!Array.isArray(lesson.prerequisites) || lesson.prerequisites.length > 10) return { valid: false, error: `Lesson "${lesson.title}" prerequisites must contain at most 10 items.` }
       if (!lesson.prerequisites.every((prerequisite) => typeof prerequisite === 'string' && prerequisite.trim() && prerequisite.trim().length <= CURRICULUM_LIMITS.prerequisite)) return { valid: false, error: `Lesson "${lesson.title}" has invalid prerequisites.` }
 
+      if (typeof lesson.artifact_required !== 'boolean') return { valid: false, error: `Lesson "${lesson.title}" must declare whether it requires a Build.` }
+      if (lesson.task !== undefined && lesson.task_spec !== undefined) return { valid: false, error: `Lesson "${lesson.title}" cannot declare both task and task_spec.` }
       let task = lesson.task ?? lesson.task_spec
-      if (tasksRequired && !task) return { valid: false, error: `Lesson "${lesson.title}" is missing a practical task.` }
+      if (lesson.artifact_required && !task) return { valid: false, error: `Selected Build Session "${lesson.title}" is missing its task specification.` }
+      if (!lesson.artifact_required && task) return { valid: false, error: `Session "${lesson.title}" has a task specification but does not require a Build.` }
       if (task) {
         try {
           task = normalizeTaskSpec(task)
@@ -107,16 +120,15 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
         }
       }
 
-      const outcomes = lesson.outcomes.map((outcome) => outcome.trim())
       const prerequisites = lesson.prerequisites.map((prerequisite) => prerequisite.trim())
       const canonicalLesson = {
         title,
         depth: lesson.depth.trim(),
         estimated_time: lesson.estimated_time,
-        outcomes,
+        outcomes: lessonOutcomes,
         prerequisites,
         ...(task ? { task } : {}),
-        ...(typeof lesson.artifact_required === 'boolean' ? { artifact_required: lesson.artifact_required } : {}),
+        artifact_required: lesson.artifact_required,
         ...(typeof lesson.artifact_type === 'string' ? { artifact_type: lesson.artifact_type.trim().slice(0, 100) } : {}),
         ...(typeof lesson.artifact_rubric === 'string' ? { artifact_rubric: lesson.artifact_rubric.trim().slice(0, 1000) } : {}),
       }
@@ -124,10 +136,13 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
       lessonMap.set(title, canonicalLesson)
       normalizedLessons.push(canonicalLesson)
     }
+    const buildCount = normalizedLessons.filter((lesson) => lesson.artifact_required).length
+    if (buildCount < 1 || buildCount > 2) return { valid: false, error: `Module "${mod.title}" must contain one or two required Builds.` }
+
     normalizedModules.push({
       title: mod.title.trim(),
       ...(moduleSummary.value ? { summary: moduleSummary.value } : {}),
-      ...(Array.isArray(mod.skill_outcomes) ? { skill_outcomes: mod.skill_outcomes.map((item) => item.trim()) } : {}),
+      skill_outcomes: moduleOutcomes,
       lessons: normalizedLessons,
     })
   }
@@ -155,20 +170,24 @@ export function validateCurriculum(curriculum, { enforceBounds = false, requireT
   }
   for (const title of lessonTitles) if (!dfs(title)) return { valid: false, error: `Circular prerequisite detected involving "${title}".` }
 
+  const normalizedCurriculum = {
+    ...(curriculumTitle.value ? { title: curriculumTitle.value } : {}),
+    ...(curriculumGoal.value ? { goal: curriculumGoal.value } : {}),
+    ...(hasCourseMetadata ? {
+      course: {
+        kind: curriculum.course.kind,
+        stage: curriculum.course.stage,
+        ...(curriculum.course.focus ? { focus: curriculum.course.focus.trim().slice(0, CURRICULUM_LIMITS.title) } : {}),
+      },
+    } : {}),
+    modules: normalizedModules,
+  }
+  const outcomeValidation = validateOutcomeManifest(normalizedCurriculum, { trackKind, lineageOutcomes })
+  if (!outcomeValidation.valid) return outcomeValidation
+
   return {
     valid: true,
-    value: {
-      ...(curriculumTitle.value ? { title: curriculumTitle.value } : {}),
-      ...(curriculumGoal.value ? { goal: curriculumGoal.value } : {}),
-      ...(hasCourseMetadata ? {
-        course: {
-          kind: curriculum.course.kind,
-          stage: curriculum.course.stage,
-          ...(curriculum.course.focus ? { focus: curriculum.course.focus.trim().slice(0, CURRICULUM_LIMITS.title) } : {}),
-        },
-      } : {}),
-      modules: normalizedModules,
-    },
+    value: normalizedCurriculum,
   }
 }
 
@@ -189,7 +208,7 @@ export async function collectCurriculumDraft(textStream, options = {}) {
     throw new CurriculumDraftError('The provider returned malformed curriculum JSON.', 'MALFORMED_CURRICULUM', true)
   }
   const validation = validateCurriculum(parsed, options)
-  if (!validation.valid) throw new CurriculumDraftError(validation.error, 'INVALID_CURRICULUM', /task/i.test(validation.error))
+  if (!validation.valid) throw new CurriculumDraftError(validation.error, 'INVALID_CURRICULUM', true)
   return validation.value
 }
 

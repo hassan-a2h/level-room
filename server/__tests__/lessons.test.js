@@ -1,75 +1,52 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import request from 'supertest'
 import express from 'express'
 import fs from 'fs'
-import path from 'path'
 import os from 'os'
+import path from 'path'
 
+const llmMocks = vi.hoisted(() => ({ streamText: vi.fn(), generateText: vi.fn() }))
 vi.mock('../llm/client.js', () => ({
-  streamText: vi.fn((_params) => {
-    // Determine what kind of response to generate based on the system prompt
-    const system = _params?.system || ''
-    const isContinue = system.includes('next chunk') || system.includes('Continue the lesson')
-    const isSocratic = system.includes('Socratic') || system.includes('ask a clarifying question')
-    const isFinal = system.includes('final chunk') || system.includes('Check Your Understanding')
-
-    let responseText = ''
-    if (isSocratic) {
-      responseText = "That's a great question. Before I explain, can you tell me what you already know about this concept?"
-    } else if (isFinal) {
-      responseText = "Great! We've covered the key concepts. Let's check your understanding with a few questions. Ready?"
-    } else if (isContinue) {
-      responseText = "Now let's move to the next concept. In React, components are the building blocks of your UI."
-    } else {
-      responseText = "Welcome to this lesson! Let's start with the basics. A component in React is a reusable piece of UI."
-    }
-
-    return Promise.resolve({
-      textStream: (async function* () {
-        const words = responseText.split(' ')
-        for (const word of words) {
-          yield word + ' '
-        }
-      })(),
-    })
-  }),
-  generateText: vi.fn((_params) => {
-    return Promise.resolve({
-      text: JSON.stringify({ mode: 'socratic', total_chunks: 3 }),
-    })
-  }),
-  streamToSSE: vi.fn(async (streamResult, res) => {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    })
-    let fullText = ''
-    for await (const chunk of streamResult.textStream) {
-      const text = typeof chunk === 'string' ? chunk : ''
-      fullText += text
-      res.write(`data: ${JSON.stringify(text)}\n\n`)
-    }
-    res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
-    res.end()
-  }),
+  streamText: llmMocks.streamText,
+  generateText: llmMocks.generateText,
   LlmClientError: class LlmClientError extends Error {
-    constructor(message, { code, retryable = false } = {}) {
-      super(message)
-      this.name = 'LlmClientError'
-      this.code = code
-      this.retryable = retryable
-    }
+    constructor(message, { code, retryable = false } = {}) { super(message); this.code = code; this.retryable = retryable }
   },
 }))
 
+const OUTCOME_A = { id: 'sql-choose-join', title: 'Choose the correct join', kind: 'skill', role: 'core', evidence: ['activity'] }
+const OUTCOME_B = { id: 'sql-order-query', title: 'Order a SQL query', kind: 'skill', role: 'core', evidence: ['activity'] }
+
 function tempDbPath() {
-  return path.join(os.tmpdir(), `test-lessons-db-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+  return path.join(os.tmpdir(), `test-structured-lessons-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
 }
 
-describe('Lessons API', () => {
+function makeActivityDocument(lessonId) {
+  const block = (id, type, outcomeIds, fields) => ({ id, type, title: `Practice ${id}`, required: true, estimatedMinutes: 2, outcomeIds, ...fields })
+  return {
+    schemaVersion: 1,
+    promptVersion: 'session-activities-v1',
+    generator: { provider: 'openai', model: 'test-model', generatedAt: '2026-09-26T00:00:00.000Z' },
+    lesson: { lessonId, outcomeIds: [OUTCOME_A.id, OUTCOME_B.id], estimatedMinutes: 10 },
+    blocks: [
+      block('read-joins', 'read', [OUTCOME_A.id], { content: 'A join combines related rows.' }),
+      block('worked-join', 'worked_example', [OUTCOME_A.id], {
+        problem: 'Which side should remain?', steps: [{ id: 'inspect', title: 'Inspect the rows', content: 'Find the records that must remain.' }, { id: 'choose', title: 'Choose a join', content: 'Choose a join that preserves those records.' }], takeaway: 'Decide which unmatched rows matter.',
+      }),
+      block('choose-join', 'choice', [OUTCOME_A.id], { prompt: 'Which join keeps every left row?', options: [{ id: 'inner', label: 'INNER JOIN' }, { id: 'left', label: 'LEFT JOIN' }] }),
+      block('reflect-query', 'reflection', [OUTCOME_B.id], { prompt: 'What will you inspect first?', maxChars: 100 }),
+      block('order-query', 'ordering', [OUTCOME_B.id], { prompt: 'Order the query stages.', items: [{ id: 'from', label: 'Choose source' }, { id: 'join', label: 'Join tables' }, { id: 'select', label: 'Choose columns' }] }),
+    ],
+    answerKey: {
+      'choose-join': { kind: 'choice', correctOptionId: 'left', explanation: 'LEFT JOIN retains unmatched left rows.', critical: true },
+      'order-query': { kind: 'ordering', correctOrder: ['from', 'join', 'select'], explanation: 'Choose the source, join, then select columns.', critical: false },
+    },
+  }
+}
+
+describe('structured Session lesson API', () => {
   let dbPath
-  let dbModule
+  let db
   let app
 
   beforeEach(async () => {
@@ -77,27 +54,19 @@ describe('Lessons API', () => {
     process.env.DB_PATH = dbPath
     process.env.OPENAI_API_KEY = 'sk-test'
     vi.resetModules()
-    dbModule = await import('../db.js')
-    dbModule.initSchema()
-
-    // Seed LLM settings
-    dbModule.run(
-      'INSERT INTO llm_settings (provider, model) VALUES (?, ?)',
-      'openai', 'gpt-4o'
-    )
-
-    const { default: lessonsRouter } = await import('../routes/lessons.js')
-    const { default: dashboardRouter } = await import('../routes/dashboard.js')
+    llmMocks.streamText.mockReset()
+    llmMocks.generateText.mockReset()
+    db = await import('../db.js')
+    db.initSchema()
+    db.run('INSERT INTO llm_settings (provider, model) VALUES (?, ?)', 'openai', 'gpt-4o')
+    const router = (await import('../routes/lessons.js')).default
     app = express()
     app.use(express.json())
-    app.use('/api', lessonsRouter)
-    app.use('/api', dashboardRouter)
+    app.use('/api', router)
   })
 
   afterEach(() => {
-    if (dbModule && dbModule.default) {
-      try { dbModule.default.close() } catch {}
-    }
+    try { db.default.close() } catch {}
     try { fs.unlinkSync(dbPath) } catch {}
     delete process.env.DB_PATH
     delete process.env.OPENAI_API_KEY
@@ -107,229 +76,108 @@ describe('Lessons API', () => {
     delete process.env.LLM_MODEL
   })
 
-  function seedTopicAndLesson(topicTitle = 'React', lessonTitle = 'JSX', prerequisites = '[]') {
-    const topic = dbModule.run("INSERT INTO topics (title, status, interaction_mode) VALUES (?, ?, ?)", topicTitle, 'active', 'socratic')
-    const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-    const lesson = dbModule.run(
-      "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      mod.lastInsertRowid, 0, lessonTitle, 'Beginner', 10, JSON.stringify(['Understand JSX']), prerequisites
-    )
-    return { topicId: topic.lastInsertRowid, lessonId: lesson.lastInsertRowid }
+  function seedLesson({ otherTopic = false, document = true } = {}) {
+    const topicId = Number(db.run("INSERT INTO topics (title, status, interaction_mode) VALUES ('SQL', 'active', 'socratic')").lastInsertRowid)
+    const moduleId = Number(db.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, 0, 'Joins')", topicId).lastInsertRowid)
+    const lessonId = Number(db.run(
+      'INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type, task_spec, activity_blocks) VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      moduleId,
+      'Join tables',
+      'Beginner',
+      10,
+      JSON.stringify([OUTCOME_A, OUTCOME_B]),
+      '[]',
+      1,
+      'code',
+      '',
+      null,
+    ).lastInsertRowid)
+    if (document) db.run('UPDATE lessons SET activity_blocks = ? WHERE id = ?', JSON.stringify(makeActivityDocument(lessonId)), lessonId)
+    const wrongTopicId = otherTopic ? Number(db.run("INSERT INTO topics (title, status) VALUES ('Other', 'active')").lastInsertRowid) : topicId
+    return { topicId, lessonId, wrongTopicId }
   }
 
-  describe('GET /api/topics/:id/lessons/:lid', () => {
-    it('returns lesson details with messages and progress', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-      dbModule.run("INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)", topicId, lessonId, 'assistant', 'Welcome!')
+  async function practicingWithWrongChoice(seeded) {
+    const runtime = await import('../utils/activity-runtime.js')
+    runtime.startActivitySession(seeded.topicId, seeded.lessonId)
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'read-joins', action: 'continue', localDate: '2024-02-29' })
+    runtime.completeInformationalBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'worked-join', action: 'continue', localDate: '2024-02-29' })
+    runtime.submitObjectiveBlock({ topicId: seeded.topicId, lessonId: seeded.lessonId, blockId: 'choose-join', response: 'inner', localDate: '2024-02-29' })
+    return runtime
+  }
 
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
-      expect(res.status).toBe(200)
-      expect(res.body.lesson.title).toBe('JSX')
-      expect(res.body.lesson.depth).toBe('Beginner')
-      expect(res.body.messages).toHaveLength(1)
-      expect(res.body.messages[0].role).toBe('assistant')
-      expect(res.body.progress.state).toBe('not_started')
-    })
+  it('returns structured public Session data without starting an untouched Session', async () => {
+    const untouched = seedLesson({ document: false })
+    const first = await request(app).get(`/api/topics/${untouched.topicId}/lessons/${untouched.lessonId}`)
+    expect(first.status).toBe(200)
+    expect(first.body.activityDocument).toBeNull()
+    expect(first.body.activityState).toBeNull()
+    expect(db.get('SELECT COUNT(*) AS count FROM progress WHERE lesson_id = ?', untouched.lessonId).count).toBe(0)
 
-    it('returns 404 for nonexistent lesson', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'React', 'active')
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/999`)
-      expect(res.status).toBe(404)
-    })
-
-    it('returns 403 when prerequisites are unmet', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'React', 'active')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const prereqLesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'Components', 'Beginner', 10, JSON.stringify(['Know components']), '[]')
-      const lesson = dbModule.run(
-        "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 1, 'Hooks', 'Intermediate', 15, JSON.stringify(['Use hooks']), JSON.stringify([{ lessonId: prereqLesson.lastInsertRowid, title: 'Components' }])
-      )
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, prereqLesson.lastInsertRowid, 'not_started')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}`)
-      expect(res.status).toBe(403)
-      expect(res.body.locked).toBe(true)
-      expect(res.body.prerequisites).toBeDefined()
-    })
-
-    it('returns lesson when prerequisites are met', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'React', 'active')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const prereqLesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'Components', 'Beginner', 10, JSON.stringify(['Know components']), '[]')
-      const lesson = dbModule.run(
-        "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 1, 'Hooks', 'Intermediate', 15, JSON.stringify(['Use hooks']), JSON.stringify([{ lessonId: prereqLesson.lastInsertRowid, title: 'Components' }])
-      )
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, prereqLesson.lastInsertRowid, 'passed')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}`)
-      expect(res.status).toBe(200)
-      expect(res.body.locked).toBe(false)
-    })
+    const seeded = seedLesson()
+    const result = await request(app).get(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}`)
+    expect(result.status).toBe(200)
+    expect(result.body.activityDocument.blocks).toHaveLength(5)
+    expect(result.body.activityState.currentBlockId).toBe('read-joins')
+    expect(result.body.activityProgress).toMatchObject({ completed: 0, total: 5, percent: 0 })
+    expect(JSON.stringify(result.body)).not.toMatch(/answerKey|correctOptionId|correctOrder|exemplar|generator/)
+    expect(db.get('SELECT COUNT(*) AS count FROM progress WHERE lesson_id = ?', seeded.lessonId).count).toBe(0)
   })
 
-  describe('POST /api/topics/:id/lessons/:lid/chat', () => {
-    it('persists user message and streams tutor response via SSE', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .set('Accept', 'text/event-stream')
-        .send({ content: 'What is JSX?' })
-
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toMatch(/text\/event-stream/)
-
-      // Verify user message was persisted
-      const messages = dbModule.all("SELECT * FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id", topicId, lessonId)
-      expect(messages.length).toBeGreaterThanOrEqual(1)
-      expect(messages[0].role).toBe('user')
-      expect(messages[0].content).toBe('What is JSX?')
-    })
-
-    it('transitions state from not_started to practicing on first message', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-
-      await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .set('Accept', 'text/event-stream')
-        .send({ content: 'Hello' })
-
-      const prog = dbModule.get("SELECT state, current_chunk FROM progress WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
-      expect(prog.state).toBe('practicing')
-      expect(prog.current_chunk).toBe(1)
-    })
-
-    it('rejects empty content over 2000 chars', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .send({ content: '' })
-
-      expect(res.status).toBe(400)
-    })
-
-    it('rejects content longer than 2000 characters', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'practicing')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .send({ content: 'x'.repeat(2001) })
-
-      expect(res.status).toBe(400)
-    })
-
-    it('returns 403 for locked lesson', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'React', 'active')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const prereq = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'A', 'Beginner', 10, JSON.stringify(['a']), '[]')
-      const lesson = dbModule.run(
-        "INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        mod.lastInsertRowid, 1, 'B', 'Beginner', 10, JSON.stringify(['b']), JSON.stringify([{ lessonId: prereq.lastInsertRowid, title: 'A' }])
-      )
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, prereq.lastInsertRowid, 'not_started')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app)
-        .post(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}/chat`)
-        .send({ content: 'Hello' })
-
-      expect(res.status).toBe(403)
-    })
-
-    it('allows sending a second chat message without state machine error', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-
-      // First message
-      const res1 = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .set('Accept', 'text/event-stream')
-        .send({ content: 'First message' })
-
-      expect(res1.status).toBe(200)
-
-      // Second message should also succeed
-      const res2 = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/chat`)
-        .set('Accept', 'text/event-stream')
-        .send({ content: 'Second message' })
-
-      expect(res2.status).toBe(200)
-
-      const prog = dbModule.get("SELECT state, current_chunk FROM progress WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
-      expect(prog.state).toBe('practicing')
-      expect(prog.current_chunk).toBe(1)
-    })
+  it('returns typed document corruption and scopes every lookup by topic and lesson', async () => {
+    const seeded = seedLesson({ otherTopic: true })
+    expect((await request(app).get(`/api/topics/${seeded.wrongTopicId}/lessons/${seeded.lessonId}`)).status).toBe(404)
+    db.run("UPDATE lessons SET activity_blocks = '{bad' WHERE id = ?", seeded.lessonId)
+    const malformed = await request(app).get(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}`)
+    expect(malformed.status).toBe(500)
+    expect(malformed.body.code).toBe('ACTIVITY_DOCUMENT_INVALID')
   })
 
-  describe('POST /api/topics/:id/lessons/:lid/continue', () => {
-    it('advances chunk and streams next tutor response', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, current_chunk, total_chunks) VALUES (?, ?, ?, ?, ?)", topicId, lessonId, 'practicing', 1, 3)
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/continue`)
-        .set('Accept', 'text/event-stream')
-
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toMatch(/text\/event-stream/)
-
-      const prog = dbModule.get("SELECT current_chunk FROM progress WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
-      expect(prog.current_chunk).toBe(2)
-    })
-
-    it('returns 400 when lesson is not in practicing state', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
-
-      const res = await request(app)
-        .post(`/api/topics/${topicId}/lessons/${lessonId}/continue`)
-        .set('Accept', 'text/event-stream')
-
-      expect(res.status).toBe(400)
-    })
+  it('adds public current-block and attempt context to the tutor and persists messages without changing learning state', async () => {
+    const seeded = seedLesson()
+    const runtime = await practicingWithWrongChoice(seeded)
+    const before = db.get('SELECT state, activity_state, started_at, completed_at, artifact_passed FROM progress WHERE lesson_id = ?', seeded.lessonId)
+    llmMocks.streamText.mockResolvedValueOnce({ textStream: (async function* () { yield 'Think about which rows must remain.' })() })
+    const response = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/chat`)
+      .send({ content: 'Why did this answer miss?', activityBlockId: 'choose-join' })
+    expect(response.status).toBe(200)
+    expect(response.text).toContain('Think about which rows must remain.')
+    const requestContext = llmMocks.streamText.mock.calls[0][0]
+    const tutorPrompt = requestContext.system
+    expect(tutorPrompt).toContain('ask guiding questions')
+    expect(tutorPrompt).toContain('not claim completion')
+    expect(tutorPrompt).toContain('choose-join')
+    expect(tutorPrompt).toContain('LEFT JOIN retains unmatched left rows.')
+    expect(tutorPrompt).toContain(OUTCOME_A.title)
+    expect(tutorPrompt).not.toMatch(/answerKey|correctOptionId|correctOrder|exemplar/)
+    const messages = db.all('SELECT role, content FROM messages WHERE topic_id = ? AND lesson_id = ? ORDER BY id', seeded.topicId, seeded.lessonId)
+    expect(messages).toEqual([{ role: 'user', content: 'Why did this answer miss?' }, { role: 'assistant', content: 'Think about which rows must remain.' }])
+    expect(db.get('SELECT state, activity_state, started_at, completed_at, artifact_passed FROM progress WHERE lesson_id = ?', seeded.lessonId)).toEqual(before)
+    expect(runtime.getActivityProgress(seeded.topicId, seeded.lessonId).currentBlockId).toBe('choose-join')
   })
 
-  describe('Interaction mode inference', () => {
-    it('returns socratic mode for conceptual topics', async () => {
-      const { topicId, lessonId } = seedTopicAndLesson('Philosophy', 'Logic')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topicId, lessonId, 'not_started')
+  it('enforces tutor message bounds, rejects foreign activity blocks, and writes no messages on errors', async () => {
+    const seeded = seedLesson()
+    await practicingWithWrongChoice(seeded)
+    const tooLong = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/chat`)
+      .send({ content: 'x'.repeat(2001), activityBlockId: 'choose-join' })
+    expect(tooLong.status).toBe(400)
+    const foreign = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/chat`)
+      .send({ content: 'Help me think.', activityBlockId: 'foreign-block' })
+    expect(foreign.status).toBe(404)
+    expect(foreign.body.code).toBe('ACTIVITY_BLOCK_NOT_FOUND')
+    llmMocks.streamText.mockRejectedValueOnce(new Error('provider unavailable'))
+    const failed = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/chat`)
+      .send({ content: 'Help me think.', activityBlockId: 'choose-join' })
+    expect(failed.status).toBe(502)
+    expect(db.get('SELECT COUNT(*) AS count FROM messages WHERE lesson_id = ?', seeded.lessonId).count).toBe(0)
+  })
 
-      const res = await request(app).get(`/api/topics/${topicId}/lessons/${lessonId}`)
-      expect(res.status).toBe(200)
-      expect(res.body.interactionMode).toBe('socratic')
-    })
-
-    it('returns code mode for technical topics', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status, interaction_mode) VALUES (?, ?, ?)", 'Python', 'active', 'code')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const lesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'Functions', 'Beginner', 10, JSON.stringify(['Know functions']), '[]')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}`)
-      expect(res.status).toBe(200)
-      expect(res.body.interactionMode).toBe('code')
-    })
-
-    it('returns scenario mode for soft-skill topics', async () => {
-      const topic = dbModule.run("INSERT INTO topics (title, status, interaction_mode) VALUES (?, ?, ?)", 'Negotiation', 'active', 'scenario')
-      const mod = dbModule.run("INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)", topic.lastInsertRowid, 0, 'Basics')
-      const lesson = dbModule.run("INSERT INTO lessons (module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites) VALUES (?, ?, ?, ?, ?, ?, ?)", mod.lastInsertRowid, 0, 'Active Listening', 'Beginner', 10, JSON.stringify(['Listen']), '[]')
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)", topic.lastInsertRowid, lesson.lastInsertRowid, 'not_started')
-
-      const res = await request(app).get(`/api/topics/${topic.lastInsertRowid}/lessons/${lesson.lastInsertRowid}`)
-      expect(res.status).toBe(200)
-      expect(res.body.interactionMode).toBe('scenario')
-    })
+  it('does not expose legacy per-Session quiz, chunk, skip, test-out, or remediation endpoints', async () => {
+    const seeded = seedLesson()
+    for (const pathPart of ['continue', 'quiz', 'quiz/submit', 'skip', 'test-out/start', 'remediate', 'remediate/chat']) {
+      const result = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/${pathPart}`).send({})
+      expect(result.status).toBe(404)
+    }
   })
 })

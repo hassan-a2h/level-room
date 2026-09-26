@@ -1,6 +1,6 @@
-# Mastery Roadmap
+# Mastery Trail
 
-An LLM-powered personal learning engine that transforms static roadmaps into an adaptive, mastery-driven experience. Enter any topic — React, Calculus, Negotiation, Japanese — and an AI tutor designs a personalized curriculum, teaches chunk-by-chunk, gates progress with formative assessments, and schedules spaced reviews. No prebuilt templates, no auth, no accounts — just one learner, one database, and one AI tutor.
+A local-first learning app that turns a learner’s goal into a guided Trail. AI helps shape a personal plan and tutor explanations; structured practice, explicit outcomes, and scored Chapter checkpoints keep mastery—not chat volume—at the center. Progress is organized as Tracks, Chapters, and Sessions, with saved Builds, spaced Reviews, and a calm, customizable visual experience.
 
 ## Table of Contents
 
@@ -21,17 +21,15 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 
 ## Features
 
-- **Adaptive Curriculum Generation:** Enter any topic and the LLM builds a personalized learning path with modules, lessons, and skill checks.
-- **Competence Graph:** Visual skill tree showing lesson states (not started, practicing, passed, skipped, tested out) with prerequisite linkage.
-- **Lesson Chat with SSE Streaming:** Real-time conversation with the AI tutor using Socratic method by default.
-- **Formative Assessments:** "Check Your Understanding" quizzes with weighted scoring (Recall=1, Explain/Apply/Diagnose=2, Transfer=3).
-- **Remediation & Retest:** Failed quizzes trigger targeted re-teaching and shorter retests focused on missed concepts.
-- **Artifact Submission:** Submit code/text/design/math solutions reviewed against a 4-point rubric.
-- **Module Exams:** Comprehensive exams (12-25 questions) unlock after all MVP lessons are passed.
-- **Spaced Repetition:** Adaptive SRS scheduling with intervals (1d, 3d, 7d, 14d, 30d) and acceleration/regression.
-- **Streak Tracking:** Consecutive-day activity tracking with backlog detection after 7+ days inactive.
-- **Mistakes Log & Adaptive Difficulty:** Recurring errors tracked; difficulty auto-adjusts based on performance.
-- **Data Export/Import:** Full JSON backup and restore of all learning data.
+- **Guided onboarding:** Choose a goal, level, available time, and preferences; review and confirm the generated Track before learning.
+- **Mastery Trail dashboard:** See the next useful action, Chapter outcomes, Session progress, checkpoints, Reviews, and a gentle return path.
+- **Structured Sessions:** Learn through varied activities with immediate deterministic feedback; optional tutor chat supports rather than replaces practice.
+- **Chapter checkpoints:** Demonstrate outcomes with saved assessments; pass rules include an overall threshold and critical-outcome floor.
+- **Builds:** Create and submit practical work when a Session requires it, with rubric feedback and a clear retry path.
+- **Spaced Reviews and streaks:** Revisit due skills with encouraging continuity cues that never gate learning.
+- **Track continuation:** Extend a completed Track with a balanced, outcome-aware next plan.
+- **Sixteen cozy themes:** Eight light and eight dark palettes, persisted locally and expressed through semantic design tokens.
+- **Data export/import:** Back up and restore current learning data; legacy quiz-format imports are intentionally rejected.
 - **Codex Subscription Provider (Experimental):** In-process OAuth sign-in with browser and device-code flows, model and reasoning choices, and local disconnect.
 - **Responsive Design:** Usable from 375px mobile to 1280px+ desktop.
 - **Error Boundaries & Offline Indicators:** Friendly error UI and backend connectivity monitoring.
@@ -58,7 +56,7 @@ An LLM-powered personal learning engine that transforms static roadmaps into an 
 1. **Clone or navigate to the project directory:**
 
    ```bash
-   cd /home/clive/batcave/roadmap-learning
+   cd roadmap-learning
    ```
 
 2. **Install dependencies:**
@@ -205,7 +203,7 @@ Pi OAuth credentials are stored separately from SQLite and JSON backups in an ap
 
 Disconnect removes the local credential data. It does not claim to revoke the authorization remotely. Backups include the selected provider, model, and reasoning level, but never OAuth tokens or account metadata; restoring a Codex selection on another machine requires signing in there.
 
-Switching providers changes the model used for future AI operations. It does not change saved roadmaps, lesson order, progress, chat history, attempts, spaced-repetition records, artifacts, or mistakes. New generated text can differ by model.
+Switching providers changes the model used for future AI operations. It does not change saved Trails, Session order, progress, chat history, checkpoint attempts, Reviews, Builds, or mistakes. New generated text can differ by model.
 
 ## Testing
 
@@ -223,7 +221,7 @@ This runs backend tests first, then frontend tests.
 npm run test:backend
 ```
 
-Runs the backend suite covering API routes, database operations, state machine logic, SRS scheduling, streak tracking, and LLM client adapters.
+Runs the backend suite covering API routes, database operations, structured activity and checkpoint logic, SRS scheduling, streak tracking, and LLM client adapters.
 
 ### Frontend tests only
 
@@ -236,9 +234,11 @@ Runs the frontend suite covering React components, user interactions, themes, an
 ### Lint & Typecheck
 
 ```bash
-npm run lint      # Currently a no-op; ESLint can be added
-npm run typecheck # Currently a no-op; TypeScript can be added
+npm run lint      # Placeholder: no linter is configured yet
+npm run typecheck # Placeholder: no type checker is configured yet
 ```
+
+Both scripts currently report that no tool is configured; they are not substitutes for the test suite.
 
 ## Architecture Overview
 
@@ -246,7 +246,7 @@ npm run typecheck # Currently a no-op; TypeScript can be added
 ┌─────────────────────────────────────────────────────────┐
 │                    Browser (localhost:3201)             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   Dashboard  │  │ Lesson Chat  │  │ Review Queue │  │
+│  │ Mastery Trail│  │ Session UI   │  │ Review Queue │  │
 │  │  (React)     │  │  (React)     │  │  (React)     │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 └────────────────────┬────────────────────────────────────┘
@@ -254,7 +254,7 @@ npm run typecheck # Currently a no-op; TypeScript can be added
 ┌────────────────────▼────────────────────────────────────┐
 │              Express API Server (port 3200)              │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │ /topics  │ │ /lessons │ │ /reviews │ │ /llm     │  │
+│  │ /topics  │ │ /sessions│ │ /reviews │ │ /llm     │  │
 │  │  Router  │ │  Router  │ │  Router  │ │  Client  │  │
 │  └──────────┘ └──────────┘ └──────────┘ └────┬─────┘  │
 │                                               │        │
@@ -273,11 +273,11 @@ npm run typecheck # Currently a no-op; TypeScript can be added
 
 ### Key Design Decisions
 
-- **Local-first:** All data lives in a single SQLite file. No cloud sync, no accounts.
-- **Provider-agnostic LLM client:** The `server/llm/client.js` adapter unifies OpenAI, Anthropic, and Fireworks behind a single interface.
-- **SSE streaming:** All LLM chat responses stream via Server-Sent Events for real-time UX.
-- **State machine discipline:** Lesson progress uses exact states (`not_started`, `practicing`, `quiz_pending`, `remediating`, `passed`, `tested_out`, `skipped`) with atomic transitions.
-- **No auth / no sessions:** Single user per instance. The app is designed for personal, local use.
+- **AI where useful:** LLMs generate and explain content; fixed answer keys and validators score objective activity/checkpoint responses consistently.
+- **Structured runtime:** Sessions store ordered activities, answers, and completion state. Chapter checkpoints persist attempts and outcome-level results.
+- **Local-first:** A single SQLite database stores learning state; themes are saved in browser storage. No accounts or cloud sync.
+- **Provider-agnostic AI:** `server/llm/` hosts configured model integrations; tutor responses can stream over Server-Sent Events.
+- **Canonical progress states:** Sessions use `not_started`, `practicing`, and `passed`; Chapter completion depends on its checkpoint, not a quiz or bypass state.
 
 ## Project Structure
 
@@ -291,10 +291,9 @@ roadmap-learning/
 │   │   ├── api.js              # Frontend API client (fetch wrappers)
 │   │   ├── index.css           # Tailwind + custom animations
 │   │   ├── components/         # Reusable React components
-│   │   │   ├── CompetenceGraph.jsx
-│   │   │   ├── LessonChat.jsx
-│   │   │   ├── QuizPanel.jsx
-│   │   │   ├── RemediationPanel.jsx
+│   │   │   ├── trail/          # Track, Chapter, and Session navigation
+│   │   │   ├── SessionActivities.jsx
+│   │   │   ├── TutorChat.jsx
 │   │   │   ├── ArtifactPanel.jsx
 │   │   │   ├── ExamPanel.jsx
 │   │   │   ├── ReviewSession.jsx
@@ -336,21 +335,23 @@ roadmap-learning/
 
 ## Database Schema
 
-The SQLite database contains 10 tables:
+Core SQLite tables include:
 
 | Table | Purpose |
 |-------|---------|
-| `topics` | Learning roadmaps with metadata (level, time commitment, tone) |
-| `modules` | Topic modules with skill outcomes |
-| `lessons` | Individual lessons with depth, time, outcomes, prerequisites |
-| `progress` | Lesson state machine (state, quiz scores, chunk progress) |
-| `messages` | Chat history per lesson |
+| `topics` | Learning Trails and learner/course metadata |
+| `modules` | Chapters, outcomes, ordering, and checkpoint status |
+| `lessons` | Structured Sessions, activity blocks, outcomes, and prerequisites |
+| `progress` | Session state and structured activity answers |
+| `messages` | Optional tutor chat history per Session |
 | `srs_queue` | Spaced repetition items with interval index and due dates |
-| `quiz_attempts` | Persisted quiz questions, answers, and evaluations |
+| `exam_attempts` | Saved Chapter checkpoint attempts and outcome evaluations |
 | `artifacts` | Artifact submissions with rubric scores and feedback |
-| `llm_settings` | Provider, model, and encrypted API key |
+| `course_links` | Parent/continuation Trail relationships and learning lanes |
+| `llm_settings` | Selected provider, model, and reasoning effort; credentials stay outside SQLite |
 | `mistakes_log` | Tracked misconceptions per topic |
 | `streaks` | Current streak, max streak, last active date |
+| `streak_events` | Idempotent learning activity events used to record streaks |
 
 Foreign key constraints are enforced. Deleting a topic cascades to all related rows.
 
@@ -364,15 +365,14 @@ Key API endpoints (all prefixed with `/api`):
 | GET/POST | `/settings` | Load/save LLM settings |
 | GET | `/topics` | List all topics |
 | POST | `/topics` | Create new topic |
-| GET | `/topics/:id/dashboard` | Topic dashboard with modules + lessons |
+| GET | `/topics/:id/dashboard` | Mastery Trail with Tracks, Chapters, Sessions, and next action |
 | POST | `/topics/:id/curriculum/generate` | Generate curriculum via SSE |
 | POST | `/topics/:id/curriculum/confirm` | Confirm and persist curriculum |
-| GET | `/topics/:id/lessons/:lid` | Load lesson metadata + chat history |
-| POST | `/topics/:id/lessons/:lid/chat` | Send chat message (SSE response) |
-| POST | `/topics/:id/lessons/:lid/quiz` | Start quiz |
-| POST | `/topics/:id/lessons/:lid/quiz/submit` | Submit quiz answers |
-| POST | `/topics/:id/lessons/:lid/artifact` | Submit artifact |
-| GET/POST | `/topics/:id/modules/:mid/exam` | Module exam |
+| GET | `/topics/:id/lessons/:lid` | Load Session metadata, activities, and saved state |
+| POST | `/topics/:id/lessons/:lid/activities/answer` | Save and score a structured activity answer |
+| POST | `/topics/:id/lessons/:lid/chat` | Send an optional tutor message (SSE response) |
+| POST | `/topics/:id/lessons/:lid/artifact` | Submit a required or optional Build |
+| GET/POST | `/topics/:id/modules/:mid/exam` | Load or submit the Chapter checkpoint |
 | GET/POST | `/reviews` | Review queue and session management |
 | GET/POST | `/streak` | Streak data and event recording |
 | GET/POST | `/data/export` / `/data/import` | Backup and restore |

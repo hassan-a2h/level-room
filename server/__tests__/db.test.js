@@ -307,34 +307,6 @@ describe('database schema', () => {
     expect(index?.sql).toMatch(/WHERE state IN/i)
   })
 
-  it('migrates an in-flight legacy topic into a resumable queued job', () => {
-    const db = dbModule.default
-    const topic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', ?)").run('Legacy generation', 'legacy-token')
-    const duplicateTokenTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', ?)").run('Legacy duplicate token', 'legacy-token')
-    const blankTokenTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', '')").run('Legacy generation without token')
-    const malformedStartedTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_started_at) VALUES (?, 'generating', ?)").run('Legacy malformed timestamp', 'not-a-timestamp')
-    db.exec('DROP TABLE curriculum_generation_jobs')
-    db.prepare("DELETE FROM migrations WHERE name IN ('015_add_curriculum_generation_jobs', '016_add_curriculum_generation_lease_owner', '017_add_placement_question_scores')").run()
-
-    dbModule.initSchema()
-
-    const job = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(topic.lastInsertRowid)
-    expect(job).toMatchObject({ id: 'legacy-token', topic_id: topic.lastInsertRowid, state: 'queued' })
-    expect(job.deadline_at).toBeTruthy()
-    const duplicateJob = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(duplicateTokenTopic.lastInsertRowid)
-    expect(duplicateJob).toMatchObject({ topic_id: duplicateTokenTopic.lastInsertRowid, state: 'queued' })
-    expect(duplicateJob.id).not.toBe(job.id)
-    expect(duplicateJob.deadline_at).toBeTruthy()
-    expect(db.prepare('SELECT curriculum_generation_token FROM topics WHERE id = ?').get(duplicateTokenTopic.lastInsertRowid).curriculum_generation_token).toBe(duplicateJob.id)
-    const generatedJob = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(blankTokenTopic.lastInsertRowid)
-    expect(generatedJob.id).toMatch(/^[0-9a-f-]{36}$/)
-    expect(generatedJob.deadline_at).toBeTruthy()
-    expect(db.prepare('SELECT curriculum_generation_token FROM topics WHERE id = ?').get(blankTokenTopic.lastInsertRowid).curriculum_generation_token).toBe(generatedJob.id)
-    const malformedJob = db.prepare('SELECT deadline_at, created_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(malformedStartedTopic.lastInsertRowid)
-    expect(malformedJob.deadline_at).toBeTruthy()
-    expect(malformedJob.created_at).toBeTruthy()
-  })
-
   it('uses safe Core defaults for existing topic and lesson rows', () => {
     const db = dbModule.default
     const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Legacy topic')
@@ -375,5 +347,78 @@ describe('database schema', () => {
       inserted.lastInsertRowid
     )
     expect(row).toEqual({ provider: 'openai', model: 'gpt-4o', reasoning_effort: 'none' })
+  })
+
+  it('adds the structured activity columns to a fresh database with an empty state default', () => {
+    const db = dbModule.default
+    const lessonColumns = db.prepare('PRAGMA table_info(lessons)').all()
+    const progressColumns = db.prepare('PRAGMA table_info(progress)').all()
+    expect(lessonColumns.map((column) => column.name)).toContain('activity_blocks')
+    expect(progressColumns.map((column) => column.name)).toContain('activity_state')
+
+    const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Structured topic')
+    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(topic.lastInsertRowid, 0, 'Chapter')
+    const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)').run(module.lastInsertRowid, 0, 'Session')
+    db.prepare('INSERT INTO progress (topic_id, lesson_id) VALUES (?, ?)').run(topic.lastInsertRowid, lesson.lastInsertRowid)
+    expect(db.prepare('SELECT activity_state FROM progress').get().activity_state).toBe('{}')
+  })
+
+  it('cuts a migration-017 database over once, cascading learning data and preserving provider settings', () => {
+    const db = dbModule.default
+    const parent = db.prepare("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Parent', 'completed', 'core', 0)").run()
+    const child = db.prepare("INSERT INTO topics (title, status, course_kind, course_stage) VALUES ('Child', 'active', 'continuation', 1)").run()
+    db.prepare('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)').run(child.lastInsertRowid, parent.lastInsertRowid, 'Balanced next', 'balanced next')
+    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(parent.lastInsertRowid, 0, 'Chapter')
+    const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)').run(module.lastInsertRowid, 0, 'Session')
+    const progress = db.prepare("INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, 'passed')").run(parent.lastInsertRowid, lesson.lastInsertRowid)
+    db.prepare('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)').run(parent.lastInsertRowid, lesson.lastInsertRowid, 'assistant', 'old lesson chat')
+    db.prepare('INSERT INTO srs_queue (topic_id, lesson_id, module_id) VALUES (?, ?, ?)').run(parent.lastInsertRowid, lesson.lastInsertRowid, module.lastInsertRowid)
+    db.prepare('INSERT INTO artifacts (progress_id, content, passed) VALUES (?, ?, ?)').run(progress.lastInsertRowid, 'old artifact', 1)
+    db.prepare('INSERT INTO mistakes_log (topic_id, lesson_id, description) VALUES (?, ?, ?)').run(parent.lastInsertRowid, lesson.lastInsertRowid, 'old mistake')
+    db.prepare('INSERT INTO quiz_attempts (topic_id, lesson_id, questions) VALUES (?, ?, ?)').run(parent.lastInsertRowid, lesson.lastInsertRowid, '[]')
+    db.prepare('INSERT INTO exam_attempts (topic_id, module_id, questions) VALUES (?, ?, ?)').run(parent.lastInsertRowid, module.lastInsertRowid, '[]')
+    db.prepare('INSERT INTO placement_assessments (topic_id, requested_level, questions) VALUES (?, ?, ?)').run(parent.lastInsertRowid, 'beginner', '[]')
+    db.prepare('INSERT INTO streaks (current_streak, max_streak, last_active_date) VALUES (?, ?, ?)').run(4, 8, '2026-09-26')
+    const settings = db.prepare('INSERT INTO llm_settings (provider, model, reasoning_effort) VALUES (?, ?, ?)').run('openai', 'gpt-5.4', 'high')
+
+    const lessonColumns = db.prepare('PRAGMA table_info(lessons)').all().map((column) => column.name)
+    const progressColumns = db.prepare('PRAGMA table_info(progress)').all().map((column) => column.name)
+    if (lessonColumns.includes('activity_blocks')) db.exec('ALTER TABLE lessons DROP COLUMN activity_blocks')
+    if (progressColumns.includes('activity_state')) db.exec('ALTER TABLE progress DROP COLUMN activity_state')
+    db.prepare('DELETE FROM migrations WHERE name = ?').run('018_add_structured_activities')
+
+    dbModule.initSchema()
+
+    expect(db.prepare('PRAGMA table_info(lessons)').all().map((column) => column.name)).toContain('activity_blocks')
+    expect(db.prepare('PRAGMA table_info(progress)').all().map((column) => column.name)).toContain('activity_state')
+    for (const table of ['topics', 'modules', 'lessons', 'progress', 'messages', 'srs_queue', 'artifacts', 'mistakes_log', 'quiz_attempts', 'exam_attempts', 'placement_assessments', 'course_links', 'streaks']) {
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, table).toBe(0)
+    }
+    expect(db.prepare('SELECT id, provider, model, reasoning_effort FROM llm_settings WHERE id = ?').get(settings.lastInsertRowid)).toEqual({
+      id: settings.lastInsertRowid,
+      provider: 'openai',
+      model: 'gpt-5.4',
+      reasoning_effort: 'high',
+    })
+    expect(db.prepare('SELECT COUNT(*) AS count FROM migrations WHERE name = ?').get('018_add_structured_activities').count).toBe(1)
+
+    expect(() => dbModule.initSchema()).not.toThrow()
+    expect(db.prepare('SELECT COUNT(*) AS count FROM migrations WHERE name = ?').get('018_add_structured_activities').count).toBe(1)
+  })
+
+  it('keeps existing foreign-key cascades after the cutover', () => {
+    const db = dbModule.default
+    const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Cascade topic')
+    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(topic.lastInsertRowid, 0, 'Chapter')
+    const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, ?, ?)').run(module.lastInsertRowid, 0, 'Session')
+    const progress = db.prepare('INSERT INTO progress (topic_id, lesson_id) VALUES (?, ?)').run(topic.lastInsertRowid, lesson.lastInsertRowid)
+    db.prepare('INSERT INTO artifacts (progress_id, content) VALUES (?, ?)').run(progress.lastInsertRowid, 'evidence')
+
+    db.prepare('DELETE FROM topics WHERE id = ?').run(topic.lastInsertRowid)
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM modules').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM lessons').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM progress').get().count).toBe(0)
+    expect(db.prepare('SELECT COUNT(*) AS count FROM artifacts').get().count).toBe(0)
   })
 })

@@ -58,7 +58,7 @@ function createDbStorage() {
   return {
     getTopic(topicId) {
       return get(
-        `SELECT id, title, level, time_per_week, curriculum_state,
+        `SELECT id, title, level, time_per_week, course_kind, curriculum_state,
                 curriculum_generation_started_at, curriculum_generation_token
          FROM topics WHERE id = ?`,
         Number(topicId),

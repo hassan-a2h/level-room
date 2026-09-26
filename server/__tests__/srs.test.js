@@ -457,24 +457,6 @@ describe('SRS API', () => {
     })
   })
 
-  describe('Skipped lessons', () => {
-    it('excludes skipped lessons from review queue', async () => {
-      const { topicId, lessonIds } = seedTopicAndLessons()
-      dbModule.run("INSERT INTO progress (topic_id, lesson_id, state, completed_at) VALUES (?, ?, ?, ?)", topicId, lessonIds[0], 'skipped', new Date().toISOString())
-      const today = new Date()
-      dbModule.run(
-        'INSERT INTO srs_queue (topic_id, lesson_id, interval_index, due_date, status) VALUES (?, ?, ?, ?, ?)',
-        topicId, lessonIds[0], 0, today.toISOString().split('T')[0], 'pending'
-      )
-
-      const res = await request(app).get('/api/reviews')
-      expect(res.status).toBe(200)
-      // Skipped lessons should not appear
-      const hasSkipped = res.body.due.some((r) => r.lessonId === lessonIds[0])
-      expect(hasSkipped).toBe(false)
-    })
-  })
-
   describe('Duplicate prevention', () => {
     it('only one srs_queue row exists per lesson at a time', async () => {
       const { topicId, lessonIds } = seedTopicAndLessons()

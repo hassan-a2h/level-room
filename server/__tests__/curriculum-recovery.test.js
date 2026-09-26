@@ -8,6 +8,30 @@ import path from 'path'
 const streamText = vi.fn()
 const generateText = vi.fn()
 
+const curriculumFixtures = vi.hoisted(() => ({
+  normalize(draft) {
+    return {
+      ...draft,
+      modules: draft.modules.map((module, moduleIndex) => {
+        const knowledge = { id: `recovery-knowledge-${moduleIndex + 1}`, title: `Explain concept ${moduleIndex + 1}`, kind: 'knowledge', role: 'core', evidence: ['activity', 'checkpoint'] }
+        const skill = { id: `recovery-skill-${moduleIndex + 1}`, title: `Apply concept ${moduleIndex + 1}`, kind: 'skill', role: 'core', evidence: ['activity', 'checkpoint', 'artifact'] }
+        return {
+          ...module,
+          skill_outcomes: [knowledge, skill],
+          lessons: module.lessons.map((lesson, lessonIndex) => {
+            const requiresBuild = lessonIndex === module.lessons.length - 1
+            const normalized = { ...lesson, outcomes: [lessonIndex === 0 ? knowledge : skill], artifact_required: requiresBuild }
+            delete normalized.task_spec
+            if (requiresBuild) normalized.task = lesson.task || lesson.task_spec
+            else delete normalized.task
+            return normalized
+          }),
+        }
+      }),
+    }
+  },
+}))
+
 vi.mock('../llm/client.js', () => ({
   streamText,
   generateText,
@@ -33,7 +57,7 @@ function curriculum() {
     hints: [],
     safety_notes: [],
   }
-  return {
+  return curriculumFixtures.normalize({
     course: { kind: 'core', stage: 0 },
     modules: Array.from({ length: 3 }, (_, moduleIndex) => ({
       title: `Module ${moduleIndex + 1}`,
@@ -46,7 +70,7 @@ function curriculum() {
         task: { ...task, title: `Task ${moduleIndex + 1}.${lessonIndex + 1}` },
       })),
     })),
-  }
+  })
 }
 
 function streamFor(value) {
@@ -130,7 +154,11 @@ describe('curriculum recovery API', () => {
   })
 
   it('marks a failed generation as recoverable', async () => {
-    streamText.mockImplementation(() => streamFor({ modules: [] }))
+    streamText.mockRejectedValueOnce({
+      code: 'INVALID_CURRICULUM',
+      message: 'The provider could not produce a valid curriculum.',
+      retryable: false,
+    })
 
     const response = await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
 

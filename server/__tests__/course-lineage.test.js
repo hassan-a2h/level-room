@@ -12,14 +12,19 @@ function seedCourse(db, { title = 'DevOps', moduleCount = 1, lessonsPerModule = 
   const lessonIds = []
   const moduleIds = []
   for (let moduleIndex = 0; moduleIndex < moduleCount; moduleIndex += 1) {
-    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title) VALUES (?, ?, ?)').run(topic.lastInsertRowid, moduleIndex, `Module ${moduleIndex + 1}`)
+    const moduleOutcomes = Array.from({ length: lessonsPerModule }, (_, lessonIndex) => ({
+      id: `outcome-${moduleIndex + 1}-${lessonIndex + 1}`,
+      title: `Outcome ${moduleIndex + 1}.${lessonIndex + 1}`,
+      kind: 'skill', role: 'core', evidence: ['activity'],
+    }))
+    const module = db.prepare('INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)').run(topic.lastInsertRowid, moduleIndex, `Module ${moduleIndex + 1}`, JSON.stringify(moduleOutcomes))
     moduleIds.push(Number(module.lastInsertRowid))
     for (let lessonIndex = 0; lessonIndex < lessonsPerModule; lessonIndex += 1) {
       const lesson = db.prepare('INSERT INTO lessons (module_id, lesson_index, title, outcomes) VALUES (?, ?, ?, ?)').run(
         module.lastInsertRowid,
         lessonIndex,
         `Lesson ${moduleIndex + 1}.${lessonIndex + 1}`,
-        JSON.stringify([`Outcome ${moduleIndex + 1}.${lessonIndex + 1}`]),
+        JSON.stringify([moduleOutcomes[lessonIndex]]),
       )
       lessonIds.push(Number(lesson.lastInsertRowid))
       db.prepare('INSERT INTO progress (topic_id, lesson_id, state, quiz_score) VALUES (?, ?, ?, ?)').run(topic.lastInsertRowid, lesson.lastInsertRowid, 'passed', 80)
@@ -71,8 +76,20 @@ describe('course lineage utilities', () => {
     const summary = lineage.buildCourseSummary(seeded.topicId)
 
     expect(summary).toMatchObject({ topicId: seeded.topicId, title: 'DevOps' })
-    expect(summary.outcomes).toContain('Outcome 1.1')
+    expect(summary.outcomes).toContainEqual(expect.objectContaining({ id: 'outcome-1-1', title: 'Outcome 1.1' }))
+    expect(summary.strengths).toContainEqual(expect.objectContaining({ id: 'outcome-1-1', title: 'Outcome 1.1' }))
     expect(JSON.stringify(summary).length).toBeLessThan(12000)
+  })
+
+  it('does not infer continuation gaps from retired per-Session quiz fields', () => {
+    const seeded = seedCourse(dbModule.default)
+    const lessonId = seeded.lessonIds[0]
+    dbModule.run('UPDATE progress SET quiz_score = ?, last_gaps = ? WHERE topic_id = ? AND lesson_id = ?', 20, '["stale quiz gap"]', seeded.topicId, lessonId)
+
+    const summary = lineage.buildCourseSummary(seeded.topicId)
+
+    expect(summary.gaps).not.toContain('stale quiz gap')
+    expect(summary.gaps.some((gap) => gap.includes('quiz score'))).toBe(false)
   })
 
   it('completes an eligible course atomically and records completion metadata', () => {
@@ -99,19 +116,31 @@ describe('course lineage utilities', () => {
     expect(() => dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId + 1, parent.topicId, 'CLOUD   SECURITY', 'cloud security')).toThrow(/UNIQUE/i)
   })
 
+  it('collects prior structured outcomes across ancestry without duplicate IDs', () => {
+    const parent = seedCourse(dbModule.default, { title: 'DevOps', moduleCount: 1, lessonsPerModule: 1 })
+    dbModule.run('INSERT INTO modules (topic_id, module_index, title, skill_outcomes) VALUES (?, ?, ?, ?)', parent.topicId, 1, 'Duplicate', JSON.stringify([{ id: 'outcome-1-1', title: 'Repeated' }]))
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    const child = seedCourse(dbModule.default, { title: 'Cloud Security', moduleCount: 1, lessonsPerModule: 1 })
+    dbModule.run('UPDATE topics SET course_kind = ?, course_stage = ? WHERE id = ?', 'advanced', 1, child.topicId)
+    dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId, parent.topicId, 'Cloud Security', 'cloud security')
+
+    expect(lineage.collectLineageOutcomes(child.topicId)).toEqual([{ id: 'outcome-1-1', title: 'Outcome 1.1' }])
+  })
+
   it('rejects a link to a missing parent and self-links at the database boundary', () => {
     const child = seedCourse(dbModule.default)
     expect(() => dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId, 99999, 'Lane', 'lane')).toThrow(/FOREIGN KEY/i)
     expect(() => dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.topicId, child.topicId, 'Self', 'self')).toThrow(/CHECK/i)
   })
 
-  it('creates a linked advanced course with its curriculum and next stage atomically', () => {
+  it('creates a linked advanced Track with its curriculum and next stage atomically', () => {
     const parent = seedCourse(dbModule.default, { title: 'DevOps' })
     dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
     lineage.completeCourseIfEligible(parent.topicId)
 
     const created = lineage.createLinkedCourse(parent.topicId, {
-      lane: 'Cloud Security',
+      lane: 'balanced-next',
       curriculum: {
         modules: [{
           title: 'Identity foundations',
@@ -123,24 +152,53 @@ describe('course lineage utilities', () => {
     const link = dbModule.get('SELECT parent_topic_id, normalized_lane FROM course_links WHERE child_topic_id = ?', created.topic.id)
     const progress = dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', created.topic.id, created.firstLessonId)
 
-    expect(child).toMatchObject({ course_kind: 'advanced', course_stage: 1, course_focus: 'Cloud Security', status: 'active' })
-    expect(link).toMatchObject({ parent_topic_id: parent.topicId, normalized_lane: 'cloud security' })
+    expect(child).toMatchObject({ course_kind: 'advanced', course_stage: 1, course_focus: 'balanced-next', status: 'active' })
+    expect(link).toMatchObject({ parent_topic_id: parent.topicId, normalized_lane: 'balanced-next' })
     expect(progress.state).toBe('not_started')
   })
 
-  it('rejects duplicate lanes and active-topic capacity without partial child rows', () => {
+  it('rejects non-balanced continuation lane names without creating child rows', () => {
     const parent = seedCourse(dbModule.default, { title: 'DevOps' })
     dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
     lineage.completeCourseIfEligible(parent.topicId)
     const curriculum = { modules: [{ title: 'Basics', lessons: [{ title: 'One', outcomes: [], prerequisites: [] }] }] }
-    lineage.createLinkedCourse(parent.topicId, { lane: 'Cloud Security', curriculum })
+    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'Cloud Security', curriculum })).toThrow(/balanced-next/i)
+    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics WHERE course_kind = ?', 'advanced').count).toBe(0)
+  })
 
-    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: ' CLOUD   SECURITY ', curriculum })).toThrow(/already exists/i)
-    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics WHERE course_kind = ?', 'advanced').count).toBe(1)
+  it('allows a balanced continuation when the root limit is full of active root Trails', () => {
+    const parent = seedCourse(dbModule.default, { title: 'Completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    for (const title of ['Root one', 'Root two', 'Root three']) {
+      dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", title)
+    }
+    const otherParent = seedCourse(dbModule.default, { title: 'Other completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', otherParent.topicId)
+    lineage.completeCourseIfEligible(otherParent.topicId)
+    const alreadyLinked = seedCourse(dbModule.default, { title: 'Existing continuation' })
+    dbModule.run('UPDATE topics SET course_kind = ?, course_stage = ? WHERE id = ?', 'advanced', 1, alreadyLinked.topicId)
+    dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', alreadyLinked.topicId, otherParent.topicId, 'balanced-next', 'balanced-next')
 
-    dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", 'Existing 1')
-    dbModule.run("INSERT INTO topics (title, status) VALUES (?, 'active')", 'Existing 2')
-    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'Networking', curriculum })).toThrow(/active course limit/i)
+    const created = lineage.createLinkedCourse(parent.topicId, {
+      lane: 'balanced-next',
+      curriculum: { title: 'Next Track', modules: [{ title: 'Foundations', lessons: [{ title: 'Session one', outcomes: [], prerequisites: [] }] }] },
+    })
+
+    expect(created.topic.course_kind).toBe('advanced')
+    expect(dbModule.get("SELECT COUNT(*) AS count FROM topics WHERE status = 'active' AND id NOT IN (SELECT child_topic_id FROM course_links)").count).toBe(3)
+  })
+
+  it('permits only one child per completed Track and leaves no partial rows on a second attempt', () => {
+    const parent = seedCourse(dbModule.default, { title: 'Completed root' })
+    dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', parent.topicId)
+    lineage.completeCourseIfEligible(parent.topicId)
+    const curriculum = { title: 'Next Track', modules: [{ title: 'Foundations', lessons: [{ title: 'Session one', outcomes: [], prerequisites: [] }] }] }
+    lineage.createLinkedCourse(parent.topicId, { lane: 'balanced-next', curriculum })
+    const topicCount = dbModule.get('SELECT COUNT(*) AS count FROM topics').count
+
+    expect(() => lineage.createLinkedCourse(parent.topicId, { lane: 'balanced-next', curriculum })).toThrow(/one continuation|already has a child/i)
+    expect(dbModule.get('SELECT COUNT(*) AS count FROM topics').count).toBe(topicCount)
     expect(dbModule.get('SELECT COUNT(*) AS count FROM course_links WHERE parent_topic_id = ?', parent.topicId).count).toBe(1)
   })
 })

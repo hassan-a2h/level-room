@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import Dashboard from '../pages/Dashboard'
+import Dashboard from '../pages/Dashboard.jsx'
 
 vi.mock('../api.js', () => ({
   getTopics: vi.fn(),
@@ -11,485 +11,217 @@ vi.mock('../api.js', () => ({
   getDefaultTopic: vi.fn(),
   getReviewCount: vi.fn(),
   getStreak: vi.fn(),
-  getLocalDate: vi.fn(() => '2024-06-01'),
+  getLocalDate: vi.fn(() => '2026-09-26'),
+  getLocalTimeZone: vi.fn(() => 'Asia/Karachi'),
 }))
 
 import { getTopics, getDashboard, deleteTopic, getDefaultTopic, selectTopic, getReviewCount, getStreak } from '../api.js'
 
-function CurrentPath() {
-  const { pathname } = useLocation()
-  return <span data-testid="current-path">{pathname}</span>
+function CurrentLocation() {
+  const location = useLocation()
+  return <output data-testid="current-location">{location.pathname}{location.search}</output>
 }
 
-function renderDashboardWithPath() {
+const defaultTopics = {
+  topics: [
+    { id: 1, title: 'React', status: 'active', progress: 30, totalLessons: 4, passedLessons: 1, hasChildren: false },
+    { id: 2, title: 'Calculus', status: 'active', progress: 0, totalLessons: 3, passedLessons: 0, hasChildren: false },
+  ],
+}
+
+const defaultDashboard = {
+  topic: { id: 1, title: 'React', status: 'active', progress: 30, totalLessons: 4, passedLessons: 1, courseKind: 'core', courseStage: 0 },
+  modules: [
+    {
+      id: 11,
+      title: 'Components',
+      summary: 'Build clear, reusable pieces.',
+      status: 'active',
+      checkpointStatus: 'locked',
+      examReady: false,
+      lessonsRemaining: 1,
+      skill_outcomes: [{ id: 'write-components', title: 'Compose reusable components', kind: 'skill', role: 'core', evidence: ['activity'] }],
+      lessons: [
+        { id: 101, title: 'JSX foundations', state: 'passed', locked: false, estimated_time: 10, outcomes: [], prerequisites: [], buildRequired: true, buildType: 'code' },
+        { id: 102, title: 'Build a profile card', state: 'not_started', locked: false, estimated_time: 15, outcomes: [], prerequisites: [], buildRequired: false, buildType: '' },
+      ],
+    },
+    {
+      id: 12,
+      title: 'State and events',
+      summary: 'Make interfaces respond.',
+      status: 'active',
+      checkpointStatus: 'locked',
+      examReady: false,
+      lessonsRemaining: 1,
+      skill_outcomes: [],
+      lessons: [{ id: 103, title: 'Handle a click', state: 'not_started', locked: true, estimated_time: 12, outcomes: [], prerequisites: [{ lessonId: 102, title: 'Build a profile card' }], buildRequired: false, buildType: '' }],
+    },
+  ],
+  nextAction: { kind: 'start_session', topicId: 1, topicTitle: 'React', moduleId: 11, chapterTitle: 'Components', lessonId: 102, sessionTitle: 'Build a profile card', estimatedMinutes: 15 },
+  reviewSummary: { dueToday: 2, overdue: 1, totalDue: 3 },
+  weeklyRhythm: {
+    activeDays: 3,
+    days: [
+      { date: '2026-09-20', label: 'Sun', active: true, sessions: 1, checkpoints: 0, reviews: 0 },
+      { date: '2026-09-21', label: 'Mon', active: false, sessions: 0, checkpoints: 0, reviews: 0 },
+      { date: '2026-09-22', label: 'Tue', active: true, sessions: 0, checkpoints: 1, reviews: 0 },
+      { date: '2026-09-23', label: 'Wed', active: false, sessions: 0, checkpoints: 0, reviews: 0 },
+      { date: '2026-09-24', label: 'Thu', active: true, sessions: 0, checkpoints: 0, reviews: 1 },
+      { date: '2026-09-25', label: 'Fri', active: false, sessions: 0, checkpoints: 0, reviews: 0 },
+      { date: '2026-09-26', label: 'Sat', active: false, sessions: 0, checkpoints: 0, reviews: 0 },
+    ],
+  },
+  focusAreas: [{ id: 1, lessonId: 102, sessionTitle: 'Build a profile card', chapterTitle: 'Components', description: 'Try smaller component boundaries.', recurring: false }],
+  mistakes: [],
+}
+
+function renderDashboard(initialEntry = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Dashboard />
-      <CurrentPath />
-    </MemoryRouter>
+      <CurrentLocation />
+    </MemoryRouter>,
   )
 }
 
 describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-  })
-
-  it('shows empty state when no topics exist', async () => {
-    getTopics.mockResolvedValue({ topics: [] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByText(/you have not started learning/i)).toBeInTheDocument()
-    })
-    expect(screen.getByRole('heading', { level: 1, name: /your learning dashboard/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /start learning/i })).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: /competence graph/i })).not.toBeInTheDocument()
-  })
-
-  it('shows dashboard with topic cards when topics exist', async () => {
-    getTopics.mockResolvedValue({
-      topics: [
-        { id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' },
-        { id: 2, title: 'Calculus', progress: 25, totalLessons: 4, passedLessons: 1, status: 'active' },
-      ],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 3 })
-    getStreak.mockResolvedValue({ currentStreak: 2, maxStreak: 5, backlog: false, streakBroken: false, message: '2-day streak — keep it going!' })
+    getTopics.mockResolvedValue(defaultTopics)
     getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [
-        {
-          id: 1,
-          title: 'Basics',
-          lessons: [
-            { id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] },
-            { id: 2, title: 'Components', state: 'not_started', depth: 'Beginner', estimated_time: 15, prerequisites: [{ lessonId: 1, title: 'JSX' }] },
-          ],
-        },
-      ],
-    })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByRole('region', { name: /competence graph/i })).toBeInTheDocument()
-    })
-    // Topic cards in sidebar
-    expect(screen.getAllByText('React').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Calculus')).toBeInTheDocument()
-    expect(screen.getByText('50%')).toBeInTheDocument()
-  })
-
-  it('shows a recovery action instead of an empty roadmap', async () => {
-    getTopics.mockResolvedValue({
-      topics: [{
-        id: 9,
-        title: 'Distributed Systems',
-        progress: 0,
-        totalLessons: 0,
-        passedLessons: 0,
-        status: 'active',
-        curriculumState: 'failed',
-        curriculumError: 'Generation stopped before the roadmap was saved.',
-        resumeAvailable: true,
-      }],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 9, title: 'Distributed Systems' } })
-    getDashboard.mockResolvedValue({
-      topic: {
-        id: 9,
-        title: 'Distributed Systems',
-        curriculumState: 'failed',
-        curriculumError: 'Generation stopped before the roadmap was saved.',
-        resumeAvailable: true,
-      },
-      modules: [],
-    })
-
-    renderDashboardWithPath()
-
-    expect(await screen.findByText(/resume your roadmap/i)).toBeInTheDocument()
-    expect(screen.getByText(/generation stopped before/i)).toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: /resume roadmap generation/i }).at(-1))
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/onboarding')
-  })
-
-  it('exposes the active topic and keeps delete keyboard activation separate from topic selection', async () => {
-    getTopics.mockResolvedValue({ topics: [
-      { id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2 },
-      { id: 2, title: 'Calculus', progress: 0, totalLessons: 4, passedLessons: 0 },
-    ] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({ topic: { id: 1, title: 'React' }, modules: [] })
+    getDashboard.mockResolvedValue(defaultDashboard)
     selectTopic.mockResolvedValue({ ok: true })
-
-    renderDashboardWithPath()
-
-    const reactCard = await screen.findByRole('button', { name: /react, 50% complete/i })
-    const calculusCard = screen.getByRole('button', { name: /calculus, 0% complete/i })
-    expect(reactCard).toHaveAttribute('aria-pressed', 'true')
-    expect(calculusCard).toHaveAttribute('aria-pressed', 'false')
-
-    const deleteButton = screen.getByRole('button', { name: /delete topic calculus/i })
-    expect(deleteButton.closest('[role="button"]')).toBeNull()
-    selectTopic.mockClear()
-    fireEvent.keyDown(deleteButton, { key: 'Enter' })
-    expect(selectTopic).not.toHaveBeenCalled()
-
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    deleteTopic.mockResolvedValue({})
-    fireEvent.click(deleteButton)
-    await waitFor(() => expect(deleteTopic).toHaveBeenCalledWith(2))
-    confirmSpy.mockRestore()
-  })
-
-  it('switches topic and refreshes graph', async () => {
-    getTopics.mockResolvedValue({
-      topics: [
-        { id: 1, title: 'React', progress: 50, totalLessons: 2, passedLessons: 1, status: 'active' },
-        { id: 2, title: 'Calculus', progress: 0, totalLessons: 2, passedLessons: 0, status: 'active' },
-      ],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 1, maxStreak: 1, backlog: false, streakBroken: false, message: '1-day streak — keep it going!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard
-      .mockResolvedValueOnce({
-        topic: { id: 1, title: 'React' },
-        modules: [{
-          id: 1, title: 'Basics',
-          lessons: [
-            { id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] },
-          ],
-        }],
-      })
-      .mockResolvedValueOnce({
-        topic: { id: 2, title: 'Calculus' },
-        modules: [{
-          id: 2, title: 'Limits',
-          lessons: [
-            { id: 3, title: 'Intro to Limits', state: 'not_started', depth: 'Beginner', estimated_time: 12, prerequisites: [] },
-          ],
-        }],
-      })
-    selectTopic.mockResolvedValue({ ok: true })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByRole('region', { name: /competence graph/i })).toBeInTheDocument()
-    })
-
-    // Click the Calculus topic card
-    const calcText = screen.getByText('Calculus')
-    fireEvent.click(calcText.closest('[role="button"]') || calcText)
-
-    await waitFor(() => {
-      expect(selectTopic).toHaveBeenCalledWith(2)
-    })
-  })
-
-  it('defaults to most recently active topic', async () => {
-    getTopics.mockResolvedValue({
-      topics: [
-        { id: 1, title: 'Old', progress: 50, totalLessons: 2, passedLessons: 1, status: 'active', last_active_at: '2024-01-01' },
-        { id: 2, title: 'Recent', progress: 0, totalLessons: 2, passedLessons: 0, status: 'active', last_active_at: '2024-06-01' },
-      ],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 2, title: 'Recent' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 2, title: 'Recent' },
-      modules: [],
-    })
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
-
-    await waitFor(() => {
-      expect(screen.getByRole('region', { name: /competence graph/i })).toBeInTheDocument()
-    })
-
-    // The "Recent" topic card should have active styling (selected)
-    const recentCards = screen.getAllByText('Recent')
-    expect(recentCards.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('shows review badge when reviews are due', async () => {
-    getTopics.mockResolvedValue({
-      topics: [
-        { id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' },
-      ],
-    })
+    deleteTopic.mockResolvedValue({ ok: true })
     getReviewCount.mockResolvedValue({ totalDue: 3, dueToday: 2, overdue: 1 })
-    getStreak.mockResolvedValue({ currentStreak: 3, maxStreak: 3, backlog: false, streakBroken: false, message: '3-day streak — great work today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+    getStreak.mockResolvedValue({ currentStreak: 2, maxStreak: 4, backlog: false, streakBroken: false, message: 'Keep your gentle rhythm going.' })
+  })
+
+  it('shows an inviting empty state and a clear first-Track action', async () => {
+    getTopics.mockResolvedValue({ topics: [] })
+    renderDashboard()
+
+    expect(await screen.findByRole('heading', { name: /your first trail starts here/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: /start learning/i }))
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/onboarding')
+  })
+
+  it('renders Today first and the server-selected action starts the exact Session', async () => {
+    renderDashboard()
+
+    const today = await screen.findByRole('region', { name: /today's next step/i })
+    expect(within(today).getByRole('heading', { name: /build a profile card/i })).toBeInTheDocument()
+    expect(within(today).getByText(/15 min/i)).toBeInTheDocument()
+    fireEvent.click(within(today).getByRole('link', { name: /start session/i }))
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/topic/1/lesson/102')
+    expect(getDashboard).toHaveBeenCalledWith(1, '2026-09-26', 'Asia/Karachi')
+  })
+
+  it('preserves the required mobile reading order while keeping each area semantic', async () => {
+    renderDashboard()
+    await screen.findByRole('region', { name: /today's next step/i })
+
+    const labels = [
+      /today's next step/i,
+      /your trail so far/i,
+      /reviews due/i,
+      /remaining trail/i,
+      /weekly rhythm/i,
+      /focus areas/i,
+    ]
+    const regions = labels.map((label) => screen.getByRole('region', { name: label }))
+    for (let index = 0; index < regions.length - 1; index += 1) {
+      expect(regions[index].compareDocumentPosition(regions[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
+  })
+
+  it('places the learning path in the wide desktop column and support cards in the narrow rail', async () => {
+    renderDashboard()
+    const today = await screen.findByRole('region', { name: /today's next step/i })
+    const layout = today.parentElement.parentElement
+    expect(layout).toHaveClass('lg:grid-cols-12')
+    expect(today.parentElement).toHaveClass('lg:col-span-8', 'lg:row-start-1')
+    expect(screen.getByRole('region', { name: /weekly rhythm/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-1')
+    expect(screen.getByRole('region', { name: /reviews due/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-2')
+    expect(screen.getByRole('region', { name: /focus areas/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-3')
+  })
+
+  it('expands the current Chapter, collapses completed Chapters, marks Builds, and explains locked work', async () => {
     getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
+      ...defaultDashboard,
+      nextAction: { ...defaultDashboard.nextAction, moduleId: 12, chapterTitle: 'State and events', lessonId: 103 },
       modules: [
-        {
-          id: 1,
-          title: 'Basics',
-          lessons: [
-            { id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] },
-          ],
-        },
+        { ...defaultDashboard.modules[0], status: 'completed', checkpointStatus: 'completed', lessons: defaultDashboard.modules[0].lessons.map((lesson) => ({ ...lesson, state: 'passed', locked: false })) },
+        { ...defaultDashboard.modules[1], checkpointStatus: 'ready', examReady: true, lessons: [{ ...defaultDashboard.modules[1].lessons[0], locked: false }] },
+        { id: 13, title: 'Patterns', summary: '', status: 'active', checkpointStatus: 'locked', lessonsRemaining: 2, skill_outcomes: [], lessons: [{ id: 104, title: 'Compose a flow', state: 'not_started', locked: true, prerequisites: [], outcomes: [] }] },
       ],
     })
+    renderDashboard()
 
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>
-    )
+    await screen.findByRole('region', { name: /your trail so far/i })
+    expect(screen.getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'false')
+    const currentChapter = screen.getByRole('button', { name: /chapter 2, state and events/i })
+    expect(currentChapter).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(/build session/i)).toBeInTheDocument()
+    expect(screen.getByText(/checkpoint ready/i)).toBeInTheDocument()
+    const locked = screen.getByRole('button', { name: /compose a flow, locked/i })
+    expect(locked).toBeDisabled()
+    expect(screen.getByText(/complete the earlier chapter first/i)).toBeInTheDocument()
 
-    await waitFor(() => {
-      expect(screen.getByRole('region', { name: /competence graph/i })).toBeInTheDocument()
-    })
-
-    expect(screen.getByRole('link', { name: /reviews, 3 due/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /chapter 1, components/i }))
+    expect(screen.getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('shows a continuation CTA only after every module checkpoint is complete', async () => {
-    getTopics.mockResolvedValue({ topics: [{ id: 21, title: 'DevOps', progress: 100, totalLessons: 3, passedLessons: 3, status: 'completed', courseStage: 0 }] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 21, title: 'DevOps' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 21, title: 'DevOps', status: 'completed', courseStage: 0, courseKind: 'core', progress: 100, totalLessons: 3, passedLessons: 3 },
-      modules: [{ id: 1, title: 'Foundation', status: 'completed', examReady: false, lessonsRemaining: 0, lessons: [{ id: 1, title: 'Lesson', state: 'passed', locked: false, prerequisites: [] }] }],
-    })
-
-    renderDashboardWithPath()
-    expect(await screen.findByTestId('continuation-card')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /choose an advanced lane/i }))
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/topic/21/continue')
-  })
-
-  it('prefers an unlocked practicing lesson for the continue action', async () => {
-    getTopics.mockResolvedValue({ topics: [{ id: 7, title: 'React', progress: 25, totalLessons: 4, passedLessons: 1 }] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start learning today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 7, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 7, title: 'React' },
-      modules: [
-        { id: 1, title: 'Basics', lessons: [
-          { id: 1, title: 'Available lesson', state: 'not_started', locked: false, prerequisites: [] },
-          { id: 2, title: 'Current lesson', state: 'practicing', locked: false, prerequisites: [] },
-          { id: 3, title: 'Locked practice', state: 'practicing', locked: true, prerequisites: [] },
-        ] },
-      ],
-    })
-
-    renderDashboardWithPath()
-
-    const continueButton = await screen.findByRole('button', { name: /continue lesson: current lesson/i })
-    expect(screen.queryByRole('button', { name: /^start lesson: available lesson$/i })).not.toBeInTheDocument()
-    fireEvent.click(continueButton)
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/topic/7/lesson/2')
-  })
-
-  it('hides the next lesson action while a different topic is loading', async () => {
-    let resolveNextDashboard
-    getTopics.mockResolvedValue({ topics: [
-      { id: 1, title: 'React', progress: 25, totalLessons: 4, passedLessons: 1 },
-      { id: 2, title: 'Calculus', progress: 0, totalLessons: 4, passedLessons: 0 },
-    ] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start learning today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
+  it('switches Trails and selects a continuation from the URL without guessing priority', async () => {
     getDashboard
-      .mockResolvedValueOnce({
-        topic: { id: 1, title: 'React' },
-        modules: [{ id: 1, title: 'Basics', lessons: [
-          { id: 10, title: 'Continue React', state: 'practicing', locked: false, prerequisites: [] },
-        ] }],
-      })
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveNextDashboard = resolve }))
-    selectTopic.mockResolvedValue({ ok: true })
+      .mockResolvedValueOnce(defaultDashboard)
+      .mockResolvedValueOnce({ ...defaultDashboard, topic: { ...defaultDashboard.topic, id: 2, title: 'Calculus' }, nextAction: { kind: 'setup_track', topicId: 2, title: 'Finish setting up Calculus' }, modules: [] })
+    getTopics.mockResolvedValue({ topics: defaultTopics.topics })
+    renderDashboard()
 
-    renderDashboardWithPath()
-
-    expect(await screen.findByRole('button', { name: /continue lesson: continue react/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /calculus, 0% complete/i }))
+    await screen.findByRole('region', { name: /today's next step/i })
+    fireEvent.click(screen.getByRole('button', { name: /^calcul(us)?/i }))
     await waitFor(() => expect(selectTopic).toHaveBeenCalledWith(2))
+    expect(await screen.findByRole('heading', { name: /^calcul(us)?$/i })).toBeInTheDocument()
 
-    expect(screen.queryByRole('button', { name: /continue lesson: continue react/i })).not.toBeInTheDocument()
-
-    resolveNextDashboard({
-      topic: { id: 2, title: 'Calculus' },
-      modules: [{ id: 2, title: 'Limits', lessons: [
-        { id: 20, title: 'Continue Calculus', state: 'practicing', locked: false, prerequisites: [] },
-      ] }],
-    })
-    expect(await screen.findByRole('button', { name: /continue lesson: continue calculus/i })).toBeInTheDocument()
+    getDashboard.mockResolvedValueOnce({ ...defaultDashboard, topic: { ...defaultDashboard.topic, id: 2, title: 'Calculus' } })
+    renderDashboard('/?topicId=2')
+    await screen.findByRole('heading', { name: /^calcul(us)?$/i })
+    expect(getDashboard).toHaveBeenCalledWith(2, '2026-09-26', 'Asia/Karachi')
   })
 
-  it('chooses the first unlocked actionable lesson when none is practicing', async () => {
-    getTopics.mockResolvedValue({ topics: [{ id: 7, title: 'React', progress: 25, totalLessons: 5, passedLessons: 1 }] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start learning today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 7, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 7, title: 'React' },
-      modules: [
-        { id: 1, title: 'Basics', lessons: [
-          { id: 1, title: 'Passed lesson', state: 'passed', locked: false, prerequisites: [] },
-          { id: 2, title: 'Tested out lesson', state: 'tested_out', locked: false, prerequisites: [] },
-          { id: 3, title: 'Skipped lesson', state: 'skipped', locked: false, prerequisites: [] },
-          { id: 4, title: 'Locked lesson', state: 'not_started', locked: true, prerequisites: [] },
-          { id: 5, title: 'Pending lesson', state: 'quiz_pending', locked: false, prerequisites: [] },
-          { id: 6, title: 'Next lesson', state: 'not_started', locked: false, prerequisites: [] },
-          { id: 7, title: 'Later lesson', state: 'not_started', locked: false, prerequisites: [] },
-        ] },
-      ],
-    })
+  it('does not offer deletion for a Trail that has linked continuations', async () => {
+    getTopics.mockResolvedValue({ topics: [
+      { ...defaultTopics.topics[0], hasChildren: true },
+      { ...defaultTopics.topics[1], hasChildren: false },
+    ] })
+    renderDashboard()
 
-    renderDashboardWithPath()
-
-    const resumeButton = await screen.findByRole('button', { name: /resume lesson: pending lesson/i })
-    fireEvent.click(resumeButton)
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/topic/7/lesson/5')
+    await screen.findByRole('region', { name: /today's next step/i })
+    expect(screen.queryByRole('button', { name: /delete trail react/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /delete trail calculus/i })).toBeInTheDocument()
   })
 
-  it('omits the next lesson action when every lesson is unavailable or complete', async () => {
-    getTopics.mockResolvedValue({ topics: [{ id: 7, title: 'React', progress: 100, totalLessons: 4, passedLessons: 4 }] })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start learning today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 7, title: 'React' } })
+  it('offers next-Track planning only when the server reports a completed Track', async () => {
     getDashboard.mockResolvedValue({
-      topic: { id: 7, title: 'React' },
-      modules: [
-        { id: 1, title: 'Basics', lessons: [
-          { id: 1, title: 'Passed lesson', state: 'passed', locked: false, prerequisites: [] },
-          { id: 2, title: 'Tested out lesson', state: 'tested_out', locked: false, prerequisites: [] },
-          { id: 3, title: 'Skipped lesson', state: 'skipped', locked: false, prerequisites: [] },
-          { id: 4, title: 'Locked lesson', state: 'not_started', locked: true, prerequisites: [] },
-        ] },
-      ],
+      ...defaultDashboard,
+      topic: { ...defaultDashboard.topic, status: 'completed' },
+      nextAction: { kind: 'track_complete', topicId: 1, topicTitle: 'React' },
+      modules: defaultDashboard.modules.map((module) => ({ ...module, status: 'completed', checkpointStatus: 'completed' })),
     })
+    renderDashboard()
 
-    renderDashboardWithPath()
-
-    await screen.findByRole('region', { name: /competence graph/i })
-    expect(screen.queryByRole('button', { name: /lesson:/i })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('link', { name: /plan my next track/i }))
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/topic/1/continue')
   })
 
-  it('displays active streak banner on dashboard', async () => {
-    getTopics.mockResolvedValue({
-      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 5, maxStreak: 5, backlog: false, streakBroken: false, message: '5-day streak — great work today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [{
-        id: 1, title: 'Basics',
-        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
-      }],
-    })
+  it('shows recoverable dashboard errors and a retry action', async () => {
+    getDashboard.mockRejectedValueOnce(new Error('Dashboard connection failed.'))
+    renderDashboard()
 
-    render(<MemoryRouter><Dashboard /></MemoryRouter>)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('streak-active')).toBeInTheDocument()
-    })
-    expect(screen.getByText(/5-day streak/i)).toBeInTheDocument()
-  })
-
-  it('displays streak-broken banner after a gap', async () => {
-    getTopics.mockResolvedValue({
-      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 3, maxStreak: 10, backlog: false, streakBroken: true, message: 'Your 3-day streak was broken. No pressure — pick up where you left off!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [{
-        id: 1, title: 'Basics',
-        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
-      }],
-    })
-
-    render(<MemoryRouter><Dashboard /></MemoryRouter>)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('streak-broken')).toBeInTheDocument()
-    })
-    expect(screen.getByText(/streak was broken/i)).toBeInTheDocument()
-  })
-
-  it('displays backlog banner after 7+ days inactive', async () => {
-    getTopics.mockResolvedValue({
-      topics: [{ id: 1, title: 'React', progress: 50, totalLessons: 4, passedLessons: 2, status: 'active' }],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 2, maxStreak: 8, backlog: true, streakBroken: true, daysSince: 8, message: 'Your 2-day streak was broken. No pressure — pick up where you left off!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [{
-        id: 1, title: 'Basics',
-        lessons: [{ id: 1, title: 'JSX', state: 'passed', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
-      }],
-    })
-
-    render(<MemoryRouter><Dashboard /></MemoryRouter>)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('streak-backlog')).toBeInTheDocument()
-    })
-    expect(screen.getByText(/8 days since last activity/i)).toBeInTheDocument()
-  })
-
-  it('displays start-streak banner for new user', async () => {
-    getTopics.mockResolvedValue({
-      topics: [{ id: 1, title: 'React', progress: 0, totalLessons: 4, passedLessons: 0, status: 'active' }],
-    })
-    getReviewCount.mockResolvedValue({ totalDue: 0 })
-    getStreak.mockResolvedValue({ currentStreak: 0, maxStreak: 0, backlog: false, streakBroken: false, message: 'Start your learning streak today!' })
-    getDefaultTopic.mockResolvedValue({ topic: { id: 1, title: 'React' } })
-    getDashboard.mockResolvedValue({
-      topic: { id: 1, title: 'React' },
-      modules: [{
-        id: 1, title: 'Basics',
-        lessons: [{ id: 1, title: 'JSX', state: 'not_started', depth: 'Beginner', estimated_time: 10, prerequisites: [] }],
-      }],
-    })
-
-    render(<MemoryRouter><Dashboard /></MemoryRouter>)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('streak-start')).toBeInTheDocument()
-    })
-    expect(screen.getByText(/start your learning streak/i)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(/dashboard connection failed/i)
+    getDashboard.mockResolvedValueOnce(defaultDashboard)
+    fireEvent.click(screen.getByRole('button', { name: /retry loading trail/i }))
+    expect(await screen.findByRole('region', { name: /today's next step/i })).toBeInTheDocument()
   })
 })

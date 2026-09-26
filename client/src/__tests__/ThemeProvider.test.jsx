@@ -10,6 +10,7 @@ function Probe() {
       <span>{theme.name}</span>
       <span role="status">{storageMessage}</span>
       <button onClick={() => selectTheme('deep-ocean')}>Set dark</button>
+      <button onClick={() => selectTheme('not-a-real-theme')}>Set invalid</button>
     </div>
   )
 }
@@ -30,7 +31,8 @@ describe('ThemeProvider', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'morning-mist')
     expect(document.documentElement).toHaveAttribute('data-theme-mode', 'light')
     expect(document.documentElement.style.colorScheme).toBe('light')
-    expect(document.documentElement.style.getPropertyValue('--ui-canvas')).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(document.documentElement.style.getPropertyValue('--canvas').toUpperCase()).toBe('#F1F5F3')
+    expect(document.documentElement.style.getPropertyValue('--space-1')).toBe('0.25rem')
   })
 
   it('loads a valid saved choice and falls back for unknown stored values', () => {
@@ -60,5 +62,12 @@ describe('ThemeProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Set dark' }))
     expect(screen.getByText('Deep Ocean')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Applied for this session; browser storage is unavailable')
+  })
+
+  it('ignores invalid theme selections', () => {
+    render(<ThemeProvider><Probe /></ThemeProvider>)
+    fireEvent.click(screen.getByRole('button', { name: 'Set dark' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Set invalid' }))
+    expect(screen.getByText('Deep Ocean')).toBeInTheDocument()
   })
 })

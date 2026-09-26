@@ -1197,21 +1197,21 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: server/__tests__/db.test.js
 - Modify: server/__tests__/data-export-import.test.js
 
-- [ ] **Step 1: Write failing migration tests.** Cover fresh canonical columns; migration-017 cutover deleting topics and streaks; cascades removing dependent learning rows; llm_settings preservation; repeated initialization; default empty activity_state; and Track deletion cascades after the cutover.
-- [ ] **Step 2: Run the focused test.**
+- [x] **Step 1: Write failing migration tests.** Cover fresh canonical columns; migration-017 cutover deleting topics and streaks; cascades removing dependent learning rows; llm_settings preservation; repeated initialization; default empty activity_state; and Track deletion cascades after the cutover.
+- [x] **Step 2: Run the focused test.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/db.test.js
 
   Expected: FAIL because the two columns do not exist.
-- [ ] **Step 3: Update canonical CREATE TABLE definitions and add migration 018 exactly as specified in section 5.1.** The migration adds missing columns, deletes topics and streaks, proves cascades, preserves llm_settings, and inserts its migration record in one transaction.
-- [ ] **Step 4: Add failing backup-format-2 tests.** Assert the version marker; excluded activity answer keys; omitted pending checkpoints; sanitized completed checkpoints; reset representation for incomplete Sessions; preserved completed progress/artifacts/outcomes; rejection of versions 1, missing, and unknown; and all-or-nothing import on rejection.
-- [ ] **Step 5: Implement explicit export projections and import normalization.** Do not rely on SELECT * or PRAGMA-derived export fields for private generated content. Never export credentials, activity answer keys, or pending checkpoint keys.
-- [ ] **Step 6: Re-run both files.**
+- [x] **Step 3: Update canonical CREATE TABLE definitions and add migration 018 exactly as specified in section 5.1.** The migration adds missing columns, deletes topics and streaks, proves cascades, preserves llm_settings, and inserts its migration record in one transaction.
+- [x] **Step 4: Add failing backup-format-2 tests.** Assert the version marker; excluded activity answer keys; omitted pending checkpoints; sanitized completed checkpoints; reset representation for incomplete Sessions; preserved completed progress/artifacts/outcomes; rejection of versions 1, missing, and unknown; and all-or-nothing import on rejection.
+- [x] **Step 5: Implement explicit export projections and import normalization.** Do not rely on SELECT * or PRAGMA-derived export fields for private generated content. Never export credentials, activity answer keys, or pending checkpoint keys.
+- [x] **Step 6: Re-run both files.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/db.test.js server/__tests__/data-export-import.test.js
 
   Expected: PASS.
-- [ ] **Step 7: Commit only these files.**
+- [x] **Step 7: Commit only these files.**
 
       git add server/db.js server/routes/data.js server/__tests__/db.test.js server/__tests__/data-export-import.test.js
       git commit -m "feat: persist structured session activities"
@@ -1239,24 +1239,24 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/pages/CurriculumConfirmation.jsx
 - Modify: client/src/__tests__/CurriculumFlow.test.jsx
 
-- [ ] **Step 1: Write validator tests for every rule in section 5.2.** Include missing fields, duplicate IDs, lesson-to-Chapter mismatch, knowledge/skill absence, evidence mismatch, repeated lineage outcomes, initial-versus-continuation options, 80/20 boundaries, small-Track rounding, and exact structured error objects.
-- [ ] **Step 2: Run the new test.**
+- [x] **Step 1: Write validator tests for every rule in section 5.2.** Include missing fields, duplicate IDs, lesson-to-Chapter mismatch, knowledge/skill absence, evidence mismatch, repeated lineage outcomes, initial-versus-continuation options, 80/20 boundaries, small-Track rounding, and exact structured error objects.
+- [x] **Step 2: Run the new test.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/outcome-manifest.test.js
 
   Expected: FAIL because the module does not exist.
-- [ ] **Step 3: Implement pure normalization and validation.** Functions must not touch the database or call the LLM. Return structured errors with path, code, and message so route errors can identify the bad field.
-- [ ] **Step 4: Implement strict object-only curriculum validation.** Replace requireTasks-for-every-lesson with exactly one or two required Builds per Chapter and no task_spec on Sessions that do not require a Build.
-- [ ] **Step 5: Add outcomeTitles to outcome-manifest.js and update every active server consumer listed above.** Prompts use titles explicitly; lineage summaries preserve full structured IDs/titles/kinds/roles; dashboard responses expose objects. No code may rely on implicit object stringification.
-- [ ] **Step 6: Update CurriculumConfirmation to render outcome.title and add object fixtures.** This keeps the branch runnable as soon as generation switches.
-- [ ] **Step 7: Update curriculum prompt contracts.** Require stable IDs, kinds, roles, evidence arrays, Chapter coverage, and selected Build Sessions.
-- [ ] **Step 8: Run focused server and client tests.**
+- [x] **Step 3: Implement pure normalization and validation.** Functions must not touch the database or call the LLM. Return structured errors with path, code, and message so route errors can identify the bad field.
+- [x] **Step 4: Implement strict object-only curriculum validation.** Replace requireTasks-for-every-lesson with exactly one or two required Builds per Chapter and no task_spec on Sessions that do not require a Build.
+- [x] **Step 5: Add outcomeTitles to outcome-manifest.js and update every active server consumer listed above.** Prompts use titles explicitly; lineage summaries preserve full structured IDs/titles/kinds/roles; dashboard responses expose objects. No code may rely on implicit object stringification.
+- [x] **Step 6: Update CurriculumConfirmation to render outcome.title and add object fixtures.** This keeps the branch runnable as soon as generation switches.
+- [x] **Step 7: Update curriculum prompt contracts.** Require stable IDs, kinds, roles, evidence arrays, Chapter coverage, and selected Build Sessions.
+- [x] **Step 8: Run focused server and client tests.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/outcome-manifest.test.js server/__tests__/curriculum-draft.test.js server/__tests__/curriculum.test.js server/__tests__/lessons.test.js server/__tests__/srs.test.js server/__tests__/exams.test.js server/__tests__/course-lineage.test.js server/__tests__/dashboard.test.js
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/CurriculumFlow.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 9: Commit.**
+- [x] **Step 9: Commit.**
 
       git add server/utils/outcome-manifest.js server/utils/curriculum-draft.js server/utils/course-lineage.js server/routes/curriculum.js server/routes/lessons.js server/routes/reviews.js server/routes/exams.js server/routes/dashboard.js server/__tests__/outcome-manifest.test.js server/__tests__/curriculum-draft.test.js server/__tests__/curriculum.test.js server/__tests__/lessons.test.js server/__tests__/srs.test.js server/__tests__/exams.test.js server/__tests__/course-lineage.test.js server/__tests__/dashboard.test.js client/src/pages/CurriculumConfirmation.jsx client/src/__tests__/CurriculumFlow.test.jsx
       git commit -m "feat: define mastery outcome contracts"
@@ -1268,17 +1268,17 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Create: server/utils/activity-schema.js
 - Create: server/__tests__/activity-schema.test.js
 
-- [ ] **Step 1: Create one complete private fixture and exact public fixture, then write failing cases for every common field, all six type-specific schemas, all three answer-key schemas, every numeric cap, exact key parity, duplicate IDs, unsupported fields/types, unsafe content, invalid timing, and missing outcome coverage from section 5.3.**
-- [ ] **Step 2: Write sanitizer and helper tests.** Deep-search the public fixture and assert no answerKey, correctOptionId, correctOrder, exemplar, criteria, or generator metadata survives. Test getBlock for found/missing IDs and isObjectiveBlock for all six types.
-- [ ] **Step 3: Run the test.**
+- [x] **Step 1: Create one complete private fixture and exact public fixture, then write failing cases for every common field, all six type-specific schemas, all three answer-key schemas, every numeric cap, exact key parity, duplicate IDs, unsupported fields/types, unsafe content, invalid timing, and missing outcome coverage from section 5.3.**
+- [x] **Step 2: Write sanitizer and helper tests.** Deep-search the public fixture and assert no answerKey, correctOptionId, correctOrder, exemplar, criteria, or generator metadata survives. Test getBlock for found/missing IDs and isObjectiveBlock for all six types.
+- [x] **Step 3: Run the test.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activity-schema.test.js
 
   Expected: FAIL because the module does not exist.
-- [ ] **Step 4: Implement parseActivityDocument and validateActivityDocument with strict allowlists and the exact return shape { valid, value } or { valid: false, code, path, error }.** Reject unknown top-level, block, item, step, option, criterion, and answer-key fields.
-- [ ] **Step 5: Implement sanitizeActivityDocument, getBlock, and isObjectiveBlock.** The sanitizer builds a new public object rather than deleting keys from a private copy.
-- [ ] **Step 6: Enforce the 128 KiB document cap and every collection/string/nesting cap before expensive traversal.**
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 4: Implement parseActivityDocument and validateActivityDocument with strict allowlists and the exact return shape { valid, value } or { valid: false, code, path, error }.** Reject unknown top-level, block, item, step, option, criterion, and answer-key fields.
+- [x] **Step 5: Implement sanitizeActivityDocument, getBlock, and isObjectiveBlock.** The sanitizer builds a new public object rather than deleting keys from a private copy.
+- [x] **Step 6: Enforce the 128 KiB document cap and every collection/string/nesting cap before expensive traversal.**
+- [x] **Step 7: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activity-schema.test.js
       git add server/utils/activity-schema.js server/__tests__/activity-schema.test.js
@@ -1297,17 +1297,17 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: server/utils/streak-tracker.js
 - Modify: server/__tests__/streak.test.js
 
-- [ ] **Step 1: Write failing runtime tests.** Cover first start, prerequisite denial, required ordering, informational completion, runtime-owned objective scoring, wrong retry, response caps, unknown IDs, locked future blocks, optional-block non-gating, canonical identical idempotency, different-response final conflict, stale conflict with latest state, strict stored-state corruption rejection, artifact gate, and completion eligibility.
-- [ ] **Step 2: Add transaction tests.** Prove the final required block atomically commits passed, completed_at, SRS, streak, mistake update, and topic timestamp exactly once; inject a failure at each write and assert complete rollback. Add valid leap-day, invalid calendar date, and timezone-independent localDate cases to streak-tracker tests.
-- [ ] **Step 3: Run focused tests.**
+- [x] **Step 1: Write failing runtime tests.** Cover first start, prerequisite denial, required ordering, informational completion, runtime-owned objective scoring, wrong retry, response caps, unknown IDs, locked future blocks, optional-block non-gating, canonical identical idempotency, different-response final conflict, stale conflict with latest state, strict stored-state corruption rejection, artifact gate, and completion eligibility.
+- [x] **Step 2: Add transaction tests.** Prove the final required block atomically commits passed, completed_at, SRS, streak, mistake update, and topic timestamp exactly once; inject a failure at each write and assert complete rollback. Add valid leap-day, invalid calendar date, and timezone-independent localDate cases to streak-tracker tests.
+- [x] **Step 3: Run focused tests.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activity-runtime.test.js server/__tests__/lesson-state-machine.test.js
 
   Expected: FAIL on missing runtime and practicing-to-passed behavior.
-- [ ] **Step 4: Implement strict activity-state parsing and transactional single-block merges.** Parse state inside the transaction, validate it against the frozen document, score objective responses from the private answerKey, modify only the requested block, and return typed conflicts with latest sanitized state.
-- [ ] **Step 5: Replace the lesson state machine with not_started, practicing, and passed, then implement completeActivitySessionIfEligible with completionContext.** No caller can submit a correct boolean or call a generic practicing-to-passed transition.
-- [ ] **Step 6: Make final completion one atomic boundary and strengthen real-calendar localDate validation.** Reuse scheduleSrs and streak logic inside that boundary and guard every side effect against duplicates.
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 4: Implement strict activity-state parsing and transactional single-block merges.** Parse state inside the transaction, validate it against the frozen document, score objective responses from the private answerKey, modify only the requested block, and return typed conflicts with latest sanitized state.
+- [x] **Step 5: Replace the lesson state machine with not_started, practicing, and passed, then implement completeActivitySessionIfEligible with completionContext.** No caller can submit a correct boolean or call a generic practicing-to-passed transition.
+- [x] **Step 6: Make final completion one atomic boundary and strengthen real-calendar localDate validation.** Reuse scheduleSrs and streak logic inside that boundary and guard every side effect against duplicates.
+- [x] **Step 7: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activity-runtime.test.js server/__tests__/lesson-state-machine.test.js server/__tests__/srs.test.js server/__tests__/streak.test.js
       git add server/utils/activity-runtime.js server/utils/lesson-state-machine.js server/utils/streak-tracker.js server/__tests__/activity-runtime.test.js server/__tests__/lesson-state-machine.test.js server/__tests__/streak.test.js
@@ -1321,17 +1321,17 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Create: server/__tests__/activities.test.js
 - Modify: server/index.js
 
-- [ ] **Step 1: Write route tests.** Cover not found, cross-topic lesson, locked prerequisite, cached response, generated response, private stripping, invalid output, oversized output, provider error, conditional-write race independent of the in-process map, one disconnected waiter, all waiters disconnected, and no database mutation on every failure. Assert one stored document and one progress row under races.
-- [ ] **Step 2: Run the route test.**
+- [x] **Step 1: Write route tests.** Cover not found, cross-topic lesson, locked prerequisite, cached response, generated response, private stripping, invalid output, oversized output, provider error, conditional-write race independent of the in-process map, one disconnected waiter, all waiters disconnected, and no database mutation on every failure. Assert one stored document and one progress row under races.
+- [x] **Step 2: Run the route test.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activities.test.js
 
   Expected: FAIL because the route is not mounted.
-- [ ] **Step 3: Implement a bounded prompt builder and collector inside activities.js.** Include only the context listed in section 6.2, stop collecting above 128 KiB, put the activity JSON contract and pedagogy rules in the system message, and require plain JSON. Do not change the shared LLM client.
-- [ ] **Step 4: Implement a reference-counted in-flight entry per lesson.** Each waiter detaches on disconnect; one disconnected waiter does not cancel shared work; when no waiters remain, abort before persistence; always delete the map entry in finally. The database conditional write remains the correctness boundary.
-- [ ] **Step 5: Validate completely, then cache the document and initialize progress in one SQLite transaction.** Add generator metadata on the server rather than trusting provider fields. A start failure cannot leave a cached document without matching initial state.
-- [ ] **Step 6: Mount the router under /api without disturbing body-size middleware.**
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 3: Implement a bounded prompt builder and collector inside activities.js.** Include only the context listed in section 6.2, stop collecting above 128 KiB, put the activity JSON contract and pedagogy rules in the system message, and require plain JSON. Do not change the shared LLM client.
+- [x] **Step 4: Implement a reference-counted in-flight entry per lesson.** Each waiter detaches on disconnect; one disconnected waiter does not cancel shared work; when no waiters remain, abort before persistence; always delete the map entry in finally. The database conditional write remains the correctness boundary.
+- [x] **Step 5: Validate completely, then cache the document and initialize progress in one SQLite transaction.** Add generator metadata on the server rather than trusting provider fields. A start failure cannot leave a cached document without matching initial state.
+- [x] **Step 6: Mount the router under /api without disturbing body-size middleware.**
+- [x] **Step 7: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activities.test.js server/__tests__/llm-client.test.js
       git add server/routes/activities.js server/index.js server/__tests__/activities.test.js
@@ -1344,17 +1344,17 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: server/routes/activities.js
 - Modify: server/__tests__/activities.test.js
 
-- [ ] **Step 1: Add failing endpoint tests for complete and submit.** Exercise all types, ordering, invalid payloads, runtime-owned objective feedback, written rubric pass/fail, evaluator failure atomicity, canonical duplicate submit, final-block different-response conflict, stale conflict body, real local-date validation, transactional mistake creation, and response sanitization.
-- [ ] **Step 2: Run the focused test.**
+- [x] **Step 1: Add failing endpoint tests for complete and submit.** Exercise all types, ordering, invalid payloads, runtime-owned objective feedback, written rubric pass/fail, evaluator failure atomicity, canonical duplicate submit, final-block different-response conflict, stale conflict body, real local-date validation, transactional mistake creation, and response sanitization.
+- [x] **Step 2: Run the focused test.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activities.test.js
 
   Expected: FAIL because completion and submission handlers are not implemented.
-- [ ] **Step 3: Expose runtime-owned informational completion and objective scoring through thin handlers.** Routes validate HTTP shape but never accept or compute a caller-controlled correct value.
-- [ ] **Step 4: Implement bounded written evaluation.** Send one response, the public prompt, relevant outcomes, and rubric criteria. Require criterion IDs to match exactly before recording.
-- [ ] **Step 5: Record the stable outcome/criterion mistake inside the same runtime transaction as the failed attempt.** A canonical retry returns the prior result and does not call logMistake again.
-- [ ] **Step 6: Return current public state after every accepted mutation.** ACTIVITY_STATE_CONFLICT and BLOCK_ALREADY_FINAL responses include code and latestState; 400/404/422/502 errors never include private keys.
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 3: Expose runtime-owned informational completion and objective scoring through thin handlers.** Routes validate HTTP shape but never accept or compute a caller-controlled correct value.
+- [x] **Step 4: Implement bounded written evaluation.** Send one response, the public prompt, relevant outcomes, and rubric criteria. Require criterion IDs to match exactly before recording.
+- [x] **Step 5: Record the stable outcome/criterion mistake inside the same runtime transaction as the failed attempt.** A canonical retry returns the prior result and does not call logMistake again.
+- [x] **Step 6: Return current public state after every accepted mutation.** ACTIVITY_STATE_CONFLICT and BLOCK_ALREADY_FINAL responses include code and latestState; 400/404/422/502 errors never include private keys.
+- [x] **Step 7: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/activities.test.js server/__tests__/mistakes-log.test.js
       git add server/routes/activities.js server/__tests__/activities.test.js
@@ -1378,23 +1378,23 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Delete: server/__tests__/quiz.test.js
 - Delete: server/__tests__/remediation.test.js
 
-- [ ] **Step 1: Add failing read tests.** GET returns a sanitized structured document/state or null document for an untouched Session; malformed stored JSON returns ACTIVITY_DOCUMENT_INVALID; no response exposes keys.
-- [ ] **Step 2: Add complete tutor-context tests.** Verify relevant outcomes, public current block, current feedback, guiding-question instructions, 2,000-character cap, message persistence, foreign block rejection, answer-key exclusion, and zero learning-state mutation on successful or failed chat.
-- [ ] **Step 3: Add artifact tests.** Gate on required blocks only; optional blocks do not gate; failed evaluation writes nothing; failed rubric remains practicing; pass calls the structured runtime; repeated pass is idempotent; final artifact completion performs all side effects exactly once.
-- [ ] **Step 4: Run the new tests.**
+- [x] **Step 1: Add failing read tests.** GET returns a sanitized structured document/state or null document for an untouched Session; malformed stored JSON returns ACTIVITY_DOCUMENT_INVALID; no response exposes keys.
+- [x] **Step 2: Add complete tutor-context tests.** Verify relevant outcomes, public current block, current feedback, guiding-question instructions, 2,000-character cap, message persistence, foreign block rejection, answer-key exclusion, and zero learning-state mutation on successful or failed chat.
+- [x] **Step 3: Add artifact tests.** Gate on required blocks only; optional blocks do not gate; failed evaluation writes nothing; failed rubric remains practicing; pass calls the structured runtime; repeated pass is idempotent; final artifact completion performs all side effects exactly once.
+- [x] **Step 4: Run the new tests.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/lessons.test.js server/__tests__/artifacts.test.js server/__tests__/curriculum.test.js
 
   Expected: FAIL on structured-only read/artifact behavior and still-present legacy routes.
-- [ ] **Step 5: Reduce lessons.js to GET Session, contextual tutor chat, and artifact GET/POST.** Delete chat-chunk continuation, per-Session quiz, retest, remediation, skip, and test-out handlers. Delete the duplicate curriculum test-out routes.
-- [ ] **Step 6: Remove obsolete state-machine methods, adaptive-difficulty and mixed-quiz utilities, imports, and tests.** Keep unused historical database columns/tables dormant; do not add compatibility endpoints.
-- [ ] **Step 7: Route artifact approval through the same atomic structured completion boundary as activity completion.**
-- [ ] **Step 8: Run the full backend suite.**
+- [x] **Step 5: Reduce lessons.js to GET Session, contextual tutor chat, and artifact GET/POST.** Delete chat-chunk continuation, per-Session quiz, retest, remediation, skip, and test-out handlers. Delete the duplicate curriculum test-out routes.
+- [x] **Step 6: Remove obsolete state-machine methods, adaptive-difficulty and mixed-quiz utilities, imports, and tests.** Keep unused historical database columns/tables dormant; do not add compatibility endpoints.
+- [x] **Step 7: Route artifact approval through the same atomic structured completion boundary as activity completion.**
+- [x] **Step 8: Run the full backend suite.**
 
       npx vitest run --config ./server/vitest.config.js server
 
   Expected: PASS.
-- [ ] **Step 9: Commit.**
+- [x] **Step 9: Commit.**
 
       git add server/routes/lessons.js server/routes/curriculum.js server/utils/lesson-state-machine.js server/utils/mixed-quiz.js server/utils/adaptive-difficulty.js server/__tests__/lessons.test.js server/__tests__/artifacts.test.js server/__tests__/curriculum.test.js server/__tests__/mixed-quiz.test.js server/__tests__/adaptive-difficulty.test.js server/__tests__/integration-mistakes-adaptive.test.js server/__tests__/quiz.test.js server/__tests__/remediation.test.js
       git commit -m "refactor: cut lessons over to structured sessions"
@@ -1420,22 +1420,22 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Delete: client/src/__tests__/QuizPanel.test.jsx
 - Delete: client/src/__tests__/RemediationPanel.test.jsx
 
-- [ ] **Step 1: Write activity-api tests, then add ensureActivities, completeActivityBlock, submitActivityBlock, and the activityBlockId chat argument.** Cover JSON and non-JSON errors, code/retryable/latestState preservation, network failure, cached 200, generated 201, completion, and submission.
-- [ ] **Step 2: Write SessionPage tests for initial loading, untouched generation, cached document, in-progress resume, completed Session summary, locked prerequisite, provider error with Retry and Back to Trail, connection-loss response preservation, and ACTIVITY_DOCUMENT_INVALID recovery.** Assert it never calls generation when a valid document already exists.
-- [ ] **Step 3: Add cutover tests proving App routes SessionPage and curriculum preview has no test-out action.**
-- [ ] **Step 4: Run the client tests.**
+- [x] **Step 1: Write activity-api tests, then add ensureActivities, completeActivityBlock, submitActivityBlock, and the activityBlockId chat argument.** Cover JSON and non-JSON errors, code/retryable/latestState preservation, network failure, cached 200, generated 201, completion, and submission.
+- [x] **Step 2: Write SessionPage tests for initial loading, untouched generation, cached document, in-progress resume, completed Session summary, locked prerequisite, provider error with Retry and Back to Trail, connection-loss response preservation, and ACTIVITY_DOCUMENT_INVALID recovery.** Assert it never calls generation when a valid document already exists.
+- [x] **Step 3: Add cutover tests proving App routes SessionPage and curriculum preview has no test-out action.**
+- [x] **Step 4: Run the client tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/activity-api.test.js src/__tests__/SessionPage.test.jsx src/__tests__/App.test.jsx src/__tests__/CurriculumFlow.test.jsx)
 
   Expected: FAIL because the new API and SessionPage do not exist and legacy components still own the route.
-- [ ] **Step 5: Implement SessionPage as the single Session route.** It owns one initial read, generation only when document is null, retry/recovery, and stable props for SessionPlayer.
-- [ ] **Step 6: Remove old per-Session quiz, remediation, defer, test-out, and continue API functions; remove curriculum test-out UI; delete the three legacy components and tests.** Keep the chat API for TutorSidecar and artifact API for Builds.
-- [ ] **Step 7: Re-run tests.**
+- [x] **Step 5: Implement SessionPage as the single Session route.** It owns one initial read, generation only when document is null, retry/recovery, and stable props for SessionPlayer.
+- [x] **Step 6: Remove old per-Session quiz, remediation, defer, test-out, and continue API functions; remove curriculum test-out UI; delete the three legacy components and tests.** Keep the chat API for TutorSidecar and artifact API for Builds.
+- [x] **Step 7: Re-run tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/activity-api.test.js src/__tests__/SessionPage.test.jsx src/__tests__/App.test.jsx src/__tests__/CurriculumFlow.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 8: Commit.**
+- [x] **Step 8: Commit.**
 
       git add client/src/api.js client/src/App.jsx client/src/pages/SessionPage.jsx client/src/pages/CurriculumConfirmation.jsx client/src/components/LessonChat.jsx client/src/components/QuizPanel.jsx client/src/components/RemediationPanel.jsx client/src/__tests__/activity-api.test.js client/src/__tests__/SessionPage.test.jsx client/src/__tests__/App.test.jsx client/src/__tests__/CurriculumFlow.test.jsx client/src/__tests__/LessonChat.test.jsx client/src/__tests__/QuizPanel.test.jsx client/src/__tests__/RemediationPanel.test.jsx
       git commit -m "feat: add the structured session page"
@@ -1453,21 +1453,21 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Create: client/src/components/session/ReflectionBlock.jsx
 - Create: client/src/__tests__/ActivityBlocks.test.jsx
 
-- [ ] **Step 1: Write behavior-first tests for every block.** Assert safe Markdown goes through MarkdownContent; worked-example steps reveal only in stored order before completion; choice uses a labeled radio group; ordering supports keyboard Move up/Move down without drag; short answer shows expected responseHint, live character count, min/max enforcement, and retry; reflection never uses correct/incorrect language; failed requests preserve input; feedback does not jump the page; unknown types are recoverable and cannot complete.
-- [ ] **Step 2: Run the focused test.**
+- [x] **Step 1: Write behavior-first tests for every block.** Assert safe Markdown goes through MarkdownContent; worked-example steps reveal only in stored order before completion; choice uses a labeled radio group; ordering supports keyboard Move up/Move down without drag; short answer shows expected responseHint, live character count, min/max enforcement, and retry; reflection never uses correct/incorrect language; failed requests preserve input; feedback does not jump the page; unknown types are recoverable and cannot complete.
+- [x] **Step 2: Run the focused test.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ActivityBlocks.test.jsx)
 
   Expected: FAIL because the components do not exist.
-- [ ] **Step 3: Implement each block as a controlled component.** It receives block, persistedBlockState, busy, error, onComplete or onSubmit. It never calls fetch directly, and Markdown fields render through the existing MarkdownContent component.
-- [ ] **Step 4: Make ActivityRenderer exhaustive.** Unknown type renders a recoverable error and never marks completion.
-- [ ] **Step 5: Ensure feedback gets programmatic focus and uses aria-live polite.**
-- [ ] **Step 6: Re-run and commit.**
+- [x] **Step 3: Implement each block as a controlled component.** It receives block, persistedBlockState, busy, error, onComplete or onSubmit. It never calls fetch directly, and Markdown fields render through the existing MarkdownContent component.
+- [x] **Step 4: Make ActivityRenderer exhaustive.** Unknown type renders a recoverable error and never marks completion.
+- [x] **Step 5: Ensure feedback gets programmatic focus and uses aria-live polite.**
+- [x] **Step 6: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ActivityBlocks.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 7: Commit.**
+- [x] **Step 7: Commit.**
 
       git add client/src/components/session/ActivityRenderer.jsx client/src/components/session/ReadBlock.jsx client/src/components/session/WorkedExampleBlock.jsx client/src/components/session/ChoiceBlock.jsx client/src/components/session/OrderingBlock.jsx client/src/components/session/ShortAnswerBlock.jsx client/src/components/session/ReflectionBlock.jsx client/src/__tests__/ActivityBlocks.test.jsx
       git commit -m "feat: add interactive session blocks"
@@ -1485,24 +1485,24 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/components/ArtifactPanel.jsx
 - Modify: client/src/__tests__/ArtifactPanel.test.jsx
 
-- [ ] **Step 1: Write orchestration and responsive-layout tests.** Cover one active block, read-only earlier blocks, locked future step markers, textual progress, persisted resume, desktop main/sidecar regions, mobile sticky action safe-area class, mutation success, lost-network input preservation, exactly one active request, reduced-motion completion, intentional feedback focus, and ACTIVITY_STATE_CONFLICT explanation plus state restoration.
-- [ ] **Step 2: Write complete tutor behavior tests.** Assert Ask your guide title; sticky desktop aside; closed-by-default mobile dialog; editable hint/example/why chips; 2,000-character cap; current block ID; successful and failed draft preservation; Retry; sessionStorage-only collapse preference; Escape close; trigger focus restoration; and mobile-sheet draft survival.
-- [ ] **Step 3: Add ArtifactPanel handoff tests.** Introduce an onPassed callback fired only after a newly passing result. Assert fail, evaluator error, cancel/back, and existing passed display do not falsely fire it; SessionPlayer refetches the Session after onPassed before showing completion.
-- [ ] **Step 4: Run focused tests.**
+- [x] **Step 1: Write orchestration and responsive-layout tests.** Cover one active block, read-only earlier blocks, locked future step markers, textual progress, persisted resume, desktop main/sidecar regions, mobile sticky action safe-area class, mutation success, lost-network input preservation, exactly one active request, reduced-motion completion, intentional feedback focus, and ACTIVITY_STATE_CONFLICT explanation plus state restoration.
+- [x] **Step 2: Write complete tutor behavior tests.** Assert Ask your guide title; sticky desktop aside; closed-by-default mobile dialog; editable hint/example/why chips; 2,000-character cap; current block ID; successful and failed draft preservation; Retry; sessionStorage-only collapse preference; Escape close; trigger focus restoration; and mobile-sheet draft survival.
+- [x] **Step 3: Add ArtifactPanel handoff tests.** Introduce an onPassed callback fired only after a newly passing result. Assert fail, evaluator error, cancel/back, and existing passed display do not falsely fire it; SessionPlayer refetches the Session after onPassed before showing completion.
+- [x] **Step 4: Run focused tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/SessionPlayer.test.jsx src/__tests__/TutorSidecar.test.jsx src/__tests__/ArtifactPanel.test.jsx src/__tests__/SessionPage.test.jsx)
 
   Expected: FAIL because the orchestrator, tutor, and callback do not exist.
-- [ ] **Step 5: Implement SessionPlayer with one mutation boundary and the layout/behavior contract from section 8.3.** Block components report intent; SessionPlayer calls the API, trusts only returned state, explains typed conflicts, and moves focus intentionally.
-- [ ] **Step 6: Implement TutorSidecar and its accessible mobile dialog without automatic opening.**
-- [ ] **Step 7: Add the backward-independent ArtifactPanel onPassed callback and refetch after pass.** Reuse the existing Build form and evaluator; do not duplicate them.
-- [ ] **Step 8: Add SessionComplete with outcomes practiced, learner takeaway, review timing, and next dashboard action.**
-- [ ] **Step 9: Re-run tests.**
+- [x] **Step 5: Implement SessionPlayer with one mutation boundary and the layout/behavior contract from section 8.3.** Block components report intent; SessionPlayer calls the API, trusts only returned state, explains typed conflicts, and moves focus intentionally.
+- [x] **Step 6: Implement TutorSidecar and its accessible mobile dialog without automatic opening.**
+- [x] **Step 7: Add the backward-independent ArtifactPanel onPassed callback and refetch after pass.** Reuse the existing Build form and evaluator; do not duplicate them.
+- [x] **Step 8: Add SessionComplete with outcomes practiced, learner takeaway, review timing, and next dashboard action.**
+- [x] **Step 9: Re-run tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/SessionPlayer.test.jsx src/__tests__/TutorSidecar.test.jsx src/__tests__/ArtifactPanel.test.jsx src/__tests__/SessionPage.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 10: Commit.**
+- [x] **Step 10: Commit.**
 
       git add client/src/components/session/SessionPlayer.jsx client/src/components/session/TutorSidecar.jsx client/src/components/session/SessionComplete.jsx client/src/pages/SessionPage.jsx client/src/components/ArtifactPanel.jsx client/src/__tests__/SessionPlayer.test.jsx client/src/__tests__/TutorSidecar.test.jsx client/src/__tests__/ArtifactPanel.test.jsx
       git commit -m "feat: build the structured session experience"
@@ -1521,24 +1521,24 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/components/ExamPanel.jsx
 - Modify: client/src/__tests__/ExamPanel.test.jsx
 
-- [ ] **Step 1: Add pure checkpoint-format and route tests.** Require object outcomes; validated coverage of every core outcome; exact private envelope schema; public serialization on start, GET, retake, and partial retest; local objective scoring; bounded written rubric input/output; evaluator-failure atomicity; per-outcome evidence; failed-outcome IDs; overall 80 and core 60 rules; partial retest; and final Track completion. Reject arrays and unknown schema versions.
-- [ ] **Step 2: Add complete UI tests.** Assert intro outcomes/count/time/autosave/pass rule; locked Continue learning; desktop navigator and answered count; mobile one-question flow; answer preservation; incomplete summary and focus on first missing answer; core versus supporting gaps; targeted review before partial retest; secondary full retake; keyboard completion; pass celebration; and no celebration on failure.
-- [ ] **Step 3: Run focused tests.**
+- [x] **Step 1: Add pure checkpoint-format and route tests.** Require object outcomes; validated coverage of every core outcome; exact private envelope schema; public serialization on start, GET, retake, and partial retest; local objective scoring; bounded written rubric input/output; evaluator-failure atomicity; per-outcome evidence; failed-outcome IDs; overall 80 and core 60 rules; partial retest; and final Track completion. Reject arrays and unknown schema versions.
+- [x] **Step 2: Add complete UI tests.** Assert intro outcomes/count/time/autosave/pass rule; locked Continue learning; desktop navigator and answered count; mobile one-question flow; answer preservation; incomplete summary and focus on first missing answer; core versus supporting gaps; targeted review before partial retest; secondary full retake; keyboard completion; pass celebration; and no celebration on failure.
+- [x] **Step 3: Run focused tests.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/checkpoint-format.test.js server/__tests__/exams.test.js
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ExamPanel.test.jsx)
 
   Expected: FAIL on the missing checkpoint contract and new UI components.
-- [ ] **Step 4: Implement checkpoint-format.js and persist the single envelope from section 6.6 inside exam_attempts.questions.** Parse only the declared schema, validate outcome coverage and exact key sets, and use one public serializer on every response. Do not add schema columns.
-- [ ] **Step 5: Score objective answers locally, send only written answers with bounded rubric context to the LLM, reject mismatched criterion IDs, and commit the evaluated attempt only after the complete result validates.** Aggregate per-outcome evidence, then apply overall 80 and every-core-outcome 60 rules in code.
-- [ ] **Step 6: Extract introduction, question, and result presentation into the three checkpoint components, keeping ExamPanel as the API/state orchestrator.** Implement every behavior from Step 2 and use Chapter checkpoint language while leaving API paths internal.
-- [ ] **Step 7: Re-run tests.**
+- [x] **Step 4: Implement checkpoint-format.js and persist the single envelope from section 6.6 inside exam_attempts.questions.** Parse only the declared schema, validate outcome coverage and exact key sets, and use one public serializer on every response. Do not add schema columns.
+- [x] **Step 5: Score objective answers locally, send only written answers with bounded rubric context to the LLM, reject mismatched criterion IDs, and commit the evaluated attempt only after the complete result validates.** Aggregate per-outcome evidence, then apply overall 80 and every-core-outcome 60 rules in code.
+- [x] **Step 6: Extract introduction, question, and result presentation into the three checkpoint components, keeping ExamPanel as the API/state orchestrator.** Implement every behavior from Step 2 and use Chapter checkpoint language while leaving API paths internal.
+- [x] **Step 7: Re-run tests.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/checkpoint-format.test.js server/__tests__/exams.test.js
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ExamPanel.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 8: Commit.**
+- [x] **Step 8: Commit.**
 
       git add server/utils/checkpoint-format.js server/routes/exams.js server/__tests__/checkpoint-format.test.js server/__tests__/exams.test.js client/src/components/checkpoint/CheckpointIntro.jsx client/src/components/checkpoint/CheckpointQuestion.jsx client/src/components/checkpoint/CheckpointResults.jsx client/src/components/ExamPanel.jsx client/src/__tests__/ExamPanel.test.jsx
       git commit -m "feat: align chapter checkpoints with outcomes"
@@ -1555,14 +1555,14 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: server/__tests__/course-lineage.test.js
 - Modify: server/__tests__/dashboard.test.js
 
-- [ ] **Step 1: Write lineage tests for root-only active counting, exactly one balanced child, linear ancestry, structured summary fields, repeated outcome rejection, and atomic creation.**
-- [ ] **Step 2: Write route tests for eligible generation, no lane body, 80/20 validation, theory/skill coverage, duplicate history, transient generation, tweak, confirm, concurrency, provider failure, and no partial child.**
-- [ ] **Step 3: Run focused tests and confirm failure.**
-- [ ] **Step 4: Update summaries to accept object/string outcomes.** Store bounded IDs, titles, kinds, roles, strengths, gaps, and artifact feedback; never raw chats.
-- [ ] **Step 5: Replace option-based prompt behavior with balanced progression and delete the continuation-options endpoint.**
-- [ ] **Step 6: Call createLinkedCourse with lane balanced-next and enforce one child per completed parent.**
-- [ ] **Step 7: Change both root creation and linked creation capacity checks to the exact root-only rule.**
-- [ ] **Step 8: Re-run and commit.**
+- [x] **Step 1: Write lineage tests for root-only active counting, exactly one balanced child, linear ancestry, structured summary fields, repeated outcome rejection, and atomic creation.**
+- [x] **Step 2: Write route tests for eligible generation, no lane body, 80/20 validation, theory/skill coverage, duplicate history, transient generation, tweak, confirm, concurrency, provider failure, and no partial child.**
+- [x] **Step 3: Run focused tests and confirm failure.**
+- [x] **Step 4: Update summaries to accept object/string outcomes.** Store bounded IDs, titles, kinds, roles, strengths, gaps, and artifact feedback; never raw chats.
+- [x] **Step 5: Replace option-based prompt behavior with balanced progression and delete the continuation-options endpoint.**
+- [x] **Step 6: Call createLinkedCourse with lane balanced-next and enforce one child per completed parent.**
+- [x] **Step 7: Change both root creation and linked creation capacity checks to the exact root-only rule.**
+- [x] **Step 8: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/continuations.test.js server/__tests__/course-lineage.test.js server/__tests__/dashboard.test.js
       git add server/routes/continuations.js server/utils/course-lineage.js server/__tests__/continuations.test.js server/__tests__/course-lineage.test.js server/__tests__/dashboard.test.js
@@ -1576,12 +1576,12 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/pages/ContinuationFlow.jsx
 - Modify: client/src/__tests__/ContinuationFlow.test.jsx
 
-- [ ] **Step 1: Replace option API expectations with completion summary, automatic generation, preview, tweak, defer, and confirm tests.**
-- [ ] **Step 2: Test refresh/re-entry, generation failure, retry, confirm failure, preserved draft, and navigation after success.**
-- [ ] **Step 3: Update client API bodies to omit lane and preserve level/time overrides.**
-- [ ] **Step 4: Implement the screens in section 8.7.** Do not persist the draft in localStorage; it is transient and recoverable by regeneration.
-- [ ] **Step 5: Remove LaneOption and all choice language.**
-- [ ] **Step 6: Re-run and commit.**
+- [x] **Step 1: Replace option API expectations with completion summary, automatic generation, preview, tweak, defer, and confirm tests.**
+- [x] **Step 2: Test refresh/re-entry, generation failure, retry, confirm failure, preserved draft, and navigation after success.**
+- [x] **Step 3: Update client API bodies to omit lane and preserve level/time overrides.**
+- [x] **Step 4: Implement the screens in section 8.7.** Do not persist the draft in localStorage; it is transient and recoverable by regeneration.
+- [x] **Step 5: Remove LaneOption and all choice language.**
+- [x] **Step 6: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ContinuationFlow.test.jsx)
       git add client/src/api.js client/src/pages/ContinuationFlow.jsx client/src/__tests__/ContinuationFlow.test.jsx
@@ -1596,15 +1596,15 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: server/routes/dashboard.js
 - Modify: server/__tests__/dashboard.test.js
 
-- [ ] **Step 1: Write pure tests for the exact next-action priority in section 8.2.** Include no curriculum, Session resume, checkpoint in progress, overdue reviews, first unlocked Session, ready checkpoint, completed Track, and all-locked invalid data.
-- [ ] **Step 2: Write seven-day rhythm tests across Sessions, checkpoints, and reviews, with local-date boundaries and no duplicate day inflation.**
-- [ ] **Step 3: Run and confirm failure.**
+- [x] **Step 1: Write pure tests for the exact next-action priority in section 8.2.** Include no curriculum, Session resume, checkpoint in progress, overdue reviews, first unlocked Session, ready checkpoint, completed Track, and all-locked invalid data.
+- [x] **Step 2: Write seven-day rhythm tests across Sessions, checkpoints, and reviews, with local-date boundaries and no duplicate day inflation.**
+- [x] **Step 3: Run and confirm failure.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/dashboard-summary.test.js server/__tests__/dashboard.test.js
 
-- [ ] **Step 4: Implement pure derivation in dashboard-summary.js.** Route code fetches bounded rows and passes them in; it does not bury priority rules in SQL.
-- [ ] **Step 5: Add nextAction, weeklyRhythm, normalized outcomes, Build markers, and lineage summaries to the dashboard response.** Preserve every existing response field.
-- [ ] **Step 6: Re-run and commit.**
+- [x] **Step 4: Implement pure derivation in dashboard-summary.js.** Route code fetches bounded rows and passes them in; it does not bury priority rules in SQL.
+- [x] **Step 5: Add nextAction, weeklyRhythm, normalized outcomes, Build markers, and lineage summaries to the dashboard response.** Preserve every existing response field.
+- [x] **Step 6: Re-run and commit.**
 
       npx vitest run --config ./server/vitest.config.js server/__tests__/dashboard-summary.test.js server/__tests__/dashboard.test.js
       git add server/utils/dashboard-summary.js server/routes/dashboard.js server/__tests__/dashboard-summary.test.js server/__tests__/dashboard.test.js
@@ -1625,13 +1625,13 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/__tests__/Dashboard.test.jsx
 - Delete: client/src/__tests__/CompetenceGraph.test.jsx
 
-- [ ] **Step 1: Add Today card tests for each server-provided action kind.** React must render, not recalculate, priority.
-- [ ] **Step 2: Add Trail map tests for current expansion, completed collapse, locks, Build markers, checkpoint state, and linear lineage.**
-- [ ] **Step 3: Add Dashboard tests for desktop information order, mobile DOM order, empty state, errors, topic switching, deletion protection, and completed Track continuation.**
-- [ ] **Step 4: Run focused tests and confirm failure.**
-- [ ] **Step 5: Implement the new components with semantic elements.** Use ordered lists for Trail sequence and buttons for expandable Chapter headers.
-- [ ] **Step 6: Remove CompetenceGraph from Dashboard, verify rg finds no remaining import, then delete CompetenceGraph.jsx and its dedicated test.** TrailMap is the single dashboard visualization after this task.
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 1: Add Today card tests for each server-provided action kind.** React must render, not recalculate, priority.
+- [x] **Step 2: Add Trail map tests for current expansion, completed collapse, locks, Build markers, checkpoint state, and linear lineage.**
+- [x] **Step 3: Add Dashboard tests for desktop information order, mobile DOM order, empty state, errors, topic switching, deletion protection, and completed Track continuation.**
+- [x] **Step 4: Run focused tests and confirm failure.**
+- [x] **Step 5: Implement the new components with semantic elements.** Use ordered lists for Trail sequence and buttons for expandable Chapter headers.
+- [x] **Step 6: Remove CompetenceGraph from Dashboard, verify rg finds no remaining import, then delete CompetenceGraph.jsx and its dedicated test.** TrailMap is the single dashboard visualization after this task.
+- [x] **Step 7: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/Dashboard.test.jsx src/__tests__/TrailMap.test.jsx)
       git add client/src/components/trail client/src/pages/Dashboard.jsx client/src/components/CompetenceGraph.jsx client/src/__tests__/Dashboard.test.jsx client/src/__tests__/TrailMap.test.jsx client/src/__tests__/CompetenceGraph.test.jsx
@@ -1655,13 +1655,13 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Create: client/src/__tests__/AppShell.test.jsx
 - Modify: client/src/__tests__/AppHeader.test.jsx
 
-- [ ] **Step 1: Write shell tests for desktop nav, mobile nav, current route, due count, focus header, safe return, and accessible menu.**
-- [ ] **Step 2: Add CSS contract tests or a small static test that asserts every required token and reduced-motion override exists.**
-- [ ] **Step 3: Implement styles in the four responsibility-specific files.**
-- [ ] **Step 4: Build AppShell and FocusShell without route-specific data fetching.**
-- [ ] **Step 5: Adapt or retire AppHeader after all existing imports move.**
-- [ ] **Step 6: Delete the old Tailwind color bridge after AppShell and FocusShell adopt semantic styles.** Do not carry two visual systems into later tasks.
-- [ ] **Step 7: Re-run and commit.**
+- [x] **Step 1: Write shell tests for desktop nav, mobile nav, current route, due count, focus header, safe return, and accessible menu.**
+- [x] **Step 2: Add CSS contract tests or a small static test that asserts every required token and reduced-motion override exists.**
+- [x] **Step 3: Implement styles in the four responsibility-specific files.**
+- [x] **Step 4: Build AppShell and FocusShell without route-specific data fetching.**
+- [x] **Step 5: Adapt or retire AppHeader after all existing imports move.**
+- [x] **Step 6: Delete the old Tailwind color bridge after AppShell and FocusShell adopt semantic styles.** Do not carry two visual systems into later tasks.
+- [x] **Step 7: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/AppShell.test.jsx src/__tests__/AppHeader.test.jsx src/__tests__/App.test.jsx)
       git add client/src/components/layout client/src/styles client/src/index.css client/src/App.jsx client/src/components/AppHeader.jsx client/src/__tests__/AppShell.test.jsx client/src/__tests__/AppHeader.test.jsx
@@ -1678,12 +1678,12 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/__tests__/ThemeProvider.test.jsx
 - Modify: client/src/__tests__/ThemePicker.test.jsx
 
-- [ ] **Step 1: Expand catalog tests to require every token in section 9.2 and preserve all 16 IDs.**
-- [ ] **Step 2: Add automated WCAG contrast calculations for text, accent contrast, borders, focus, and status pairs.**
-- [ ] **Step 3: Update the palette anchors from section 9.3 and derive explicit tokens.** Do not rely on browser color-mix for critical contrast.
-- [ ] **Step 4: Update ThemeProvider mapping and native color-scheme.** Invalid saved IDs still fall back to morning-mist; storage failures remain session-only.
-- [ ] **Step 5: Redesign picker previews using canvas, surface, accent, text, and status swatches.** Keep name, mode, and selected text.
-- [ ] **Step 6: Re-run and commit.**
+- [x] **Step 1: Expand catalog tests to require every token in section 9.2 and preserve all 16 IDs.**
+- [x] **Step 2: Add automated WCAG contrast calculations for text, accent contrast, borders, focus, and status pairs.**
+- [x] **Step 3: Update the palette anchors from section 9.3 and derive explicit tokens.** Do not rely on browser color-mix for critical contrast.
+- [x] **Step 4: Update ThemeProvider mapping and native color-scheme.** Invalid saved IDs still fall back to morning-mist; storage failures remain session-only.
+- [x] **Step 5: Redesign picker previews using canvas, surface, accent, text, and status swatches.** Keep name, mode, and selected text.
+- [x] **Step 6: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/theme-presets.test.js src/__tests__/ThemeProvider.test.jsx src/__tests__/ThemePicker.test.jsx)
       git add client/src/theme client/src/components/ThemePicker.jsx client/src/__tests__/theme-presets.test.js client/src/__tests__/ThemeProvider.test.jsx client/src/__tests__/ThemePicker.test.jsx
@@ -1700,11 +1700,11 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/__tests__/setupQuestions.test.js
 - Modify: client/src/__tests__/recovery-api.test.js
 
-- [ ] **Step 1: Add tests for the four steps, placement skip/take, selected states, profile persistence, generation recovery, error retry, Track preview, outcome summaries, Build markers, and confirmation.**
-- [ ] **Step 2: Implement the flow in section 8.8 without changing route URLs or recovery contracts.**
-- [ ] **Step 3: Replace roadmap, course, module, and lesson copy with Trail, Track, Chapter, and Session where user-facing.**
-- [ ] **Step 4: Ensure raw database vocabulary never leaks in error messages.**
-- [ ] **Step 5: Re-run and commit.**
+- [x] **Step 1: Add tests for the four steps, placement skip/take, selected states, profile persistence, generation recovery, error retry, Track preview, outcome summaries, Build markers, and confirmation.**
+- [x] **Step 2: Implement the flow in section 8.8 without changing route URLs or recovery contracts.**
+- [x] **Step 3: Replace roadmap, course, module, and lesson copy with Trail, Track, Chapter, and Session where user-facing.**
+- [x] **Step 4: Ensure raw database vocabulary never leaks in error messages.**
+- [x] **Step 5: Re-run and commit.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/CurriculumFlow.test.jsx src/__tests__/setupQuestions.test.js src/__tests__/recovery-api.test.js)
       git add client/src/pages/OnboardingFlow.jsx client/src/pages/CurriculumConfirmation.jsx client/src/setupQuestions.js client/src/__tests__/CurriculumFlow.test.jsx client/src/__tests__/setupQuestions.test.js client/src/__tests__/recovery-api.test.js
@@ -1730,16 +1730,16 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: client/src/__tests__/OfflineIndicator.test.jsx
 - Modify: client/src/__tests__/ErrorBoundary.test.jsx
 
-- [ ] **Step 1: Add or update tests for every behavior in sections 8.6, 8.9, 8.10, and 11.**
-- [ ] **Step 2: Migrate each screen to AppShell or FocusShell and semantic tokens.**
-- [ ] **Step 3: Preserve all current API behavior, file limits, import confirmation, provider setup, and recovery actions.**
-- [ ] **Step 4: Make skeletons match their final screen geometry and disable shimmer under reduced motion.**
-- [ ] **Step 5: Re-run the affected client tests.**
+- [x] **Step 1: Add or update tests for every behavior in sections 8.6, 8.9, 8.10, and 11.**
+- [x] **Step 2: Migrate each screen to AppShell or FocusShell and semantic tokens.**
+- [x] **Step 3: Preserve all current API behavior, file limits, import confirmation, provider setup, and recovery actions.**
+- [x] **Step 4: Make skeletons match their final screen geometry and disable shimmer under reduced motion.**
+- [x] **Step 5: Re-run the affected client tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js src/__tests__/ReviewQueue.test.jsx src/__tests__/ReviewSession.test.jsx src/__tests__/ArtifactPanel.test.jsx src/__tests__/SettingsPage.test.jsx src/__tests__/SettingsPageExportImport.test.jsx src/__tests__/Skeleton.test.jsx src/__tests__/OfflineIndicator.test.jsx src/__tests__/ErrorBoundary.test.jsx)
 
   Expected: PASS.
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
       git add client/src/pages/ReviewQueue.jsx client/src/components/ReviewSession.jsx client/src/components/ArtifactPanel.jsx client/src/pages/SettingsPage.jsx client/src/components/Skeleton.jsx client/src/components/OfflineIndicator.jsx client/src/components/ErrorBoundary.jsx client/src/__tests__/ReviewQueue.test.jsx client/src/__tests__/ReviewSession.test.jsx client/src/__tests__/ArtifactPanel.test.jsx client/src/__tests__/SettingsPage.test.jsx client/src/__tests__/SettingsPageExportImport.test.jsx client/src/__tests__/Skeleton.test.jsx client/src/__tests__/OfflineIndicator.test.jsx client/src/__tests__/ErrorBoundary.test.jsx
       git commit -m "feat: unify supporting mastery flows"
@@ -1753,71 +1753,71 @@ Rollback requires restoring a pre-cutover database snapshot together with pre-cu
 - Modify: README.md
 - Modify: this plan only to check completed tasks during execution
 
-- [ ] **Step 1: Find remaining hard-coded presentation colors.**
+- [x] **Step 1: Find remaining hard-coded presentation colors.**
 
       rg -n "bg-(white|gray|indigo|green|red|amber|yellow|orange)|text-(gray|indigo|green|red|amber|yellow|orange)|border-(gray|indigo|green|red|amber|yellow|orange)" client/src --glob "*.jsx"
 
   Expected before cleanup: matches identify the remaining migration list.
-- [ ] **Step 2: Replace every theme-dependent match with semantic components or classes.** Keep intentional code-syntax colors only when they also work in all themes.
-- [ ] **Step 3: Assert the deleted Tailwind color override block has not been reintroduced.**
-- [ ] **Step 4: Re-run the search.** Expected: no theme-dependent utility matches.
-- [ ] **Step 5: Run all server tests.**
+- [x] **Step 2: Replace every theme-dependent match with semantic components or classes.** Keep intentional code-syntax colors only when they also work in all themes.
+- [x] **Step 3: Assert the deleted Tailwind color override block has not been reintroduced.**
+- [x] **Step 4: Re-run the search.** Expected: no theme-dependent utility matches.
+- [x] **Step 5: Run all server tests.**
 
       npx vitest run --config ./server/vitest.config.js server
 
   Expected: PASS.
-- [ ] **Step 6: Run all client tests.**
+- [x] **Step 6: Run all client tests.**
 
       (cd client && npx vitest run --config ./vitest.config.js)
 
   Expected: PASS.
-- [ ] **Step 7: Build production assets.**
+- [x] **Step 7: Build production assets.**
 
       npm run build
 
   Expected: exit 0 with no new warnings.
-- [ ] **Step 8: Run package-level verification.**
+- [x] **Step 8: Run package-level verification.**
 
       npm test
 
   Expected: exit 0.
-- [ ] **Step 9: Complete the manual matrix from section 12.1.** Record failures as new tests before fixing them.
-- [ ] **Step 10: Verify dirty-worktree isolation.**
+- [x] **Step 9: Complete the manual matrix from section 12.1.** Record failures as new tests before fixing them.
+- [x] **Step 10: Verify dirty-worktree isolation.**
 
       git status --short
       git diff --stat
 
   Expected: only intentional overhaul files remain.
-- [ ] **Step 11: Update README product vocabulary, architecture summary, run instructions, and screenshots only after the UI is final.**
-- [ ] **Step 12: Commit cleanup and documentation.**
+- [x] **Step 11: Update README product vocabulary, architecture summary, run instructions, and screenshots only after the UI is final.**
+- [x] **Step 12: Commit cleanup and documentation.**
 
       git add client/src README.md
       git commit -m "chore: complete mastery trail migration"
 
 ## 14. Final release checklist
 
-- [ ] Every Session uses the structured runtime.
-- [ ] New Sessions have no mandatory per-Session quiz.
-- [ ] Every objective answer is scored without an LLM.
-- [ ] No private answer key reaches the browser.
-- [ ] Checkpoint pass is 80 percent plus critical-outcome floor.
-- [ ] Required Builds gate only their owning Session.
-- [ ] SRS scheduling and streak recording happen once.
-- [ ] Track completion still depends on completed Chapters.
-- [ ] Next Track generation presents one balanced plan.
-- [ ] Active root Trail limit remains three.
-- [ ] Every newly created Trail is linear with at most one next Track per parent.
-- [ ] Export/import preserves structured activities.
-- [ ] Dashboard makes the next action unmistakable.
-- [ ] Session activity remains visually primary over tutor chat.
-- [ ] Mobile has no horizontal page scroll at 390 px.
-- [ ] Keyboard operation works for ordering and every assessment.
-- [ ] Focus is visible in every theme.
-- [ ] All 16 theme IDs still restore.
-- [ ] Reduced motion is complete.
-- [ ] Empty, loading, error, offline, stale-tab, and retry states are designed.
-- [ ] No user-facing roadmap/course/module/lesson terminology remains.
-- [ ] Full test suite and production build pass.
+- [x] Every Session uses the structured runtime.
+- [x] New Sessions have no mandatory per-Session quiz.
+- [x] Every objective answer is scored without an LLM.
+- [x] No private answer key reaches the browser.
+- [x] Checkpoint pass is 80 percent plus critical-outcome floor.
+- [x] Required Builds gate only their owning Session.
+- [x] SRS scheduling and streak recording happen once.
+- [x] Track completion still depends on completed Chapters.
+- [x] Next Track generation presents one balanced plan.
+- [x] Active root Trail limit remains three.
+- [x] Every newly created Trail is linear with at most one next Track per parent.
+- [x] Export/import preserves structured activities.
+- [x] Dashboard makes the next action unmistakable.
+- [x] Session activity remains visually primary over tutor chat.
+- [x] Mobile has no horizontal page scroll at 390 px.
+- [x] Keyboard operation works for ordering and every assessment.
+- [x] Focus is visible in every theme.
+- [x] All 16 theme IDs still restore.
+- [x] Reduced motion is complete.
+- [x] Empty, loading, error, offline, stale-tab, and retry states are designed.
+- [x] No user-facing roadmap/course/module/lesson terminology remains.
+- [x] Full test suite and production build pass.
 
 ## 15. Explicitly deferred work
 
@@ -1836,3 +1836,13 @@ Do not add these during this implementation:
 - A new analytics warehouse.
 
 Revisit a normalized mastery graph only when the product needs cross-Track prerequisite reasoning, credential-grade evidence, multi-user reporting, or concept-level adaptivity that cannot be expressed by the outcome manifests in this plan.
+
+## 16. Integration completion record
+
+- Integrated session implementation through `bed38c7` and dashboard implementation through `b1034e2` into `feat/mastery-trail-final`; resolved dashboard/session prop conflicts in favor of the Mastery Trail dashboard with structured checkpoint context.
+- Integrated the main checkpoint's durable curriculum-generation jobs, recovery/status stream, streaming progress, and per-question placement evidence with the structured Track/Chapter/Session cutover. Kept curriculum adjustment as structured streamed generation with request-abort cleanup.
+- Final cutover removes retired quiz metadata from dashboard/curriculum responses, rejects quiz-format backup payloads, excludes retired state values from Session/checkpoint readiness, and does not infer continuation gaps from old quiz fields.
+- Removed dead quiz/lesson/graph skeleton code and replaced remaining fixed-palette Build/loading styles with semantic theme tokens. Current learner-facing architecture uses structured Sessions, Build submissions, Chapter checkpoints, Reviews, Tracks, and Trail navigation.
+- Fresh main-merge verification: `npm test` passed 33 backend files / 495 tests and 32 frontend files / 191 tests; `npm run build` passed. `npm run lint` and `npm run typecheck` exit successfully but are placeholders with no configured tools.
+- Expected/non-blocking diagnostics: failure-injection and constraint tests log deliberate SQLite/application errors; JSDOM export tests emit unsupported-navigation warnings; Node emits experimental-localStorage and `module.register()` deprecation warnings; Vite reports that configured `dist` output is outside `client/` and that the minified JavaScript chunk exceeds 500 kB.
+- Git isolation and final commit details are recorded in the delivery summary for this worktree.

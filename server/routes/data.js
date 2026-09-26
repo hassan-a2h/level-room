@@ -15,18 +15,63 @@ const TABLES = [
   'llm_settings',
   'mistakes_log',
   'streaks',
-  'quiz_attempts',
   'exam_attempts',
   'course_links',
 ]
 
-const REQUIRED_TABLES = TABLES.filter((table) => table !== 'course_links')
-const SUPPORTED_BACKUP_VERSIONS = new Set(['1.0.0', '1.1.0'])
+const REQUIRED_TABLES = TABLES
 
 const LEGACY_DISCARDED_SETTINGS_FIELDS = new Set(['api_key'])
 
-function getTableColumns(table) {
-  return new Set(db.prepare(`PRAGMA table_info("${table}")`).all().map((column) => column.name))
+const IMPORT_COLUMNS = {
+  topics: new Set(['id', 'title', 'slug', 'status', 'level', 'goal', 'time_per_week', 'deadline', 'tone', 'focus', 'mode', 'created_at', 'last_active_at', 'interaction_mode', 'difficulty', 'consecutive_passes', 'consecutive_fails', 'course_kind', 'course_stage', 'course_focus', 'course_summary', 'course_completed_at', 'curriculum_state', 'curriculum_draft', 'curriculum_error']),
+  modules: new Set(['id', 'topic_id', 'module_index', 'title', 'summary', 'skill_outcomes', 'status', 'completed_at']),
+  lessons: new Set(['id', 'module_id', 'lesson_index', 'title', 'depth', 'estimated_time', 'outcomes', 'prerequisites', 'artifact_required', 'artifact_type', 'artifact_rubric', 'task_spec']),
+  progress: new Set(['id', 'topic_id', 'lesson_id', 'state', 'artifact_passed', 'started_at', 'completed_at', 'activity_state']),
+  messages: new Set(['id', 'topic_id', 'lesson_id', 'role', 'content', 'created_at']),
+  srs_queue: new Set(['id', 'topic_id', 'lesson_id', 'module_id', 'interval_index', 'due_date', 'status', 'last_reviewed', 'score', 'review_type', 'review_history']),
+  artifacts: new Set(['id', 'progress_id', 'content', 'rubric_scores', 'passed', 'feedback', 'attempt_number', 'created_at']),
+  llm_settings: new Set(['id', 'provider', 'model', 'reasoning_effort', 'created_at']),
+  mistakes_log: new Set(['id', 'topic_id', 'lesson_id', 'description', 'recurring', 'cleared_after', 'created_at']),
+  streaks: new Set(['id', 'current_streak', 'max_streak', 'last_active_date']),
+  exam_attempts: new Set(['id', 'topic_id', 'module_id', 'questions', 'answers', 'evaluation', 'status', 'type', 'parent_exam_id', 'created_at']),
+  course_links: new Set(['child_topic_id', 'parent_topic_id', 'lane', 'normalized_lane', 'created_at']),
+}
+
+const EXPORT_QUERIES = {
+  topics: 'SELECT id, title, slug, status, level, goal, time_per_week, deadline, tone, focus, mode, created_at, last_active_at, interaction_mode, difficulty, consecutive_passes, consecutive_fails, course_kind, course_stage, course_focus, course_summary, course_completed_at, curriculum_state, curriculum_draft, curriculum_error FROM topics',
+  modules: 'SELECT id, topic_id, module_index, title, summary, skill_outcomes, status, completed_at FROM modules',
+  lessons: 'SELECT id, module_id, lesson_index, title, depth, estimated_time, outcomes, prerequisites, artifact_required, artifact_type, artifact_rubric, task_spec FROM lessons',
+  progress: 'SELECT id, topic_id, lesson_id, state, artifact_passed, started_at, completed_at, activity_state FROM progress',
+  messages: 'SELECT id, topic_id, lesson_id, role, content, created_at FROM messages',
+  srs_queue: 'SELECT id, topic_id, lesson_id, module_id, interval_index, due_date, status, last_reviewed, score, review_type, review_history FROM srs_queue',
+  artifacts: 'SELECT id, progress_id, content, rubric_scores, passed, feedback, attempt_number, created_at FROM artifacts',
+  llm_settings: 'SELECT id, provider, model, reasoning_effort, created_at FROM llm_settings',
+  mistakes_log: 'SELECT id, topic_id, lesson_id, description, recurring, cleared_after, created_at FROM mistakes_log',
+  streaks: 'SELECT id, current_streak, max_streak, last_active_date FROM streaks',
+  exam_attempts: 'SELECT id, topic_id, module_id, questions, answers, evaluation, status, type, parent_exam_id, created_at FROM exam_attempts WHERE status <> \'pending\'',
+  course_links: 'SELECT child_topic_id, parent_topic_id, lane, normalized_lane, created_at FROM course_links',
+}
+
+function sanitizeCompletedCheckpoint(row) {
+  if (!['passed', 'failed'].includes(row.status) || typeof row.questions !== 'string') return null
+  let envelope
+  try { envelope = JSON.parse(row.questions) } catch { return null }
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || envelope.schemaVersion !== 1 || !Array.isArray(envelope.publicQuestions)) return null
+  if (Object.keys(envelope).some((key) => !['schemaVersion', 'publicQuestions', 'answerKey'].includes(key))) return null
+  return { ...row, questions: JSON.stringify({ schemaVersion: 1, publicQuestions: envelope.publicQuestions }) }
+}
+
+function normalizeImportedProgress(row) {
+  const completed = row.state === 'passed'
+  return {
+    ...row,
+    state: completed ? 'passed' : 'not_started',
+    artifact_passed: completed ? Number(row.artifact_passed || 0) : 0,
+    started_at: completed ? row.started_at ?? null : null,
+    completed_at: completed ? row.completed_at ?? null : null,
+    activity_state: '{}',
+  }
 }
 
 function prepareImportRows(backup) {
@@ -36,7 +81,6 @@ function prepareImportRows(backup) {
       return { error: `Invalid backup: "${table}" must be an array.` }
     }
     const rows = backup[table] || []
-    const knownColumns = getTableColumns(table)
     prepared[table] = []
     for (const row of rows) {
       if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -44,15 +88,22 @@ function prepareImportRows(backup) {
       }
       const cleanRow = {}
       for (const [column, value] of Object.entries(row)) {
-        if (table === 'quiz_attempts' && column === 'answer_key') {
-          return { error: 'Invalid backup: private quiz answer keys are not accepted.' }
-        }
         if (table === 'llm_settings' && LEGACY_DISCARDED_SETTINGS_FIELDS.has(column.toLowerCase())) continue
-        if (isCredentialColumn(column) || !knownColumns.has(column)) {
+        if (isCredentialColumn(column) || !IMPORT_COLUMNS[table].has(column)) {
           return { error: 'Invalid backup: credential data or unsupported fields are not accepted.' }
         }
         cleanRow[column] = value
       }
+      if (table === 'exam_attempts') {
+        if (cleanRow.status === 'pending') continue
+        if (typeof cleanRow.questions !== 'string') return { error: 'Invalid backup: completed checkpoints must contain a sanitized outcome envelope.' }
+        let envelope
+        try { envelope = JSON.parse(cleanRow.questions) } catch { return { error: 'Invalid backup: completed checkpoints must contain a sanitized outcome envelope.' } }
+        if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || envelope.schemaVersion !== 1 || !Array.isArray(envelope.publicQuestions) || Object.keys(envelope).some((key) => key !== 'schemaVersion' && key !== 'publicQuestions')) {
+          return { error: 'Invalid backup: completed checkpoints must contain a sanitized outcome envelope.' }
+        }
+      }
+      if (table === 'progress') Object.assign(cleanRow, normalizeImportedProgress(cleanRow))
       prepared[table].push(cleanRow)
     }
   }
@@ -103,13 +154,6 @@ function validateLineageRows(topics, links) {
   return { valid: true }
 }
 
-function isUnresolvedMixedAttempt(row) {
-  if (Number(row?.format_version || 1) !== 2) return false
-  if (row?.evaluation === null || row?.evaluation === undefined || row?.evaluation === '') return true
-  if (typeof row.evaluation === 'string' && row.evaluation.trim() === 'null') return true
-  return false
-}
-
 function isCredentialColumn(column) {
   const normalized = column.toLowerCase().replace(/[^a-z]/g, '')
   return ['access', 'refresh', 'refreshtoken', 'token', 'credential', 'accountid', 'authorization', 'apikey'].includes(normalized)
@@ -118,20 +162,19 @@ function isCredentialColumn(column) {
 router.get('/export', (_req, res) => {
   try {
     const result = {
-      version: '1.1.0',
+      backupVersion: 2,
       exported_at: new Date().toISOString(),
     }
 
     for (const table of TABLES) {
-      let rows
-      if (table === 'llm_settings') {
-        rows = all('SELECT id, provider, model, reasoning_effort, created_at FROM llm_settings')
-      } else if (table === 'quiz_attempts') {
-        rows = all('SELECT id, topic_id, lesson_id, questions, answers, evaluation, created_at, format_version FROM quiz_attempts')
+      const rows = all(EXPORT_QUERIES[table])
+      if (table === 'progress') {
+        result[table] = rows.map(normalizeImportedProgress)
+      } else if (table === 'exam_attempts') {
+        result[table] = rows.map(sanitizeCompletedCheckpoint).filter(Boolean)
       } else {
-        rows = all(`SELECT * FROM ${table}`)
+        result[table] = rows
       }
-      result[table] = rows
     }
 
     return res.json(result)
@@ -149,9 +192,12 @@ router.post('/import', (req, res) => {
       return res.status(400).json({ error: 'Invalid backup: must be a JSON object.' })
     }
 
-    const version = typeof backup.version === 'string' ? backup.version : '1.0.0'
-    if (!SUPPORTED_BACKUP_VERSIONS.has(version)) {
-      return res.status(400).json({ error: 'Invalid backup: unsupported version.' })
+    if (backup.backupVersion !== 2) {
+      return res.status(400).json({ error: 'Backup version is unsupported.', code: 'BACKUP_VERSION_UNSUPPORTED' })
+    }
+
+    if (Object.hasOwn(backup, 'quiz_attempts')) {
+      return res.status(400).json({ error: 'Backup contains retired per-Session quiz data.' })
     }
 
     for (const table of REQUIRED_TABLES) {
@@ -169,20 +215,11 @@ router.post('/import', (req, res) => {
     const lineageValidation = validateLineageRows(validated.rows.topics, validated.rows.course_links)
     if (lineageValidation.error) return res.status(400).json({ error: lineageValidation.error })
 
-    const unresolvedMixedPairs = new Set()
-    validated.rows.quiz_attempts = validated.rows.quiz_attempts.filter((row) => {
-      if (!isUnresolvedMixedAttempt(row)) return true
-      unresolvedMixedPairs.add(`${row.topic_id}:${row.lesson_id}`)
-      return false
-    })
-    for (const row of validated.rows.progress) {
-      if (unresolvedMixedPairs.has(`${row.topic_id}:${row.lesson_id}`) && row.state === 'quiz_pending') row.state = 'practicing'
-    }
-
     const counts = {}
 
     const tx = transaction(() => {
       // Clear all tables in reverse dependency order
+      run('DELETE FROM quiz_attempts')
       const clearOrder = [...TABLES].reverse()
       for (const table of clearOrder) {
         run(`DELETE FROM ${table}`)

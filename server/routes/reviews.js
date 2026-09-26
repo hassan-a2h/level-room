@@ -7,10 +7,10 @@ import {
   getDueItems,
   getDueCounts,
   updateSrsAfterReview,
-  isLessonSkipped,
   scheduleCumulativeReviews,
 } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
+import { outcomeTitles } from '../utils/outcome-manifest.js'
 
 const router = Router()
 
@@ -32,7 +32,7 @@ function buildReviewQuestionsPrompt({ lessonTitle, lessonOutcomes, messages, num
   const context = messages.map((m) => `${m.role}: ${m.content}`).join('\n')
   return `You are an expert tutor designing spaced-repetition retrieval questions for the lesson "${lessonTitle}".
 
-Learning outcomes: ${lessonOutcomes.join('; ')}
+Learning outcomes: ${outcomeTitles(lessonOutcomes).join('; ')}
 
 Conversation context (key concepts taught):
 ${context}
@@ -50,7 +50,7 @@ Return ONLY valid JSON with a "questions" array.`
  */
 function buildCumulativeReviewPrompt({ moduleTitle, lessons, numQuestions }) {
   const lessonsContext = lessons.map((l) => {
-    return `Lesson: ${l.title}\nOutcomes: ${l.outcomes.join('; ')}`
+    return `Lesson: ${l.title}\nOutcomes: ${outcomeTitles(l.outcomes).join('; ')}`
   }).join('\n\n')
 
   return `You are an expert tutor designing a cumulative review for the module "${moduleTitle}".
@@ -195,13 +195,7 @@ async function generateCumulativeReviewQuestions({ settings: config, moduleId, t
 router.get('/reviews', (_req, res) => {
   try {
     const items = getDueItems()
-    // Filter out skipped lessons
-    const filtered = items.filter((item) => {
-      if (item.review_type === 'lesson' && item.lesson_id) {
-        return !isLessonSkipped(item.topic_id, item.lesson_id)
-      }
-      return true
-    })
+    const filtered = items
 
     const today = new Date().toISOString().split('T')[0]
 
@@ -262,13 +256,7 @@ router.post('/reviews/start', async (req, res) => {
     const config = requireLlmConfig()
 
     const items = getDueItems()
-    // Filter out skipped lessons
-    const filtered = items.filter((item) => {
-      if (item.review_type === 'lesson' && item.lesson_id) {
-        return !isLessonSkipped(item.topic_id, item.lesson_id)
-      }
-      return true
-    })
+    const filtered = items
 
     if (filtered.length === 0) {
       return res.status(404).json({ error: 'No reviews are due.' })

@@ -19,7 +19,8 @@ function applyTheme(theme) {
   root.dataset.themeMode = theme.mode
   root.style.colorScheme = theme.mode
   for (const [name, value] of Object.entries(theme.tokens)) {
-    root.style.setProperty(`--ui-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`, value)
+    const tokenName = name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`).replace(/^space(\d+)$/, 'space-$1')
+    root.style.setProperty(`--${tokenName}`, value)
   }
 }
 

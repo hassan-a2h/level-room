@@ -108,7 +108,7 @@ describe('Data Export and Import API', () => {
       expect(res.body).toHaveProperty('llm_settings')
       expect(res.body).toHaveProperty('mistakes_log')
       expect(res.body).toHaveProperty('streaks')
-      expect(res.body).toHaveProperty('quiz_attempts')
+      expect(res.body).not.toHaveProperty('quiz_attempts')
       expect(res.body).toHaveProperty('exam_attempts')
     })
 
@@ -205,7 +205,7 @@ describe('Data Export and Import API', () => {
     it('rejects backup missing required tables', async () => {
       const res = await request(app)
         .post('/api/data/import')
-        .send({ topics: [], modules: [] }) // missing many tables
+        .send({ backupVersion: 2, topics: [], modules: [] }) // missing many tables
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/invalid backup/i)
     })
@@ -213,7 +213,7 @@ describe('Data Export and Import API', () => {
     it('rejects backup with non-array table data', async () => {
       const res = await request(app)
         .post('/api/data/import')
-        .send({ topics: 'not-an-array', modules: [], lessons: [], progress: [], messages: [], srs_queue: [], artifacts: [], llm_settings: [], mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [] })
+        .send({ backupVersion: 2, topics: 'not-an-array', modules: [], lessons: [], progress: [], messages: [], srs_queue: [], artifacts: [], llm_settings: [], mistakes_log: [], streaks: [], exam_attempts: [], course_links: [] })
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/invalid backup/i)
     })
@@ -238,23 +238,54 @@ describe('Data Export and Import API', () => {
     it('includes version metadata in export', async () => {
       const res = await request(app).get('/api/data/export')
       expect(res.status).toBe(200)
-      expect(res.body).toHaveProperty('version')
-      expect(res.body.version).toBe('1.1.0')
+      expect(res.body.backupVersion).toBe(2)
       expect(res.body).toHaveProperty('exported_at')
     })
 
-    it('exports course lineage and public quiz fields without private answer keys', async () => {
+    it('exports only incomplete Session resets and sanitized completed checkpoints', async () => {
+      const { topicId, moduleId, lessonId } = seedDatabase()
+      const progress = dbModule.get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
+      const manifest = [{ id: 'jsx-render-elements', title: 'Render JSX elements', kind: 'knowledge', role: 'core', evidence: ['activity', 'checkpoint'] }]
+      dbModule.run('UPDATE modules SET skill_outcomes = ? WHERE id = ?', JSON.stringify(manifest), moduleId)
+      dbModule.run('UPDATE lessons SET outcomes = ?, activity_blocks = ? WHERE id = ?', JSON.stringify(manifest), JSON.stringify({ answerKey: { private: 'activity-key-fixture' } }), lessonId)
+      dbModule.run("UPDATE progress SET state = 'practicing', activity_state = ?, started_at = ?, completed_at = NULL WHERE id = ?", JSON.stringify({ answerKey: 'state-key-fixture', response: 'draft' }), '2026-09-26T12:00:00.000Z', progress.id)
+      dbModule.run('INSERT INTO artifacts (progress_id, content, passed, feedback) VALUES (?, ?, ?, ?)', progress.id, 'completed build', 1, 'Build feedback')
+      dbModule.run('INSERT INTO exam_attempts (topic_id, module_id, questions, answers, evaluation, status, type) VALUES (?, ?, ?, ?, ?, ?, ?)', topicId, moduleId,
+        JSON.stringify({ schemaVersion: 1, publicQuestions: [{ id: 'q1', prompt: 'Which renders JSX?' }], answerKey: { q1: 'ReactDOM.render', private: 'checkpoint-key-fixture' } }),
+        '{"q1":"ReactDOM.render"}', '{"passed":true}', 'passed', 'full')
+      dbModule.run('INSERT INTO exam_attempts (topic_id, module_id, questions, status, type) VALUES (?, ?, ?, ?, ?)', topicId, moduleId,
+        JSON.stringify({ schemaVersion: 1, publicQuestions: [], answerKey: { private: 'pending-key-fixture' } }), 'pending', 'full')
+
+      const res = await request(app).get('/api/data/export')
+
+      expect(res.status).toBe(200)
+      expect(res.body.backupVersion).toBe(2)
+      expect(res.body.modules[0].skill_outcomes).toBe(JSON.stringify(manifest))
+      expect(res.body.lessons[0]).not.toHaveProperty('activity_blocks')
+      expect(res.body.lessons[0].outcomes).toBe(JSON.stringify(manifest))
+      expect(res.body.progress[0]).toMatchObject({ state: 'not_started', activity_state: '{}' })
+      expect(res.body.progress[0].started_at).toBeNull()
+      expect(res.body.progress[0].completed_at).toBeNull()
+      expect(res.body.exam_attempts).toHaveLength(1)
+      expect(res.body.exam_attempts[0].status).toBe('passed')
+      expect(JSON.parse(res.body.exam_attempts[0].questions)).toEqual({ schemaVersion: 1, publicQuestions: [{ id: 'q1', prompt: 'Which renders JSX?' }] })
+      expect(res.body.artifacts[0].content).toBe('completed build')
+      expect(JSON.stringify(res.body)).not.toContain('activity-key-fixture')
+      expect(JSON.stringify(res.body)).not.toContain('state-key-fixture')
+      expect(JSON.stringify(res.body)).not.toContain('checkpoint-key-fixture')
+      expect(JSON.stringify(res.body)).not.toContain('pending-key-fixture')
+    })
+
+    it('exports course lineage without retired per-Session quiz data', async () => {
       const { topicId } = seedDatabase()
       const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage, course_focus) VALUES ('React Security', 'active', 'advanced', 1, 'Security')")
       dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, topicId, 'Security', 'security')
-      dbModule.run('INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answers, evaluation, answer_key, format_version) VALUES (?, ?, ?, ?, ?, ?, ?)', topicId, dbModule.get('SELECT id FROM lessons LIMIT 1').id, '[]', '{}', '{"overall":90}', '{"q1":"a"}', 2)
 
       const res = await request(app).get('/api/data/export')
       expect(res.status).toBe(200)
       expect(res.body.course_links).toHaveLength(1)
       expect(res.body.course_links[0]).toMatchObject({ child_topic_id: child.lastInsertRowid, parent_topic_id: topicId, normalized_lane: 'security' })
-      expect(res.body.quiz_attempts[0].format_version).toBe(2)
-      expect(res.body.quiz_attempts[0].answer_key).toBeUndefined()
+      expect(res.body).not.toHaveProperty('quiz_attempts')
       expect(res.body.topics[0]).toHaveProperty('course_kind')
     })
 
@@ -285,10 +316,11 @@ describe('Data Export and Import API', () => {
 
     it('imports a pre-reasoning settings row with the neutral default', async () => {
       const backup = {
+        backupVersion: 2,
         topics: [], modules: [], lessons: [], progress: [], messages: [],
         srs_queue: [], artifacts: [],
         llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', created_at: '2024-01-01 00:00:00' }],
-        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [],
+        mistakes_log: [], streaks: [], exam_attempts: [], course_links: [],
       }
 
       const res = await request(app).post('/api/data/import').send(backup)
@@ -301,20 +333,52 @@ describe('Data Export and Import API', () => {
       })
     })
 
-    it('imports a 1.0.0 backup without course lineage or new assessment fields', async () => {
-      seedDatabase()
-      const exported = (await request(app).get('/api/data/export')).body
-      const legacy = JSON.parse(JSON.stringify(exported))
-      legacy.version = '1.0.0'
-      delete legacy.course_links
-      legacy.topics = legacy.topics.map(({ course_kind, course_stage, course_focus, course_summary, course_completed_at, ...topic }) => topic)
-      legacy.lessons = legacy.lessons.map(({ task_spec, ...lesson }) => lesson)
-      legacy.quiz_attempts = legacy.quiz_attempts.map(({ answer_key, format_version, ...attempt }) => attempt)
+    it('rejects missing, old, and unknown backup versions before changing data', async () => {
+      const { topicId } = seedDatabase()
+      const current = (await request(app).get('/api/data/export')).body
+      const versions = [undefined, 1, '1.1.0', 3, '2']
 
-      const res = await request(app).post('/api/data/import').send(legacy)
+      for (const version of versions) {
+        const backup = JSON.parse(JSON.stringify(current))
+        delete backup.backupVersion
+        if (version !== undefined) backup.backupVersion = version
+        const res = await request(app).post('/api/data/import').send(backup)
+        expect(res.status).toBe(400)
+        expect(res.body.code).toBe('BACKUP_VERSION_UNSUPPORTED')
+        expect(dbModule.get('SELECT title FROM topics WHERE id = ?', topicId).title).toBe('React')
+      }
+    })
+
+    it('normalizes incomplete imported Sessions so their activities can be regenerated', async () => {
+      const { topicId, lessonId } = seedDatabase()
+      dbModule.run("UPDATE progress SET state = 'practicing', activity_state = ?, started_at = ? WHERE topic_id = ? AND lesson_id = ?", '{"currentBlockId":"old-block"}', '2026-09-26T12:00:00.000Z', topicId, lessonId)
+      const backup = (await request(app).get('/api/data/export')).body
+
+      const res = await request(app).post('/api/data/import').send(backup)
+
       expect(res.status).toBe(200)
-      expect(dbModule.get('SELECT course_kind, course_stage, course_focus FROM topics')).toMatchObject({ course_kind: 'core', course_stage: 0, course_focus: '' })
-      expect(dbModule.get('SELECT COUNT(*) AS count FROM course_links').count).toBe(0)
+      expect(dbModule.get('SELECT state, activity_state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)).toEqual({ state: 'not_started', activity_state: '{}' })
+      expect(dbModule.get('SELECT activity_blocks FROM lessons WHERE id = ?', lessonId).activity_blocks).toBeNull()
+    })
+
+    it('rejects private activity and checkpoint documents before replacing existing data', async () => {
+      const { topicId, moduleId, lessonId } = seedDatabase()
+      const backup = (await request(app).get('/api/data/export')).body
+      backup.lessons[0].activity_blocks = JSON.stringify({ answerKey: { q1: 'private' } })
+      backup.exam_attempts = [{
+        topic_id: topicId,
+        module_id: moduleId,
+        questions: JSON.stringify({ schemaVersion: 1, publicQuestions: [], answerKey: { private: 'private-checkpoint-fixture' } }),
+        status: 'passed',
+        type: 'full',
+      }]
+
+      const res = await request(app).post('/api/data/import').send(backup)
+
+      expect(res.status).toBe(400)
+      expect(res.text).not.toContain('private-checkpoint-fixture')
+      expect(dbModule.get('SELECT title FROM topics WHERE id = ?', topicId).title).toBe('React')
+      expect(dbModule.get('SELECT activity_blocks FROM lessons WHERE id = ?', lessonId).activity_blocks).toBeNull()
     })
 
     it('rejects answer keys and invalid lineage before replacing existing data', async () => {
@@ -351,16 +415,19 @@ describe('Data Export and Import API', () => {
       }
     })
 
-    it('discards unresolved mixed attempts and returns pending progress to practice', async () => {
+    it('does not import legacy per-Session quiz attempts', async () => {
       const { topicId, lessonId } = seedDatabase()
-      dbModule.run("UPDATE progress SET state = 'quiz_pending' WHERE topic_id = ? AND lesson_id = ?", topicId, lessonId)
-      dbModule.run('INSERT INTO quiz_attempts (topic_id, lesson_id, questions, answers, evaluation, format_version) VALUES (?, ?, ?, ?, ?, ?)', topicId, lessonId, '[]', '{}', null, 2)
       const backup = (await request(app).get('/api/data/export')).body
 
+      const emptyLegacyField = await request(app).post('/api/data/import').send({ ...backup, quiz_attempts: [] })
+      expect(emptyLegacyField.status).toBe(400)
+
+      backup.quiz_attempts = [{ topic_id: topicId, lesson_id: lessonId, questions: '[]' }]
+
       const res = await request(app).post('/api/data/import').send(backup)
-      expect(res.status).toBe(200)
+      expect(res.status).toBe(400)
       expect(dbModule.get('SELECT COUNT(*) AS count FROM quiz_attempts').count).toBe(0)
-      expect(dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).state).toBe('practicing')
+      expect(dbModule.get('SELECT title FROM topics WHERE id = ?', topicId).title).toBe('React')
     })
 
     it('round-trips branches and task evidence', async () => {
@@ -377,15 +444,17 @@ describe('Data Export and Import API', () => {
       expect(res.body.counts.artifacts).toBe(1)
       expect(dbModule.get('SELECT course_focus FROM topics WHERE id = ?', child.lastInsertRowid).course_focus).toBe('Security')
       expect(dbModule.get('SELECT feedback FROM artifacts').feedback).toBe('Good evidence')
+      expect(dbModule.get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId).state).toBe('passed')
     })
 
     it('drops legacy api_key fields but rejects OAuth credentials before replacing any data', async () => {
       seedDatabase()
       const backup = {
+        backupVersion: 2,
         topics: [], modules: [], lessons: [], progress: [], messages: [],
         srs_queue: [], artifacts: [],
         llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', api_key: 'old-key-fixture' }],
-        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [],
+        mistakes_log: [], streaks: [], exam_attempts: [], course_links: [],
       }
 
       const compatible = await request(app).post('/api/data/import').send(backup)

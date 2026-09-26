@@ -1,0 +1,26 @@
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+@keyframes skeleton-shimmer { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+@keyframes slide-down { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes confetti-fall { from { transform: translateY(-10vh) rotate(0deg); opacity: 1; } to { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
+@keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+.slide-down { animation: slide-down var(--duration-standard) ease-out; }
+.toast-in { animation: toast-in var(--duration-standard) ease-out; }
+.confetti-fall { animation: confetti-fall var(--duration-celebration) ease-out both; }
+.node-transition { transition: fill var(--duration-celebration) ease, stroke var(--duration-celebration) ease, opacity var(--duration-celebration) ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within { scroll-behavior: auto; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+  }
+  .node-transition, .confetti-fall, .slide-down, .toast-in {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

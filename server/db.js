@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3'
-import { randomUUID } from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -72,6 +71,7 @@ export function initSchema() {
           estimated_time INTEGER,
           outcomes TEXT,
           prerequisites TEXT,
+          activity_blocks TEXT,
           artifact_required INTEGER DEFAULT 0,
           artifact_type TEXT,
           artifact_rubric TEXT,
@@ -86,6 +86,7 @@ export function initSchema() {
           quiz_score INTEGER,
           quiz_attempts INTEGER DEFAULT 0,
           artifact_passed INTEGER DEFAULT 0,
+          activity_state TEXT NOT NULL DEFAULT '{}',
           started_at DATETIME,
           completed_at DATETIME,
           FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
@@ -484,34 +485,6 @@ export function initSchema() {
           WHERE state IN ('queued', 'running', 'retrying');
       `)
 
-      const legacyGenerating = db.prepare(`
-        SELECT id, curriculum_generation_token, curriculum_generation_started_at
-        FROM topics
-        WHERE curriculum_state = 'generating'
-          AND NOT EXISTS (
-            SELECT 1 FROM curriculum_generation_jobs jobs
-            WHERE jobs.topic_id = topics.id
-              AND jobs.state IN ('queued', 'running', 'retrying')
-          )
-      `).all()
-      const insert = db.prepare(`
-        INSERT INTO curriculum_generation_jobs
-          (id, topic_id, state, provider, model, reasoning_effort, next_attempt_at, deadline_at, created_at, updated_at)
-        VALUES (?, ?, 'queued', NULL, NULL, NULL, CURRENT_TIMESTAMP,
-                datetime(COALESCE(?, CURRENT_TIMESTAMP), '+25 minutes'),
-                COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      `)
-      const existingJob = db.prepare('SELECT 1 FROM curriculum_generation_jobs WHERE id = ?')
-      const updateToken = db.prepare('UPDATE topics SET curriculum_generation_token = ? WHERE id = ?')
-      for (const topic of legacyGenerating) {
-        let jobId = topic.curriculum_generation_token || randomUUID()
-        if (existingJob.get(jobId)) jobId = randomUUID()
-        const startedAtMs = Date.parse(topic.curriculum_generation_started_at || '')
-        const startedAt = Number.isFinite(startedAtMs) ? new Date(startedAtMs).toISOString() : null
-        insert.run(jobId, topic.id, startedAt, startedAt)
-        if (!topic.curriculum_generation_token || topic.curriculum_generation_token !== jobId) updateToken.run(jobId, topic.id)
-      }
-
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration015)
     })()
   }
@@ -539,6 +512,21 @@ export function initSchema() {
         if (!/duplicate column name/i.test(err.message)) throw err
       }
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration017)
+    })()
+  }
+
+  const migration018 = '018_add_structured_activities'
+  const check018 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration018)
+  if (!check018) {
+    db.transaction(() => {
+      const columnExists = (table, column) => db.prepare(`PRAGMA table_info("${table}")`).all().some((entry) => entry.name === column)
+      if (!columnExists('lessons', 'activity_blocks')) db.exec('ALTER TABLE lessons ADD COLUMN activity_blocks TEXT')
+      if (!columnExists('progress', 'activity_state')) db.exec("ALTER TABLE progress ADD COLUMN activity_state TEXT NOT NULL DEFAULT '{}'")
+
+      db.exec('DELETE FROM course_links')
+      db.exec('DELETE FROM topics')
+      db.exec('DELETE FROM streaks')
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration018)
     })()
   }
 }

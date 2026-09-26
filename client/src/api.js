@@ -1,5 +1,20 @@
 const API_BASE = 'http://localhost:3200'
 
+async function structuredRequest(url, options) {
+  const res = options === undefined ? await fetch(url) : await fetch(url, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const error = new Error(body.error || `HTTP ${res.status}`)
+    error.code = body.code
+    error.retryable = body.retryable
+    error.latestState = body.latestState
+    error.status = res.status
+    error.body = body
+    throw error
+  }
+  return body
+}
+
 async function settingsRequest(path, options) {
   const res = await fetch(`${API_BASE}/api/settings${path}`, options)
   const body = await res.json().catch(() => ({}))
@@ -9,6 +24,10 @@ async function settingsRequest(path, options) {
 
 export function getLocalDate() {
   return new Date().toLocaleDateString('en-CA')
+}
+
+export function getLocalTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
 export async function getSettings() {
@@ -86,8 +105,9 @@ export async function getDefaultTopic() {
   return res.json()
 }
 
-export async function getDashboard(topicId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard`)
+export async function getDashboard(topicId, localDate = getLocalDate(), timeZone = getLocalTimeZone()) {
+  const query = new URLSearchParams({ localDate, timeZone })
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard?${query}`)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `HTTP ${res.status}`)
@@ -344,179 +364,86 @@ export async function getContinuationReadiness(topicId) {
   return continuationJson(topicId, 'continuation-readiness')
 }
 
-export async function getContinuationOptions(topicId) {
-  return continuationJson(topicId, 'continuation-options', {
+export async function generateContinuation(topicId, { level, timeCommitment }) {
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/continuations/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ level, timeCommitment }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res
+}
+
+export async function tweakContinuation(topicId, { level, timeCommitment, curriculum, request }) {
+  return continuationJson(topicId, 'continuations/tweak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, timeCommitment, curriculum, request }),
+  })
+}
+
+export async function confirmContinuation(topicId, { level, timeCommitment, curriculum }) {
+  return continuationJson(topicId, 'continuations/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, timeCommitment, curriculum }),
+  })
+}
+
+// Lesson Chat API
+export async function getLesson(topicId, lessonId) {
+  const url = `${API_BASE}/api/topics/${topicId}/lessons/${lessonId}`
+  try {
+    return await structuredRequest(url)
+  } catch (error) {
+    if (error.status === 403 && error.body?.locked) return error.body
+    throw error
+  }
+}
+
+export async function ensureActivities(topicId, lessonId) {
+  return structuredRequest(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/activities`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   })
 }
 
-export async function generateContinuation(topicId, { lane, level, timeCommitment }) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/continuations/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ lane, level, timeCommitment }),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res
-}
-
-export async function tweakContinuation(topicId, { lane, level, timeCommitment, curriculum, request }) {
-  return continuationJson(topicId, 'continuations/tweak', {
+export async function completeActivityBlock(topicId, lessonId, blockId, body) {
+  return structuredRequest(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/activities/${encodeURIComponent(blockId)}/complete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lane, level, timeCommitment, curriculum, request }),
+    body: JSON.stringify(body),
   })
 }
 
-export async function confirmContinuation(topicId, { lane, level, timeCommitment, curriculum }) {
-  return continuationJson(topicId, 'continuations/confirm', {
+export async function submitActivityBlock(topicId, lessonId, blockId, body) {
+  return structuredRequest(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/activities/${encodeURIComponent(blockId)}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lane, level, timeCommitment, curriculum }),
+    body: JSON.stringify(body),
   })
 }
 
-export async function getTestOutQuestions(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`)
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
-export async function submitTestOut(topicId, lessonId, answers, localDate) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/test-out`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers, localDate }),
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-// Lesson Chat API
-export async function getLesson(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}`)
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok && !body.locked) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function sendChatMessage(topicId, lessonId, content) {
+export async function sendChatMessage(topicId, lessonId, content, activityBlockId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, ...(activityBlockId ? { activityBlockId } : {}) }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
+    const error = new Error(body.error || `HTTP ${res.status}`)
+    error.code = body.code
+    error.retryable = body.retryable
+    error.latestState = body.latestState
+    error.status = res.status
+    throw error
   }
   return res
-}
-
-export async function continueLesson(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/continue`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res
-}
-
-// Quiz API
-export async function startQuiz(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function getQuiz(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz`)
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function submitQuiz(topicId, lessonId, answers, localDate, attemptId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/quiz/submit`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers, localDate, ...(attemptId ? { attemptId } : {}) }),
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function getRemediationState(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate`)
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function sendRemediateChat(topicId, lessonId, content) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ content }),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res
-}
-
-export async function startRetest(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/retest`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
-}
-
-export async function deferLesson(topicId, lessonId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/lessons/${lessonId}/remediate/defer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return body
 }
 
 // Exam API
@@ -524,7 +451,7 @@ export async function getExam(topicId, moduleId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam`)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -536,7 +463,7 @@ export async function startExam(topicId, moduleId) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -549,7 +476,7 @@ export async function saveExamProgress(topicId, moduleId, answers) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -562,7 +489,7 @@ export async function submitExam(topicId, moduleId, answers, localDate) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -574,20 +501,20 @@ export async function retakeExam(topicId, moduleId) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
 
-export async function startPartialRetest(topicId, moduleId, weakLessons) {
+export async function startPartialRetest(topicId, moduleId, failedOutcomeIds) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ weakLessons }),
+    body: JSON.stringify({ failedOutcomeIds }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }
@@ -600,7 +527,7 @@ export async function submitPartialRetest(topicId, moduleId, retestId, answers, 
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body)
   }
   return body
 }

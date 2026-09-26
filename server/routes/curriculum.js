@@ -4,9 +4,14 @@ import { streamText, generateText, wrapSdkError, LlmClientError } from '../llm/c
 import { requireLlmConfig } from '../utils/llm-config.js'
 import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-options.js'
 import { validateCurriculum as validateCurriculumDraft, collectCurriculumDraft, CurriculumDraftError } from '../utils/curriculum-draft.js'
-import { persistCurriculumInTransaction } from '../utils/course-lineage.js'
+import { persistCurriculumInTransaction, collectLineageOutcomes } from '../utils/course-lineage.js'
+import { publicOutcome } from '../utils/outcome-manifest.js'
 import { normalizePlacementEvaluation, normalizePlacementQuestions, PlacementAssessmentError, placementPublicQuestions } from '../utils/placement-assessment.js'
-import { CurriculumGenerationError, getCurriculumRecovery, parseCurriculumDraft } from '../utils/curriculum-recovery.js'
+import {
+  CurriculumGenerationError,
+  getCurriculumRecovery,
+  parseCurriculumDraft,
+} from '../utils/curriculum-recovery.js'
 import { createCurriculumGenerationService } from '../utils/curriculum-generation.js'
 
 const router = Router()
@@ -90,14 +95,6 @@ function placementResult(assessment) {
   }
 }
 
-function parsePlacementProviderJson(text, message) {
-  try {
-    return JSON.parse(text || '{}')
-  } catch {
-    throw new PlacementAssessmentError(message)
-  }
-}
-
 /**
  * Generate a full curriculum for a topic via LLM.
  */
@@ -105,19 +102,20 @@ async function generateCurriculum(topicTitle, level, timeCommitment, config, sig
   const system = `You are an expert curriculum designer. Generate an adaptive learning curriculum.
 Respond as a stream of JSON text representing a single object with this exact structure:
 {
-  "course": { "kind": "core", "stage": 0, "scope": "80/20 foundation" },
+  "course": { "kind": "core", "stage": 0, "focus": "" },
   "modules": [
     {
       "title": "Module Name",
       "summary": "The practical capability this module builds.",
-      "skill_outcomes": ["..."],
+      "skill_outcomes": [{"id":"stable-kebab-id","title":"...","kind":"knowledge|skill","role":"core|breadth","evidence":["activity|checkpoint|artifact"]}],
       "lessons": [
         {
           "title": "Lesson Name",
           "depth": "Beginner|Intermediate|Advanced",
           "estimated_time": 15,
-          "outcomes": ["By the end of this lesson, the learner can..."],
+          "outcomes": [{"id":"stable-kebab-id","title":"By the end of this session, the learner can...","kind":"knowledge|skill","role":"core|breadth","evidence":["activity|checkpoint|artifact"]}],
           "prerequisites": ["Lesson Name"],
+          "artifact_required": true,
           "task": {
             "title": "Build and verify a small local setup",
             "scenario": "A safe local scenario.",
@@ -140,7 +138,11 @@ Rules:
 - 3-5 modules total.
 - Each module has 3-5 lessons.
 - This is a finite 80/20 foundation course, not an endless syllabus.
-- Every lesson must have depth, estimated_time (minutes), outcomes (1-3 strings), and prerequisites (names of other lessons in the curriculum; empty for foundation lessons).
+- Every Chapter must declare unique outcome objects with stable lowercase kebab-case IDs, plain titles, kind (knowledge or skill), role (core or breadth), and a nonempty evidence subset of activity, checkpoint, and artifact.
+- Every Session outcome must exactly match its full Chapter outcome declaration. Every Chapter includes at least one knowledge and one skill outcome, and at least one core outcome.
+- Skill outcomes must include activity evidence. Each Session teaches one or more Chapter outcomes.
+- Every Session must have depth, estimated_time (minutes), and prerequisites (names of other Sessions in the curriculum; empty for foundation Sessions).
+- Select exactly one or two Builds per Chapter with artifact_required: true and a valid task. Other Sessions set artifact_required: false and omit task.
 - Prerequisites must reference lesson titles that exist in the curriculum.
 - No circular prerequisites. No lesson may list itself as a prerequisite.
 - The curriculum must form a valid DAG.
@@ -157,6 +159,7 @@ Rules:
   })
 }
 
+
 const curriculumGenerationService = createCurriculumGenerationService({
   requireConfig: requireLlmConfig,
   generate: async ({ topic, config, signal, onProgress }) => {
@@ -168,9 +171,12 @@ const curriculumGenerationService = createCurriculumGenerationService({
         throw error instanceof LlmClientError ? error : wrapSdkError(error)
       }
     })()
+    const trackKind = topic.course_kind === 'advanced' ? 'continuation' : 'initial'
     return collectCurriculumDraft(textStream, {
       enforceBounds: true,
       requireTasks: true,
+      trackKind,
+      lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topic.id) : [],
       onChunk: onProgress,
     })
   },
@@ -216,13 +222,12 @@ function assertCurriculumMutable(topicId) {
   if (!topic) return { ok: false, error: curriculumMutationError('Topic not found.') }
   if (topic.status === 'completed') return { ok: false, error: curriculumMutationError('Completed courses cannot be replaced.') }
   const started = get(
-    `SELECT 1 FROM progress WHERE topic_id = ? AND (state <> 'not_started' OR coalesce(current_chunk, 0) > 0 OR coalesce(quiz_attempts, 0) > 0 OR artifact_passed = 1) LIMIT 1`,
+    `SELECT 1 FROM progress WHERE topic_id = ? AND (state <> 'not_started' OR artifact_passed = 1) LIMIT 1`,
     topicId,
   )
   const persisted = [
     ['messages', 'topic_id'],
     ['artifacts', 'progress_id'],
-    ['quiz_attempts', 'topic_id'],
     ['exam_attempts', 'topic_id'],
   ].some(([table, column]) => {
     if (column === 'progress_id') return get(`SELECT 1 FROM ${table} a JOIN progress p ON p.id = a.progress_id WHERE p.topic_id = ? LIMIT 1`, topicId)
@@ -285,29 +290,16 @@ router.post('/topics/:id/profile', (req, res) => {
 
     const profileChanged = topic.level !== effectiveLevel || topic.time_per_week !== canonicalTimeCommitment
     if (!topic.has_modules && (profileChanged || topic.curriculum_state === 'setup')) {
-      transaction(() => {
-        run(
-          `UPDATE topics
-           SET level = ?, time_per_week = ?, curriculum_state = 'ready_to_generate',
-               curriculum_draft = NULL, curriculum_error = NULL,
-               curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
-           WHERE id = ?`,
-          effectiveLevel,
-          canonicalTimeCommitment,
-          topicId,
-        )
-        if (profileChanged) {
-          run(
-            `UPDATE curriculum_generation_jobs
-             SET state = 'failed', lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL,
-                 error_code = 'PROFILE_CHANGED',
-                 error_message = 'Learner profile changed before roadmap generation completed.',
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE topic_id = ? AND state IN ('queued', 'running', 'retrying')`,
-            topicId,
-          )
-        }
-      })()
+      run(
+        `UPDATE topics
+         SET level = ?, time_per_week = ?, curriculum_state = 'ready_to_generate',
+             curriculum_draft = NULL, curriculum_error = NULL,
+             curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
+         WHERE id = ?`,
+        effectiveLevel,
+        canonicalTimeCommitment,
+        topicId,
+      )
     } else {
       run('UPDATE topics SET level = ?, time_per_week = ? WHERE id = ?', effectiveLevel, canonicalTimeCommitment, topicId)
     }
@@ -365,23 +357,20 @@ router.post('/topics/:id/placement/start', async (req, res) => {
     const system = `You are designing a placement assessment for the topic "${topic.title}".
 The learner claims ${level} proficiency. Generate exactly 6 concise questions: exactly five target questions that assess practical competence at the claimed level, plus exactly one stretch question.
 Target questions must stay within ${level} expectations and must not assume next-level knowledge. For an Intermediate learner, the stretch question may assess Advanced competence. For an Advanced learner, the stretch question must assess deeper Advanced judgment without inventing an Expert level.
-    Return strict JSON with this shape:
-    {
-      "questions": [
-        { "id": "q1", "text": "...", "type": "objective", "difficulty_band": "target", "rubric": "What a strong answer must demonstrate" },
-        { "id": "q6", "text": "...", "type": "objective", "difficulty_band": "stretch", "rubric": "What a strong answer must demonstrate" }
-      ]
-    }
-    Mark exactly five questions difficulty_band target and one difficulty_band stretch. Every question must be a free-response practical scenario that asks for a decision, reasoning, trade-off, example, or diagnostic process. Do not ask trivia or provide answer choices. Every question must have a concrete rubric. Do not include markdown.`
+Return strict JSON with this shape:
+{
+  "questions": [
+    { "id": "q1", "text": "...", "type": "multiple_choice", "difficulty_band": "target", "options": [{"value":"A","label":"..."},{"value":"B","label":"..."}], "correct_answer": "A" },
+    { "id": "q6", "text": "...", "type": "objective", "difficulty_band": "stretch", "rubric": "What a strong answer must demonstrate" }
+  ]
+}
+Include at least 2 multiple_choice and 2 objective questions. Mark exactly five questions difficulty_band target and one difficulty_band stretch. Multiple-choice options must have 2-5 choices and one correct_answer value. Objective questions must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
     const result = await generateText({
       ...llmRequestOptions(config),
       system,
       messages: [{ role: 'user', content: 'Generate placement assessment questions.' }],
     })
-    const questions = normalizePlacementQuestions(
-      parsePlacementProviderJson(result?.text, 'The placement provider returned malformed assessment JSON.'),
-      level,
-    )
+    const questions = normalizePlacementQuestions(JSON.parse(result.text || '{}'), level)
 
     const assessmentId = transaction(() => {
       run('UPDATE placement_assessments SET status = ? WHERE topic_id = ? AND status = ?', 'expired', topicId, 'pending')
@@ -459,7 +448,7 @@ ${JSON.stringify(answers)}`
       system: evaluationPrompt,
       messages: [{ role: 'user', content: 'Evaluate this placement assessment.' }],
     })
-    const parsed = parsePlacementProviderJson(result?.text, 'The placement provider returned malformed evaluation JSON.')
+    const parsed = JSON.parse(result.text || '{}')
     const placementScores = normalizePlacementEvaluation({
       requestedLevel: assessment.requested_level,
       questions,
@@ -516,7 +505,7 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
     const topic = get(
-      'SELECT id, title, level, time_per_week, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
+      'SELECT id, title, level, time_per_week, course_kind, curriculum_state, curriculum_draft FROM topics WHERE id = ?',
       topicId,
     )
     if (!topic) {
@@ -530,19 +519,16 @@ router.post('/topics/:id/curriculum/generate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const generation = curriculumGenerationService.enqueue(topicId)
-    return res.status(202).json({ generation })
+    return res.status(202).json({ generation: curriculumGenerationService.enqueue(topicId) })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/generate error:', err.message)
-    if (!res.headersSent) {
-      if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
-        return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      if (err instanceof LlmClientError) {
-        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      return res.status(500).json({ error: 'Failed to generate curriculum.' })
+    if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
+      return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
+    if (err instanceof LlmClientError) {
+      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
+    }
+    return res.status(500).json({ error: 'Failed to generate curriculum.' })
   }
 })
 
@@ -569,7 +555,13 @@ router.post('/topics/:id/curriculum/confirm', (req, res) => {
     const existingModules = get('SELECT COUNT(*) AS count FROM modules WHERE topic_id = ?', topicId)?.count || 0
     const existingTask = get("SELECT 1 FROM lessons l JOIN modules m ON l.module_id = m.id WHERE m.topic_id = ? AND COALESCE(l.task_spec, '') <> '' LIMIT 1", topicId)
     const boundedCourse = existingModules === 0 || Boolean(existingTask) || curriculum.course !== undefined
-    const validation = validateCurriculumDraft(curriculum, { enforceBounds: boundedCourse, requireTasks: boundedCourse })
+    const trackKind = topic.course_kind === 'advanced' ? 'continuation' : 'initial'
+    const validation = validateCurriculumDraft(curriculum, {
+      enforceBounds: boundedCourse,
+      requireTasks: boundedCourse,
+      trackKind,
+      lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+    })
     if (!validation.valid) {
       return res.status(400).json({ error: validation.error })
     }
@@ -614,12 +606,11 @@ router.get('/topics/:id/curriculum/recovery', (req, res) => {
     const topicId = Number(req.params.id)
     const recovery = getCurriculumRecovery(topicId)
     const generation = curriculumGenerationService.getTopicStatus(topicId)
+    const active = generation && ['queued', 'running', 'retrying'].includes(generation.state)
     return res.json({
       ...recovery,
       generation,
-      resumeAvailable: generation?.state && ['queued', 'running', 'retrying'].includes(generation.state)
-        ? false
-        : recovery.resumeAvailable,
+      resumeAvailable: active ? false : recovery.resumeAvailable,
     })
   } catch (err) {
     console.error('GET /api/topics/:id/curriculum/recovery error:', err.message)
@@ -630,10 +621,6 @@ router.get('/topics/:id/curriculum/recovery', (req, res) => {
   }
 })
 
-/**
- * GET /api/topics/:id/curriculum/generation/:jobId/events
- * Stream durable generation state with heartbeats until it reaches a terminal state.
- */
 router.get('/topics/:id/curriculum/generation/:jobId/events', (req, res) => {
   const topicId = Number(req.params.id)
   const jobId = String(req.params.jobId || '')
@@ -663,7 +650,8 @@ router.get('/topics/:id/curriculum/generation/:jobId/events', (req, res) => {
     if (['completed', 'failed'].includes(payload.state)) close()
   }
   unsubscribe = curriculumGenerationService.subscribe(jobId, send)
-  if (!closed) {
+  if (closed) unsubscribe()
+  else {
     heartbeat = setInterval(() => {
       if (!closed && !res.writableEnded) res.write(': heartbeat\n\n')
     }, 15_000)
@@ -699,7 +687,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
 
       const lessonsWithProgress = lessons.map((lesson) => {
         const prog = get(
-          'SELECT state, quiz_score, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?',
+          'SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?',
           topicId, lesson.id
         )
         let prerequisites = []
@@ -726,13 +714,11 @@ router.get('/topics/:id/curriculum', (req, res) => {
           title: lesson.title,
           depth: lesson.depth,
           estimated_time: lesson.estimated_time,
-          outcomes,
+          outcomes: outcomes.map(publicOutcome).filter(Boolean),
           prerequisites,
           artifact_required: !!lesson.artifact_required,
           task_spec: taskSpec,
           state: prog?.state || 'not_started',
-          quiz_score: prog?.quiz_score ?? null,
-          quiz_attempts: prog?.quiz_attempts ?? 0,
         }
       })
 
@@ -740,7 +726,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
         id: mod.id,
         title: mod.title,
         summary: mod.summary,
-        skill_outcomes: mod.skill_outcomes,
+        skill_outcomes: (() => { try { return JSON.parse(mod.skill_outcomes || '[]').map(publicOutcome).filter(Boolean) } catch { return [] } })(),
         lessons: lessonsWithProgress,
       }
     })
@@ -786,7 +772,7 @@ router.post('/topics/:id/curriculum/tweak', async (req, res) => {
       existingLessons.push(...lessons.map((l) => ({
         moduleTitle: mod.title,
         ...l,
-        outcomes: JSON.parse(l.outcomes || '[]'),
+        outcomes: JSON.parse(l.outcomes || '[]').map(publicOutcome).filter(Boolean),
         prerequisites: JSON.parse(l.prerequisites || '[]'),
         task: l.task_spec ? JSON.parse(l.task_spec) : undefined,
       })))
@@ -839,22 +825,26 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
 
     const requestAbort = createRequestAbortSignal(req, res)
     try {
-      const streamResult = await streamText({
+      const result = await streamText({
         ...llmRequestOptions(config, { signal: requestAbort.signal }),
         system,
         messages: [{ role: 'user', content: userContent }],
       })
+      const textStream = (async function* () {
+        try {
+          for await (const chunk of result.textStream) yield chunk
+        } catch (error) {
+          throw error instanceof LlmClientError ? error : wrapSdkError(error)
+        }
+      })()
 
-      const updated = await collectCurriculumDraft(
-        (async function* () {
-          try {
-            for await (const chunk of streamResult.textStream) yield chunk
-          } catch (error) {
-            throw error instanceof LlmClientError ? error : wrapSdkError(error)
-          }
-        })(),
-        { enforceBounds: taskBackedCourse, requireTasks: taskBackedCourse },
-      )
+      const trackKind = get('SELECT course_kind FROM topics WHERE id = ?', topicId)?.course_kind === 'advanced' ? 'continuation' : 'initial'
+      const updated = await collectCurriculumDraft(textStream, {
+        enforceBounds: taskBackedCourse,
+        requireTasks: taskBackedCourse,
+        trackKind,
+        lineageOutcomes: trackKind === 'continuation' ? collectLineageOutcomes(topicId) : [],
+      })
 
       if (existingModules.length === 0) {
         run(
@@ -890,7 +880,7 @@ ${taskBackedCourse ? '- Keep every task on a local, open-source, free-public, or
 router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
   try {
     const topicId = Number(req.params.id)
-    const topic = get('SELECT title, level, time_per_week FROM topics WHERE id = ?', topicId)
+    const topic = get('SELECT title, level, time_per_week, course_kind FROM topics WHERE id = ?', topicId)
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found.' })
     }
@@ -902,176 +892,16 @@ router.post('/topics/:id/curriculum/regenerate', async (req, res) => {
       return res.status(400).json({ error: 'Learner profile not set. Please answer setup questions first.' })
     }
 
-    const generation = curriculumGenerationService.enqueue(topicId)
-    return res.status(202).json({ generation })
+    return res.status(202).json({ generation: curriculumGenerationService.enqueue(topicId) })
   } catch (err) {
     console.error('POST /api/topics/:id/curriculum/regenerate error:', err.message)
-    if (!res.headersSent) {
-      if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
-        return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      if (err instanceof LlmClientError) {
-        return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-      }
-      return res.status(500).json({ error: 'Failed to regenerate curriculum.' })
+    if (err instanceof CurriculumGenerationError || err instanceof CurriculumDraftError) {
+      return res.status(err.status || 400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
-  }
-})
-
-/**
- * GET /api/topics/:id/lessons/:lid/test-out
- * Get test-out quiz questions for a lesson.
- */
-router.get('/topics/:id/lessons/:lid/test-out', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-
-    const topic = get('SELECT title FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.title, l.outcomes, l.task_spec FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-    if (lesson.task_spec) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
-
-    const config = requireLlmConfig()
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const system = `You are an assessment designer. Generate 1-3 concise diagnostic questions to test whether a learner has already mastered a specific lesson.
-Respond in strict JSON:
-{
-  "questions": [
-    { "text": "Question text?", "type": "open" }
-  ]
-}
-Questions should cover the lesson's learning outcomes directly. Do not include markdown formatting.`
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}` }],
-    })
-
-    const parsed = JSON.parse(result.text)
-    return res.json({ questions: parsed.questions || [] })
-  } catch (err) {
-    console.error('GET /api/topics/:id/lessons/:lid/test-out error:', err.message)
     if (err instanceof LlmClientError) {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
-    return res.status(500).json({ error: 'Failed to generate test-out questions.' })
-  }
-})
-
-/**
- * POST /api/topics/:id/lessons/:lid/test-out
- * Evaluate test-out answers.
- */
-router.post('/topics/:id/lessons/:lid/test-out', async (req, res) => {
-  try {
-    const topicId = Number(req.params.id)
-    const lessonId = Number(req.params.lid)
-    const { answers } = req.body
-
-    const topic = get('SELECT title FROM topics WHERE id = ?', topicId)
-    if (!topic) {
-      return res.status(404).json({ error: 'Topic not found.' })
-    }
-
-    const lesson = get(
-      `SELECT l.title, l.outcomes, l.task_spec FROM lessons l
-       JOIN modules m ON l.module_id = m.id
-       WHERE l.id = ? AND m.topic_id = ?`,
-      lessonId, topicId
-    )
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found.' })
-    }
-    if (lesson.task_spec) return res.status(409).json({ error: 'Task-backed lessons cannot be tested out. Complete the task and quiz.', code: 'TASK_REQUIRED' })
-
-    if (!Array.isArray(answers) || answers.length === 0) {
-      return res.status(400).json({ error: 'Answers are required.' })
-    }
-
-    const config = requireLlmConfig()
-
-    let outcomes = []
-    try {
-      outcomes = lesson.outcomes ? JSON.parse(lesson.outcomes) : []
-    } catch {
-      outcomes = []
-    }
-
-    const system = `You are an evaluator. Assess the user's answers to diagnostic questions about a lesson.
-Respond in strict JSON:
-{
-  "passed": true|false,
-  "score": 0-100,
-  "feedback": "Overall feedback",
-  "gaps": ["Specific gap if any"]
-}
-Pass requires score >= 80 AND no critical gaps. Be strict but fair. Do not include markdown formatting.`
-
-    const userContent = `Lesson: ${lesson.title}\nOutcomes: ${outcomes.join(', ')}\n\nUser answers:\n${answers.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
-
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: userContent }],
-    })
-
-    const parsed = JSON.parse(result.text)
-    const passed = parsed.passed === true && (parsed.score || 0) >= 80 && (parsed.gaps || []).length === 0
-
-    if (passed) {
-      const existing = get('SELECT id FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
-      if (existing) {
-        run(
-          'UPDATE progress SET state = ?, quiz_score = ?, completed_at = ? WHERE id = ?',
-          'tested_out',
-          parsed.score || 100,
-          new Date().toISOString(),
-          existing.id
-        )
-      } else {
-        run(
-          'INSERT INTO progress (topic_id, lesson_id, state, quiz_score, completed_at) VALUES (?, ?, ?, ?, ?)',
-          topicId,
-          lessonId,
-          'tested_out',
-          parsed.score || 100,
-          new Date().toISOString()
-        )
-      }
-    }
-
-    return res.json({
-      passed,
-      score: parsed.score || 0,
-      feedback: parsed.feedback || '',
-      gaps: parsed.gaps || [],
-    })
-  } catch (err) {
-    console.error('POST /api/topics/:id/lessons/:lid/test-out error:', err.message)
-    if (err instanceof LlmClientError) {
-      return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
-    }
-    return res.status(500).json({ error: 'Failed to evaluate test-out answers.' })
+    return res.status(500).json({ error: 'Failed to regenerate curriculum.' })
   }
 })
 
