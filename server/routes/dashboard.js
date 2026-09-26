@@ -186,6 +186,7 @@ function getTopicMistakes(topicId) {
 router.get('/topics', (_req, res) => {
   try {
     const topics = all('SELECT * FROM topics ORDER BY last_active_at DESC, created_at DESC')
+    const protectedTopicIds = new Set(all('SELECT DISTINCT parent_topic_id FROM course_links').map((row) => row.parent_topic_id))
     const enriched = topics.map((topic) => {
       const stats = getTopicProgress(topic.id)
       return {
@@ -194,6 +195,7 @@ router.get('/topics', (_req, res) => {
         status: topic.status,
         last_active_at: topic.last_active_at,
         created_at: topic.created_at,
+        hasChildren: protectedTopicIds.has(topic.id),
         difficulty: topic.difficulty || 'normal',
         consecutivePasses: topic.consecutive_passes || 0,
         consecutiveFails: topic.consecutive_fails || 0,

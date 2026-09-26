@@ -11,6 +11,10 @@ export function getLocalDate() {
   return new Date().toLocaleDateString('en-CA')
 }
 
+export function getLocalTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+}
+
 export async function getSettings() {
   return settingsRequest('')
 }
@@ -86,8 +90,9 @@ export async function getDefaultTopic() {
   return res.json()
 }
 
-export async function getDashboard(topicId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard`)
+export async function getDashboard(topicId, localDate = getLocalDate(), timeZone = getLocalTimeZone()) {
+  const query = new URLSearchParams({ localDate, timeZone })
+  const res = await fetch(`${API_BASE}/api/topics/${topicId}/dashboard?${query}`)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `HTTP ${res.status}`)

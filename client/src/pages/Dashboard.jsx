@@ -1,175 +1,106 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  getTopics,
-  getDashboard,
   deleteTopic,
-  selectTopic,
+  getDashboard,
   getDefaultTopic,
-  getReviewCount,
-  getStreak,
   getLocalDate,
+  getLocalTimeZone,
+  getReviewCount,
+  getTopics,
+  selectTopic,
 } from '../api.js'
-import CompetenceGraph from '../components/CompetenceGraph.jsx'
 import AppHeader from '../components/AppHeader.jsx'
 import ExamPanel from '../components/ExamPanel.jsx'
-import { SkeletonGraph, SkeletonCard } from '../components/Skeleton.jsx'
+import FocusAreas from '../components/trail/FocusAreas.jsx'
+import TodayCard from '../components/trail/TodayCard.jsx'
+import TrailMap from '../components/trail/TrailMap.jsx'
+import WeeklyRhythm from '../components/trail/WeeklyRhythm.jsx'
+import { SkeletonCard } from '../components/Skeleton.jsx'
 
-const ACTIONABLE_LESSON_STATES = new Set(['not_started', 'practicing', 'quiz_pending', 'remediating'])
-
-function getNextLesson(modules = []) {
-  const lessons = modules.flatMap((mod) => Array.isArray(mod.lessons) ? mod.lessons : [])
-  const available = lessons.filter((lesson) => !lesson.locked && ACTIONABLE_LESSON_STATES.has(lesson.state))
-  return available.find((lesson) => lesson.state === 'practicing') || available[0] || null
+function requestedTopicId(search) {
+  const value = new URLSearchParams(search).get('topicId')
+  if (!value || !/^[1-9]\d*$/.test(value)) return null
+  const id = Number(value)
+  return Number.isSafeInteger(id) ? id : null
 }
 
-function GlobalStats({ topics }) {
-  if (!topics || topics.length === 0) return null
-  const activeTopicCount = topics.filter((topic) => topic.status === 'active' || !topic.status).length
-  const totalPassed = topics.reduce((sum, t) => sum + (t.passedLessons || 0), 0)
-  const totalLessons = topics.reduce((sum, t) => sum + (t.totalLessons || 0), 0)
-  const masteredTopics = topics.filter((t) => (t.progress || 0) >= 100).length
+function TopicSwitcher({ topics, activeTopicId, onSelect, onDelete }) {
+  if (!topics?.length) return null
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-      <div className="ui-surface ui-surface-flat p-3 text-center">
-        <div className="text-xl font-bold ui-text">{activeTopicCount}</div>
-        <div className="text-xs ui-text-muted">Active Topics</div>
+    <nav className="mb-6" aria-label="Your Trails">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold ui-text">Your Trails</h2>
+        <Link className="ui-button ui-button-quiet min-h-10 px-2 text-sm" to="/onboarding">New Trail</Link>
       </div>
-      <div className="ui-surface ui-surface-flat p-3 text-center">
-        <div className="text-xl font-bold ui-text">{totalPassed}</div>
-        <div className="text-xs ui-text-muted">Lessons Mastered</div>
-      </div>
-      <div className="ui-surface ui-surface-flat p-3 text-center">
-        <div className="text-xl font-bold ui-text">{totalLessons > 0 ? Math.floor((totalPassed / totalLessons) * 100) : 0}%</div>
-        <div className="text-xs ui-text-muted">Overall Progress</div>
-      </div>
-      <div className="ui-surface ui-surface-flat p-3 text-center">
-        <div className="text-xl font-bold ui-text">{masteredTopics}</div>
-        <div className="text-xs ui-text-muted">Topics Completed</div>
-      </div>
-    </div>
+      <ul className="flex gap-2 overflow-x-auto pb-2">
+        {topics.map((topic) => (
+          <li key={topic.id} className="flex shrink-0 items-center gap-1 rounded-xl border ui-border p-1">
+            <button
+              type="button"
+              className="min-h-10 rounded-lg px-3 text-left text-sm ui-text"
+              aria-pressed={topic.id === activeTopicId}
+              onClick={() => onSelect(topic.id)}
+              style={topic.id === activeTopicId ? { backgroundColor: 'var(--ui-action-soft)' } : undefined}
+            >
+              <span className="block max-w-48 truncate font-medium">{topic.title}</span>
+              <span className="block text-xs ui-text-muted">
+                {topic.status === 'completed' ? 'Track complete' : topic.status === 'archived' ? 'Archived' : `${Math.min(100, Math.max(0, topic.progress || 0))}% complete`}
+              </span>
+            </button>
+            {!topic.hasChildren && (
+              <button
+                type="button"
+                className="ui-button ui-button-quiet min-h-10 px-2 text-xs"
+                aria-label={`Delete Trail ${topic.title}`}
+                onClick={() => onDelete(topic.id)}
+              >
+                Delete
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </nav>
   )
 }
 
-function EmptyState({ onStart }) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
-      <div className="text-6xl mb-4">🌱</div>
-      <h2 className="text-2xl font-bold ui-text mb-2 text-center">You have not started learning anything yet</h2>
-      <p className="ui-text-secondary mb-6 text-center max-w-md text-sm sm:text-base">
-        Pick a topic and we will design a personalized competence graph just for you.
-      </p>
-      <button
-        onClick={onStart}
-        className="ui-button ui-button-primary"
-      >
-        Start Learning
-      </button>
-    </div>
-  )
-}
-
-function TopicCard({ topic, isActive, onClick, onDelete, onResume }) {
-  const progress = topic.progress ?? 0
-  const courseLabel = topic.courseStage > 0
-    ? `Advanced · Stage ${topic.courseStage}`
-    : 'Core course'
-  const recoveryAction = topic.curriculumState === 'setup'
-    ? 'Continue setup'
-    : topic.curriculumState === 'draft_ready'
-      ? 'Review roadmap'
-      : 'Resume roadmap generation'
-  return (
-    <div
-      data-testid="topic-card"
-      className="ui-surface ui-surface-raised cursor-pointer p-4 transition-shadow hover:shadow-md"
-      style={isActive ? { outline: '2px solid var(--ui-focus)', outlineOffset: '2px' } : undefined}
-      onClick={(event) => {
-        if (!event.target.closest('button')) onClick(topic.id)
-      }}
-    >
-      <div className="flex items-start gap-2">
-        <button
-          type="button"
-          onClick={() => onClick(topic.id)}
-          className="ui-topic-select min-w-0 flex-1"
-          aria-label={`${topic.title}, ${progress}% complete`}
-          aria-pressed={isActive}
-        >
-          <span className="mb-2 flex items-center justify-between gap-2">
-            <span role="heading" aria-level="3" className="font-semibold ui-text truncate min-w-0 flex-1">{topic.title}</span>
-            <span className="text-sm font-medium ui-text-secondary shrink-0">{progress}%</span>
-          </span>
-          <span className="ui-progress-track mb-2 block">
-            <span className="ui-progress-value block" style={{ width: `${progress}%` }} />
-          </span>
-          <span className="block text-xs ui-text-muted truncate">
-            {topic.passedLessons ?? 0} / {topic.totalLessons ?? 0} lessons
-          </span>
-          <span className="mt-1 block text-xs ui-text-muted truncate">{courseLabel}{topic.courseFocus ? ` · ${topic.courseFocus}` : ''}</span>
-          {topic.resumeAvailable && onResume && (
-            <span className="mt-2 block text-xs font-semibold text-indigo-700">Roadmap needs attention</span>
-          )}
-        </button>
-        {topic.resumeAvailable && onResume && (
-          <button
-            type="button"
-            onClick={() => onResume(topic.id)}
-            className="ui-button ui-button-secondary mt-1 shrink-0 px-2 py-1 text-xs"
-          >
-            {recoveryAction}
-          </button>
-        )}
-        {onDelete && (
-          <button
-            onClick={() => onDelete(topic.id)}
-            className="ui-button ui-button-destructive mt-1 shrink-0 px-2 py-1 text-xs"
-            aria-label={`Delete topic ${topic.title}`}
-          >
-            Delete
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ModuleCard({ mod, topicId, onStartExam }) {
-  const allPassed = mod.examReady
-  const isCompleted = mod.status === 'completed'
+function ReviewDue({ summary }) {
+  const totalDue = Number.isFinite(summary?.totalDue) ? Math.max(0, summary.totalDue) : 0
+  const overdue = Number.isFinite(summary?.overdue) ? Math.max(0, summary.overdue) : 0
+  const dueToday = Number.isFinite(summary?.dueToday) ? Math.max(0, summary.dueToday) : 0
 
   return (
-    <div className="ui-surface ui-surface-raised p-4 mb-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold ui-text">{mod.title}</h3>
-        {isCompleted && (
-          <span className="ui-status ui-status-success">
-            Completed
-          </span>
-        )}
-        {allPassed && !isCompleted && (
-          <span className="ui-status ui-status-progress">
-            Exam Ready
-          </span>
-        )}
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-xs ui-text-muted">
-          {mod.lessons.filter((l) => ['passed', 'tested_out'].includes(l.state)).length} / {mod.lessons.length} lessons passed
+    <section className="ui-surface ui-surface-raised p-4 sm:p-5" aria-label="Reviews due">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold ui-text">Reviews due</h2>
+          {totalDue > 0 ? (
+            <p className="mt-1 text-sm ui-text-secondary">
+              {overdue > 0 ? `${overdue} overdue · ` : ''}{dueToday} due today
+            </p>
+          ) : <p className="mt-1 text-sm ui-text-secondary">You’re clear for now.</p>}
+        </div>
+        <span className="rounded-full px-2.5 py-1 text-sm font-semibold ui-text" style={{ backgroundColor: 'var(--ui-surface-alt)' }} aria-label={`${totalDue} items due`}>
+          {totalDue}
         </span>
-        {allPassed && !isCompleted && (
-          <button
-            onClick={() => onStartExam(mod.id)}
-            className="ui-button ui-button-primary text-xs"
-          >
-            Take Exam
-          </button>
-        )}
-        {!allPassed && !isCompleted && mod.lessonsRemaining > 0 && (
-          <span className="text-xs ui-text-muted">{mod.lessonsRemaining} lessons remaining</span>
-        )}
       </div>
+      <Link className="ui-button ui-button-secondary mt-3 min-h-10 text-sm" to="/reviews">
+        {totalDue > 0 ? 'Start retrieval practice' : 'Open reviews'}
+      </Link>
+    </section>
+  )
+}
+
+function DashboardError({ message, onRetry }) {
+  if (!message) return null
+  return (
+    <div className="ui-surface mx-auto mb-4 flex max-w-7xl flex-col items-start gap-3 border p-4 sm:flex-row sm:items-center sm:justify-between" role="alert" style={{ backgroundColor: 'var(--ui-danger-bg)', borderColor: 'var(--ui-danger-border)', color: 'var(--ui-danger-text)' }}>
+      <p className="text-sm">{message}</p>
+      <button type="button" className="ui-button ui-button-secondary min-h-10 shrink-0" onClick={onRetry}>
+        Retry loading Trail
+      </button>
     </div>
   )
 }
@@ -178,416 +109,244 @@ export default function Dashboard() {
   const [topics, setTopics] = useState(null)
   const [activeTopicId, setActiveTopicId] = useState(null)
   const [dashboard, setDashboard] = useState(null)
+  const [reviewCounts, setReviewCounts] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [switchingTopic, setSwitchingTopic] = useState(false)
   const [error, setError] = useState('')
   const [examModuleId, setExamModuleId] = useState(null)
-  const [reviewCounts, setReviewCounts] = useState(null)
-  const [streak, setStreak] = useState(null)
-  const [switchingTopic, setSwitchingTopic] = useState(false)
+  const dashboardRequestRef = useRef(0)
+  const location = useLocation()
   const navigate = useNavigate()
-  const topicSwitchTimerRef = useRef(null)
-
-  const loadTopics = useCallback(async () => {
-    try {
-      const data = await getTopics()
-      setTopics(data.topics)
-      return data.topics
-    } catch (err) {
-      setError(err.message || 'Failed to load topics.')
-      return []
-    }
-  }, [])
 
   const loadDashboard = useCallback(async (topicId) => {
+    const requestId = ++dashboardRequestRef.current
     try {
-      const data = await getDashboard(topicId)
-      setDashboard(data)
-      setActiveTopicId(topicId)
+      const data = await getDashboard(topicId, getLocalDate(), getLocalTimeZone())
+      if (requestId === dashboardRequestRef.current) {
+        setDashboard(data)
+        setActiveTopicId(topicId)
+      }
+      return data
     } catch (err) {
-      setError(err.message || 'Failed to load dashboard.')
-    }
-  }, [])
-
-  const loadReviewCounts = useCallback(async () => {
-    try {
-      const data = await getReviewCount()
-      setReviewCounts(data)
-    } catch {
-      setReviewCounts(null)
-    }
-  }, [])
-
-  const loadStreak = useCallback(async () => {
-    try {
-      const data = await getStreak(getLocalDate())
-      setStreak(data)
-    } catch {
-      setStreak(null)
+      if (requestId === dashboardRequestRef.current) setError(err.message || 'Failed to load your Trail.')
+      throw err
     }
   }, [])
 
   const init = useCallback(async () => {
     setLoading(true)
     setError('')
-    const topicList = await loadTopics()
-    await loadReviewCounts()
-    await loadStreak()
-    if (topicList.length === 0) {
-      setLoading(false)
-      return
-    }
+    setTopics(null)
+    setDashboard(null)
     try {
-      const defaultTopic = await getDefaultTopic()
-      if (defaultTopic.topic) {
-        await loadDashboard(defaultTopic.topic.id)
+      const [topicResponse, reviewResponse] = await Promise.all([
+        getTopics(),
+        getReviewCount().catch(() => null),
+      ])
+      const topicList = Array.isArray(topicResponse?.topics) ? topicResponse.topics : []
+      setTopics(topicList)
+      setReviewCounts(reviewResponse)
+      if (topicList.length === 0) {
+        setActiveTopicId(null)
+        return
       }
-    } catch {
-      // Fallback to first topic if no default
-      if (topicList[0]) {
-        await loadDashboard(topicList[0].id)
+
+      const requestedId = requestedTopicId(location.search)
+      const requested = requestedId === null ? null : topicList.find((topic) => topic.id === requestedId)
+      let selectedTopic = requested
+      if (requested) {
+        await selectTopic(requested.id)
+      } else {
+        try {
+          const defaultResponse = await getDefaultTopic()
+          selectedTopic = topicList.find((topic) => topic.id === defaultResponse?.topic?.id) || topicList[0]
+        } catch {
+          selectedTopic = topicList[0]
+        }
       }
+      await loadDashboard(selectedTopic.id)
+    } catch (err) {
+      setError((current) => current || err.message || 'Failed to load your Trail.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
-  }, [loadTopics, loadDashboard, loadReviewCounts, loadStreak])
+  }, [loadDashboard, location.search])
 
   useEffect(() => {
     init()
+    return () => { dashboardRequestRef.current += 1 }
   }, [init])
 
-  const handleTopicClick = async (topicId) => {
-    if (topicId === activeTopicId) return
-    if (topicSwitchTimerRef.current) clearTimeout(topicSwitchTimerRef.current)
+  const handleTopicSelect = async (topicId) => {
+    if (topicId === activeTopicId || !Number.isSafeInteger(topicId)) return
     setSwitchingTopic(true)
     setError('')
     try {
       await selectTopic(topicId)
       await loadDashboard(topicId)
     } catch (err) {
-      setError(err.message || 'Failed to switch topic.')
+      setError(err.message || 'Could not switch Trails. Try again.')
     } finally {
-      topicSwitchTimerRef.current = setTimeout(() => setSwitchingTopic(false), 300)
+      setSwitchingTopic(false)
     }
   }
 
-  const handleDeleteTopic = async (topicId) => {
-    if (!window.confirm('Are you sure? This will delete the topic and all its progress.')) return
+  const handleTopicDelete = async (topicId) => {
+    const topic = topics?.find((item) => item.id === topicId)
+    if (!topic || topic.hasChildren) return
+    if (!window.confirm(`Delete “${topic.title}” and its learning progress? This cannot be undone.`)) return
+    setError('')
     try {
       await deleteTopic(topicId)
-      const remaining = await loadTopics()
+      const remainingResponse = await getTopics()
+      const remaining = Array.isArray(remainingResponse?.topics) ? remainingResponse.topics : []
+      setTopics(remaining)
       if (remaining.length === 0) {
         setDashboard(null)
         setActiveTopicId(null)
-      } else {
-        const next = remaining[0]
-        await loadDashboard(next.id)
+      } else if (topicId === activeTopicId) {
+        const nextTopic = remaining[0]
+        await selectTopic(nextTopic.id)
+        await loadDashboard(nextTopic.id)
       }
     } catch (err) {
-      setError(err.message || 'Failed to delete topic.')
+      setError(err.code === 'COURSE_HAS_CHILDREN'
+        ? 'This Track anchors a later Track and cannot be deleted.'
+        : err.message || 'Could not delete this Trail.')
     }
   }
 
-  const handleGraphNodeClick = (lesson) => {
-    if (lesson.locked) return
-    navigate(`/topic/${activeTopicId}/lesson/${lesson.id}`)
+  const handleStartSession = (session) => {
+    if (!Number.isSafeInteger(activeTopicId) || !Number.isSafeInteger(session?.id)) return
+    navigate(`/topic/${activeTopicId}/lesson/${session.id}`)
   }
 
-  const handleStateChange = async (lessonId, newState) => {
-    // Optimistically update local state so graph animates immediately
-    setDashboard((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        modules: prev.modules.map((mod) => ({
-          ...mod,
-          lessons: mod.lessons.map((l) =>
-            l.id === lessonId ? { ...l, state: newState } : l
-          ),
-        })),
-      }
-    })
+  const handleStartCheckpoint = (moduleId) => {
+    if (Number.isSafeInteger(moduleId)) setExamModuleId(moduleId)
   }
 
-  const handleStartExam = (moduleId) => {
-    setExamModuleId(moduleId)
-  }
-
-  const handleContinue = () => {
-    if (activeTopicId) navigate(`/topic/${activeTopicId}/continue`)
+  const handleOpenFocusArea = (lessonId) => {
+    if (!Number.isSafeInteger(activeTopicId) || !Number.isSafeInteger(lessonId)) return
+    navigate(`/topic/${activeTopicId}/lesson/${lessonId}`)
   }
 
   const handleExamBack = useCallback(() => {
     setExamModuleId(null)
-    if (activeTopicId) {
-      loadDashboard(activeTopicId)
-    }
+    if (activeTopicId) loadDashboard(activeTopicId).catch(() => {})
   }, [activeTopicId, loadDashboard])
 
   if (loading) {
     return (
       <div className="min-h-screen ui-bg-canvas ui-text">
         <AppHeader dueCount={reviewCounts?.totalDue} />
-        <main className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="mb-5 text-3xl font-bold ui-text">Your learning dashboard</h1>
-          <SkeletonCard count={2} />
-          <div className="mt-6">
-            <SkeletonGraph />
-          </div>
+        <main className="mx-auto max-w-7xl px-4 py-6" aria-busy="true">
+          <h1 className="mb-5 text-2xl font-semibold ui-text">Your learning Trail</h1>
+          <SkeletonCard count={3} />
         </main>
       </div>
     )
   }
 
-  const hasTopics = topics && topics.length > 0
-  const nextLesson = dashboard && !switchingTopic ? getNextLesson(dashboard.modules) : null
-  const nextLessonLabel = nextLesson
-    ? nextLesson.state === 'practicing'
-      ? `Continue lesson: ${nextLesson.title}`
-      : nextLesson.state === 'not_started'
-        ? `Start lesson: ${nextLesson.title}`
-        : `Resume lesson: ${nextLesson.title}`
-    : null
-  const courseComplete = Boolean(
-    dashboard?.topic?.status === 'completed'
-      && dashboard.modules?.length > 0
-      && dashboard.modules.every((module) => module.status === 'completed'),
-  )
-  const activeTopics = topics.filter((topic) => topic.status === 'active' || !topic.status)
-  const completedTopics = topics.filter((topic) => topic.status === 'completed')
-  const archivedTopics = topics.filter((topic) => topic.status && !['active', 'completed'].includes(topic.status))
+  const hasTopics = Array.isArray(topics) && topics.length > 0
+  const modules = Array.isArray(dashboard?.modules) ? dashboard.modules : []
+  const reviewSummary = dashboard?.reviewSummary || reviewCounts || { totalDue: 0, dueToday: 0, overdue: 0 }
+  const nextAction = dashboard?.nextAction || { kind: 'unavailable', title: 'Your next step is not available yet.' }
+  const currentModuleId = Number.isSafeInteger(nextAction.moduleId)
+    ? nextAction.moduleId
+    : modules.find((module) => module.status !== 'completed')?.id
 
   return (
     <div className="min-h-screen ui-bg-canvas ui-text">
-      <AppHeader dueCount={reviewCounts?.totalDue} />
-
-      {/* Streak banner */}
-      {streak && (
-        <div className="max-w-7xl mx-auto px-4 mt-4">
-          {streak.backlog ? (
-            <div
-              className="ui-surface p-3 text-sm flex items-center justify-between gap-3"
-              style={{ backgroundColor: 'var(--ui-warning-bg)', borderColor: 'var(--ui-warning-border)', color: 'var(--ui-warning-text)' }}
-              role="status"
-              data-testid="streak-backlog"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-lg">📚</span>
-                <span>{streak.message}</span>
-              </div>
-              <span className="text-xs font-medium">{streak.daysSince} days since last activity</span>
-            </div>
-          ) : streak.streakBroken ? (
-            <div
-              className="ui-surface p-3 text-sm flex items-center gap-2"
-              style={{ backgroundColor: 'var(--ui-danger-bg)', borderColor: 'var(--ui-danger-border)', color: 'var(--ui-danger-text)' }}
-              role="status"
-              data-testid="streak-broken"
-            >
-              <span className="text-lg">💔</span>
-              <span>{streak.message}</span>
-            </div>
-          ) : streak.currentStreak > 0 ? (
-            <div
-              className="ui-surface p-3 text-sm flex items-center justify-between gap-3"
-              style={{ backgroundColor: 'var(--ui-success-bg)', borderColor: 'var(--ui-success-border)', color: 'var(--ui-success-text)' }}
-              role="status"
-              data-testid="streak-active"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-lg">🔥</span>
-                <span className="font-semibold">{streak.currentStreak}-day streak</span>
-                <span>{streak.message.replace(/\d+-day streak — /, '')}</span>
-              </div>
-              {streak.maxStreak > streak.currentStreak && (
-                <span className="text-xs">Best: {streak.maxStreak} days</span>
-              )}
-            </div>
-          ) : (
-            <div
-              className="ui-surface p-3 text-sm flex items-center gap-2"
-              style={{ backgroundColor: 'var(--ui-neutral-bg)', borderColor: 'var(--ui-neutral-border)', color: 'var(--ui-neutral-text)' }}
-              role="status"
-              data-testid="streak-start"
-            >
-              <span className="text-lg">✨</span>
-              <span>{streak.message}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Error banner */}
-      {error && (
-        <div className="max-w-7xl mx-auto px-4 mt-4">
-          <div
-            className="ui-surface p-3 text-sm"
-            style={{ backgroundColor: 'var(--ui-danger-bg)', borderColor: 'var(--ui-danger-border)', color: 'var(--ui-danger-text)' }}
-            role="alert"
-          >
-            {error}
+      <AppHeader dueCount={reviewSummary.totalDue ?? reviewCounts?.totalDue} />
+      <main className="mx-auto max-w-7xl px-4 py-5 sm:py-7">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] ui-text-muted">A steady path to mastery</p>
+            <h1 className="mt-1 text-2xl font-semibold ui-text sm:text-3xl">Your learning Trail</h1>
           </div>
+          {hasTopics && <p className="text-sm ui-text-muted">One Session at a time</p>}
         </div>
-      )}
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        <h1 className="mb-5 text-3xl font-bold ui-text">Your learning dashboard</h1>
-        {!hasTopics && (
-          <EmptyState onStart={() => navigate('/onboarding')} />
+        <DashboardError message={error} onRetry={init} />
+
+        {!hasTopics && topics && (
+          <section className="ui-surface mx-auto flex min-h-[45vh] max-w-2xl flex-col items-center justify-center p-6 text-center sm:p-10" aria-label="Start learning">
+            <span className="mb-3 grid h-14 w-14 place-items-center rounded-full text-2xl" style={{ backgroundColor: 'var(--ui-action-soft)' }} aria-hidden="true">✦</span>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] ui-text-muted">A fresh page</p>
+            <h2 className="mt-2 text-2xl font-semibold ui-text">Your first Trail starts here</h2>
+            <p className="mt-3 max-w-md text-sm leading-6 ui-text-secondary">Choose something you want to be able to do. We’ll shape it into a clear path of practice, useful feedback, and real progress.</p>
+            <Link className="ui-button ui-button-primary mt-6" to="/onboarding">Start learning</Link>
+          </section>
         )}
 
         {hasTopics && (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* Sidebar: topic list */}
-            <aside className="lg:col-span-1 space-y-3">
-              <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Active Topics</h2>
-              {activeTopics.length > 0 ? activeTopics.map((topic) => (
-                <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
-              )) : <p className="text-sm ui-text-muted">No active courses.</p>}
-              {completedTopics.length > 0 && (
-                <div className="mt-6 space-y-3">
-                  <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Completed Courses</h2>
-                  {completedTopics.map((topic) => (
-                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
-                  ))}
-                </div>
-              )}
-              {archivedTopics.length > 0 && (
-                <div className="mt-6 space-y-3">
-                  <h2 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-2">Archived Topics</h2>
-                  {archivedTopics.map((topic) => (
-                    <TopicCard key={topic.id} topic={topic} isActive={topic.id === activeTopicId} onClick={handleTopicClick} onDelete={handleDeleteTopic} onResume={(id) => navigate(`/onboarding?topicId=${encodeURIComponent(id)}`)} />
-                  ))}
-                </div>
-              )}
-            </aside>
-
-            {/* Main: competence graph or exam panel */}
-            <section className="lg:col-span-3">
-              {examModuleId && dashboard && (
-                <div className="ui-surface ui-surface-raised p-4 sm:p-6 min-h-[500px]">
-                  <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-xl sm:text-2xl font-bold ui-text">{dashboard.topic.title}</h2>
-                      <p className="text-sm ui-text-muted mt-1">
-                        Module Exam: {dashboard.modules.find((m) => m.id === examModuleId)?.title}
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleExamBack}
-                      className="ui-button ui-button-secondary"
-                    >
-                      Back to Dashboard
-                    </button>
+          <>
+            <TopicSwitcher topics={topics} activeTopicId={activeTopicId} onSelect={handleTopicSelect} onDelete={handleTopicDelete} />
+            {examModuleId && dashboard ? (
+              <section className="ui-surface ui-surface-raised p-4 sm:p-6" aria-label="Chapter checkpoint">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide ui-text-muted">Chapter checkpoint</p>
+                    <h2 className="mt-1 text-xl font-semibold ui-text">{modules.find((module) => module.id === examModuleId)?.title || 'Show what you can do'}</h2>
                   </div>
-                  <ExamPanel
-                    topicId={activeTopicId}
-                    moduleId={examModuleId}
-                    moduleLessons={dashboard.modules.find((m) => m.id === examModuleId)?.lessons || []}
-                    onBack={handleExamBack}
+                  <button type="button" className="ui-button ui-button-secondary" onClick={handleExamBack}>Back to Trail</button>
+                </div>
+                <ExamPanel
+                  topicId={activeTopicId}
+                  moduleId={examModuleId}
+                  moduleLessons={modules.find((module) => module.id === examModuleId)?.lessons || []}
+                  onBack={handleExamBack}
+                />
+              </section>
+            ) : dashboard?.topic?.resumeAvailable && modules.length === 0 ? (
+              <section className="ui-surface ui-surface-raised mx-auto max-w-3xl p-6 sm:p-9" aria-label="Track setup">
+                <p className="text-xs font-semibold uppercase tracking-wide ui-text-muted">One more step</p>
+                <h2 className="mt-2 text-xl font-semibold ui-text">
+                  {dashboard.topic.curriculumState === 'setup' ? 'Finish setting up your Track' : dashboard.topic.curriculumState === 'draft_ready' ? 'Your Track is ready to preview' : 'Resume building your Track'}
+                </h2>
+                <p className="mt-2 text-sm leading-6 ui-text-secondary">{dashboard.topic.curriculumError || 'Your learning path is safe. Continue setup to see the Chapters and practice ahead.'}</p>
+                <Link className="ui-button ui-button-primary mt-5" to={`/onboarding?topicId=${encodeURIComponent(activeTopicId)}`}>Continue setup</Link>
+              </section>
+            ) : dashboard ? (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5" aria-busy={switchingTopic}>
+                <div className="lg:col-start-1 lg:col-span-8 lg:row-start-1">
+                  <TodayCard nextAction={nextAction} reviewSummary={reviewSummary} onStartCheckpoint={handleStartCheckpoint} />
+                </div>
+                <div className="lg:col-start-1 lg:col-span-8 lg:row-start-2">
+                  <TrailMap
+                    topic={dashboard.topic}
+                    modules={modules}
+                    currentModuleId={currentModuleId}
+                    part="so-far"
+                    onStartSession={handleStartSession}
+                    onStartCheckpoint={handleStartCheckpoint}
+                    onOpenPriorTrack={handleTopicSelect}
                   />
                 </div>
-              )}
-              {!examModuleId && dashboard && dashboard.topic?.resumeAvailable && dashboard.modules?.length === 0 ? (
-                <div className="ui-surface ui-surface-raised p-6 sm:p-10 min-h-[500px] flex flex-col items-center justify-center text-center">
-                  <h2 className="text-xl sm:text-2xl font-bold ui-text mb-2">
-                    {dashboard.topic.curriculumState === 'setup'
-                      ? 'Continue setting up your roadmap'
-                      : dashboard.topic.curriculumState === 'draft_ready'
-                        ? 'Your roadmap is ready for review'
-                        : 'Resume your roadmap generation'}
-                  </h2>
-                  <p className="ui-text-secondary max-w-md mb-6">
-                    {dashboard.topic.curriculumError || 'This topic was created, but its roadmap was not completed. Resume the setup to continue.'}
-                  </p>
-                  <button
-                    type="button"
-                    className="ui-button ui-button-primary"
-                    onClick={() => navigate(`/onboarding?topicId=${encodeURIComponent(activeTopicId)}`)}
-                  >
-                    {dashboard.topic.curriculumState === 'setup'
-                      ? 'Continue setup'
-                      : dashboard.topic.curriculumState === 'draft_ready'
-                        ? 'Review roadmap'
-                        : 'Resume roadmap generation'}
-                  </button>
+                <div className="lg:col-start-9 lg:col-span-4 lg:row-start-2">
+                  <ReviewDue summary={reviewSummary} />
                 </div>
-              ) : !examModuleId && dashboard && (
-                <div className="ui-surface ui-surface-raised p-4 sm:p-6 min-h-[500px]">
-                  <GlobalStats topics={topics} />
-                  <div className="mb-4">
-                    <h2 className="text-xl sm:text-2xl font-bold ui-text">{dashboard.topic.title}</h2>
-                    <p className="text-sm ui-text-muted mt-1">
-                      {dashboard.topic.passedLessons ?? 0} / {dashboard.topic.totalLessons ?? 0} lessons completed
-                      {' '}({dashboard.topic.progress ?? 0}%)
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <span className="ui-status ui-status-neutral">
-                        {dashboard.topic.courseStage > 0 ? `Advanced · Stage ${dashboard.topic.courseStage}` : 'Core · 80/20 foundation'}
-                      </span>
-                      {dashboard.topic.courseFocus && <span className="ui-text-muted">Lane: {dashboard.topic.courseFocus}</span>}
-                    </div>
-                  </div>
-                  {dashboard.topic.parent && (
-                    <div className="ui-surface ui-surface-inset mb-5 p-3 text-sm ui-text-secondary">
-                      Builds on <button type="button" className="ui-button ui-button-quiet min-h-0 p-0 text-sm" onClick={() => handleTopicClick(dashboard.topic.parent.id)}>{dashboard.topic.parent.title}</button>
-                      {dashboard.topic.parent.lane && <span className="ui-text-muted"> · {dashboard.topic.parent.lane}</span>}
-                    </div>
-                  )}
-                  {nextLesson && (
-                    <div className="mb-6">
-                      <button
-                        type="button"
-                        onClick={() => handleGraphNodeClick(nextLesson)}
-                        className="ui-button ui-button-primary"
-                      >
-                        {nextLessonLabel}
-                      </button>
-                    </div>
-                  )}
-                  {courseComplete && (
-                    <div className="ui-surface ui-surface-raised mb-6 p-4 sm:p-5" data-testid="continuation-card">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide ui-text-muted">Course complete</p>
-                          <h3 className="mt-1 text-lg font-semibold ui-text">Ready to go deeper?</h3>
-                          <p className="mt-1 text-sm ui-text-secondary">Choose a new specialization lane. Your completed course stays unchanged and becomes the foundation for the next stage.</p>
-                        </div>
-                        <button type="button" className="ui-button ui-button-primary shrink-0" onClick={handleContinue}>Choose an advanced lane</button>
-                      </div>
-                    </div>
-                  )}
-                  {/* Module cards */}
-                  <div className="mb-6">
-                    <h3 className="text-sm font-semibold ui-text-muted uppercase tracking-wider mb-3">Modules</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {dashboard.modules.map((mod) => (
-                        <ModuleCard
-                          key={mod.id}
-                          mod={mod}
-                          topicId={activeTopicId}
-                          onStartExam={handleStartExam}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  {switchingTopic ? (
-                    <SkeletonGraph />
-                  ) : (
-                    <CompetenceGraph
-                      modules={dashboard.modules}
-                      onNodeClick={handleGraphNodeClick}
-                      onStateChange={handleStateChange}
-                    />
-                  )}
+                <div className="lg:col-start-1 lg:col-span-8 lg:row-start-3">
+                  <TrailMap
+                    topic={dashboard.topic}
+                    modules={modules}
+                    currentModuleId={currentModuleId}
+                    part="remaining"
+                    onStartSession={handleStartSession}
+                    onStartCheckpoint={handleStartCheckpoint}
+                  />
                 </div>
-              )}
-              {!dashboard && activeTopicId && (
-                <div className="ui-surface ui-surface-raised p-12 text-center">
-                  <SkeletonGraph />
+                <div className="lg:col-start-9 lg:col-span-4 lg:row-start-1">
+                  <WeeklyRhythm rhythm={dashboard.weeklyRhythm} />
                 </div>
-              )}
-            </section>
-          </div>
+                <div className="lg:col-start-9 lg:col-span-4 lg:row-start-3">
+                  <FocusAreas areas={dashboard.focusAreas} onOpenSession={handleOpenFocusArea} />
+                </div>
+              </div>
+            ) : (
+              <div className="ui-surface p-6 text-sm ui-text-secondary" role="status">Loading this Trail…</div>
+            )}
+          </>
         )}
       </main>
     </div>

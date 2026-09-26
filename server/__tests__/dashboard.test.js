@@ -66,6 +66,18 @@ describe('Dashboard API', () => {
       expect(res.body.completedTopics).toHaveLength(0)
     })
 
+    it('marks prerequisite Trails that are protected by linked continuations', async () => {
+      const parent = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", 'Foundation Track', 'completed')
+      const child = dbModule.run("INSERT INTO topics (title, status, course_kind) VALUES (?, ?, ?)", 'Advanced Track', 'active', 'advanced')
+      dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, parent.lastInsertRowid, 'balanced-next', 'balanced-next')
+
+      const response = await request(app).get('/api/topics')
+
+      expect(response.status).toBe(200)
+      expect(response.body.topics.find((topic) => topic.id === parent.lastInsertRowid)).toMatchObject({ hasChildren: true })
+      expect(response.body.topics.find((topic) => topic.id === child.lastInsertRowid)).toMatchObject({ hasChildren: false })
+    })
+
     it('exposes course metadata and keeps completed courses in the list', async () => {
       const topic = dbModule.run(
         "INSERT INTO topics (title, status, course_kind, course_stage, course_focus, course_completed_at) VALUES (?, ?, ?, ?, ?, ?)",
