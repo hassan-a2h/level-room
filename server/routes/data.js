@@ -15,7 +15,6 @@ const TABLES = [
   'llm_settings',
   'mistakes_log',
   'streaks',
-  'quiz_attempts',
   'exam_attempts',
   'course_links',
 ]
@@ -35,7 +34,6 @@ const IMPORT_COLUMNS = {
   llm_settings: new Set(['id', 'provider', 'model', 'reasoning_effort', 'created_at']),
   mistakes_log: new Set(['id', 'topic_id', 'lesson_id', 'description', 'recurring', 'cleared_after', 'created_at']),
   streaks: new Set(['id', 'current_streak', 'max_streak', 'last_active_date']),
-  quiz_attempts: new Set(),
   exam_attempts: new Set(['id', 'topic_id', 'module_id', 'questions', 'answers', 'evaluation', 'status', 'type', 'parent_exam_id', 'created_at']),
   course_links: new Set(['child_topic_id', 'parent_topic_id', 'lane', 'normalized_lane', 'created_at']),
 }
@@ -83,7 +81,6 @@ function prepareImportRows(backup) {
       return { error: `Invalid backup: "${table}" must be an array.` }
     }
     const rows = backup[table] || []
-    if (table === 'quiz_attempts' && rows.length > 0) return { error: 'Invalid backup: legacy per-Session quiz attempts are not supported.' }
     prepared[table] = []
     for (const row of rows) {
       if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -157,13 +154,6 @@ function validateLineageRows(topics, links) {
   return { valid: true }
 }
 
-function isUnresolvedMixedAttempt(row) {
-  if (Number(row?.format_version || 1) !== 2) return false
-  if (row?.evaluation === null || row?.evaluation === undefined || row?.evaluation === '') return true
-  if (typeof row.evaluation === 'string' && row.evaluation.trim() === 'null') return true
-  return false
-}
-
 function isCredentialColumn(column) {
   const normalized = column.toLowerCase().replace(/[^a-z]/g, '')
   return ['access', 'refresh', 'refreshtoken', 'token', 'credential', 'accountid', 'authorization', 'apikey'].includes(normalized)
@@ -177,10 +167,6 @@ router.get('/export', (_req, res) => {
     }
 
     for (const table of TABLES) {
-      if (table === 'quiz_attempts') {
-        result[table] = []
-        continue
-      }
       const rows = all(EXPORT_QUERIES[table])
       if (table === 'progress') {
         result[table] = rows.map(normalizeImportedProgress)
@@ -210,6 +196,10 @@ router.post('/import', (req, res) => {
       return res.status(400).json({ error: 'Backup version is unsupported.', code: 'BACKUP_VERSION_UNSUPPORTED' })
     }
 
+    if (Object.hasOwn(backup, 'quiz_attempts')) {
+      return res.status(400).json({ error: 'Backup contains retired per-Session quiz data.' })
+    }
+
     for (const table of REQUIRED_TABLES) {
       if (!(table in backup)) {
         return res.status(400).json({ error: `Invalid backup: missing table "${table}".` })
@@ -225,20 +215,11 @@ router.post('/import', (req, res) => {
     const lineageValidation = validateLineageRows(validated.rows.topics, validated.rows.course_links)
     if (lineageValidation.error) return res.status(400).json({ error: lineageValidation.error })
 
-    const unresolvedMixedPairs = new Set()
-    validated.rows.quiz_attempts = validated.rows.quiz_attempts.filter((row) => {
-      if (!isUnresolvedMixedAttempt(row)) return true
-      unresolvedMixedPairs.add(`${row.topic_id}:${row.lesson_id}`)
-      return false
-    })
-    for (const row of validated.rows.progress) {
-      if (unresolvedMixedPairs.has(`${row.topic_id}:${row.lesson_id}`) && row.state === 'quiz_pending') row.state = 'practicing'
-    }
-
     const counts = {}
 
     const tx = transaction(() => {
       // Clear all tables in reverse dependency order
+      run('DELETE FROM quiz_attempts')
       const clearOrder = [...TABLES].reverse()
       for (const table of clearOrder) {
         run(`DELETE FROM ${table}`)

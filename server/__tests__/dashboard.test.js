@@ -207,6 +207,8 @@ describe('Dashboard API', () => {
       expect(res.status).toBe(200)
       expect(res.body.nextAction).toMatchObject({ kind: 'resume_session', lessonId: lesson.lastInsertRowid, currentActivity: 'Choose a component boundary', estimatedMinutes: 18 })
       expect(res.body.modules[0].lessons[0]).toMatchObject({ buildRequired: true, buildType: 'code' })
+      expect(res.body.modules[0].lessons[0]).not.toHaveProperty('quiz_score')
+      expect(res.body.modules[0].lessons[0]).not.toHaveProperty('quiz_attempts')
       expect(res.body.topic.courseSummary).toBe('Build reliable user interfaces.')
       expect(res.body.focusAreas).toHaveLength(3)
       expect(res.body.weeklyRhythm.days).toHaveLength(7)

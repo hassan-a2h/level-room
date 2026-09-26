@@ -190,6 +190,10 @@
 .ui-status-warning { color: var(--ui-warning-text); background: var(--ui-warning-bg); border-color: var(--ui-warning-border); }
 .ui-status-danger { color: var(--ui-danger-text); background: var(--ui-danger-bg); border-color: var(--ui-danger-border); }
 .ui-status-neutral { color: var(--ui-neutral-text); background: var(--ui-neutral-bg); border-color: var(--ui-neutral-border); }
+.rubric-score-swatch { display: inline-block; width: 0.5rem; height: 0.5rem; border: 1px solid; border-radius: 0.15rem; }
+.rubric-score-missing { border-color: var(--ui-danger-border); background: var(--ui-danger-bg); }
+.rubric-score-developing { border-color: var(--ui-warning-border); background: var(--ui-warning-bg); }
+.rubric-score-strong { border-color: var(--ui-success-border); background: var(--ui-success-bg); }
 .ui-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; }
 .ui-progress-track { height: 0.625rem; overflow: hidden; border-radius: 999px; background: var(--ui-track); }
 .ui-progress-value { height: 100%; border-radius: inherit; background: var(--ui-action); transition: width var(--duration-standard) ease; }

@@ -108,7 +108,7 @@ describe('Data Export and Import API', () => {
       expect(res.body).toHaveProperty('llm_settings')
       expect(res.body).toHaveProperty('mistakes_log')
       expect(res.body).toHaveProperty('streaks')
-      expect(res.body).toHaveProperty('quiz_attempts')
+      expect(res.body).not.toHaveProperty('quiz_attempts')
       expect(res.body).toHaveProperty('exam_attempts')
     })
 
@@ -213,7 +213,7 @@ describe('Data Export and Import API', () => {
     it('rejects backup with non-array table data', async () => {
       const res = await request(app)
         .post('/api/data/import')
-        .send({ backupVersion: 2, topics: 'not-an-array', modules: [], lessons: [], progress: [], messages: [], srs_queue: [], artifacts: [], llm_settings: [], mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [], course_links: [] })
+        .send({ backupVersion: 2, topics: 'not-an-array', modules: [], lessons: [], progress: [], messages: [], srs_queue: [], artifacts: [], llm_settings: [], mistakes_log: [], streaks: [], exam_attempts: [], course_links: [] })
       expect(res.status).toBe(400)
       expect(res.body.error).toMatch(/invalid backup/i)
     })
@@ -276,7 +276,7 @@ describe('Data Export and Import API', () => {
       expect(JSON.stringify(res.body)).not.toContain('pending-key-fixture')
     })
 
-    it('exports course lineage while omitting legacy per-Session quiz attempts', async () => {
+    it('exports course lineage without retired per-Session quiz data', async () => {
       const { topicId } = seedDatabase()
       const child = dbModule.run("INSERT INTO topics (title, status, course_kind, course_stage, course_focus) VALUES ('React Security', 'active', 'advanced', 1, 'Security')")
       dbModule.run('INSERT INTO course_links (child_topic_id, parent_topic_id, lane, normalized_lane) VALUES (?, ?, ?, ?)', child.lastInsertRowid, topicId, 'Security', 'security')
@@ -285,7 +285,7 @@ describe('Data Export and Import API', () => {
       expect(res.status).toBe(200)
       expect(res.body.course_links).toHaveLength(1)
       expect(res.body.course_links[0]).toMatchObject({ child_topic_id: child.lastInsertRowid, parent_topic_id: topicId, normalized_lane: 'security' })
-      expect(res.body.quiz_attempts).toEqual([])
+      expect(res.body).not.toHaveProperty('quiz_attempts')
       expect(res.body.topics[0]).toHaveProperty('course_kind')
     })
 
@@ -320,7 +320,7 @@ describe('Data Export and Import API', () => {
         topics: [], modules: [], lessons: [], progress: [], messages: [],
         srs_queue: [], artifacts: [],
         llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', created_at: '2024-01-01 00:00:00' }],
-        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [], course_links: [],
+        mistakes_log: [], streaks: [], exam_attempts: [], course_links: [],
       }
 
       const res = await request(app).post('/api/data/import').send(backup)
@@ -418,6 +418,10 @@ describe('Data Export and Import API', () => {
     it('does not import legacy per-Session quiz attempts', async () => {
       const { topicId, lessonId } = seedDatabase()
       const backup = (await request(app).get('/api/data/export')).body
+
+      const emptyLegacyField = await request(app).post('/api/data/import').send({ ...backup, quiz_attempts: [] })
+      expect(emptyLegacyField.status).toBe(400)
+
       backup.quiz_attempts = [{ topic_id: topicId, lesson_id: lessonId, questions: '[]' }]
 
       const res = await request(app).post('/api/data/import').send(backup)
@@ -450,7 +454,7 @@ describe('Data Export and Import API', () => {
         topics: [], modules: [], lessons: [], progress: [], messages: [],
         srs_queue: [], artifacts: [],
         llm_settings: [{ id: 1, provider: 'openai', model: 'gpt-4o', api_key: 'old-key-fixture' }],
-        mistakes_log: [], streaks: [], quiz_attempts: [], exam_attempts: [], course_links: [],
+        mistakes_log: [], streaks: [], exam_attempts: [], course_links: [],
       }
 
       const compatible = await request(app).post('/api/data/import').send(backup)

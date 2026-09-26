@@ -200,18 +200,3 @@ export function getDueCounts() {
   const overdue = rows.filter((r) => r.due_date < today).length
   return { dueToday, overdue, totalDue: rows.length }
 }
-
-/**
- * Check if a lesson is skipped.
- * @param {number} topicId
- * @param {number} lessonId
- * @returns {boolean}
- */
-export function isLessonSkipped(topicId, lessonId) {
-  const prog = get(
-    'SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?',
-    topicId,
-    lessonId,
-  )
-  return prog?.state === 'skipped'
-}

@@ -6,8 +6,6 @@ export const STATES = Object.freeze({
   PASSED: 'passed',
 })
 
-const STATE_VALUES = new Set(Object.values(STATES))
-
 export class StateMachineError extends Error {
   constructor(message, code, status = 409) {
     super(message)
@@ -15,18 +13,6 @@ export class StateMachineError extends Error {
     this.code = code
     this.status = status
   }
-}
-
-export function isValidState(state) {
-  return STATE_VALUES.has(state)
-}
-
-export function canTransition(from, to) {
-  return from === STATES.NOT_STARTED && to === STATES.PRACTICING
-}
-
-export function getValidTransitions(from) {
-  return from === STATES.NOT_STARTED ? [STATES.PRACTICING] : []
 }
 
 function parsePrerequisites(value) {

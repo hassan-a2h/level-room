@@ -157,7 +157,7 @@ function getTopicProgress(topicId) {
 
   const passed = all(
     `SELECT COUNT(*) as passed FROM progress
-     WHERE topic_id = ? AND state IN ('passed', 'tested_out')`,
+     WHERE topic_id = ? AND state = 'passed'`,
     topicId
   )
   const passedCount = passed[0]?.passed || 0
@@ -313,7 +313,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
 
       const lessonsWithProgress = lessons.map((lesson) => {
         const prog = get(
-          `SELECT state, quiz_score, quiz_attempts, started_at, completed_at, activity_state
+          `SELECT state, started_at, completed_at, activity_state
            FROM progress
            WHERE topic_id = ? AND lesson_id = ?`,
           topicId, lesson.id
@@ -339,7 +339,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
             'SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?',
             topicId, pr.lessonId
           )
-          return !prereqProg || !['passed', 'tested_out'].includes(prereqProg.state)
+          return !prereqProg || prereqProg.state !== 'passed'
         })
 
         return {
@@ -354,8 +354,6 @@ router.get('/topics/:id/dashboard', (req, res) => {
           buildType: lesson.artifact_type || '',
           state,
           locked,
-          quiz_score: prog?.quiz_score ?? null,
-          quiz_attempts: prog?.quiz_attempts ?? 0,
           started_at: prog?.started_at ?? null,
           completed_at: prog?.completed_at ?? null,
           currentActivity: state === 'practicing' ? currentActivityTitle(lesson.activity_blocks, prog?.activity_state) : '',
@@ -366,7 +364,7 @@ router.get('/topics/:id/dashboard', (req, res) => {
       const totalLessons = lessons.length
       const passedLessons = lessons.filter((l) => {
         const prog = get('SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, l.id)
-        return ['passed', 'tested_out'].includes(prog?.state)
+        return prog?.state === 'passed'
       }).length
       const examReady = totalLessons > 0 && passedLessons === totalLessons
       const examStatus = get('SELECT status, completed_at FROM modules WHERE id = ?', mod.id)

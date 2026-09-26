@@ -7,7 +7,6 @@ import {
   getDueItems,
   getDueCounts,
   updateSrsAfterReview,
-  isLessonSkipped,
   scheduleCumulativeReviews,
 } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
@@ -196,13 +195,7 @@ async function generateCumulativeReviewQuestions({ settings: config, moduleId, t
 router.get('/reviews', (_req, res) => {
   try {
     const items = getDueItems()
-    // Filter out skipped lessons
-    const filtered = items.filter((item) => {
-      if (item.review_type === 'lesson' && item.lesson_id) {
-        return !isLessonSkipped(item.topic_id, item.lesson_id)
-      }
-      return true
-    })
+    const filtered = items
 
     const today = new Date().toISOString().split('T')[0]
 
@@ -263,13 +256,7 @@ router.post('/reviews/start', async (req, res) => {
     const config = requireLlmConfig()
 
     const items = getDueItems()
-    // Filter out skipped lessons
-    const filtered = items.filter((item) => {
-      if (item.review_type === 'lesson' && item.lesson_id) {
-        return !isLessonSkipped(item.topic_id, item.lesson_id)
-      }
-      return true
-    })
+    const filtered = items
 
     if (filtered.length === 0) {
       return res.status(404).json({ error: 'No reviews are due.' })

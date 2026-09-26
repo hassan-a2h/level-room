@@ -327,13 +327,12 @@ function assertCurriculumMutable(topicId) {
   if (!topic) return { ok: false, error: curriculumMutationError('Topic not found.') }
   if (topic.status === 'completed') return { ok: false, error: curriculumMutationError('Completed courses cannot be replaced.') }
   const started = get(
-    `SELECT 1 FROM progress WHERE topic_id = ? AND (state <> 'not_started' OR coalesce(current_chunk, 0) > 0 OR coalesce(quiz_attempts, 0) > 0 OR artifact_passed = 1) LIMIT 1`,
+    `SELECT 1 FROM progress WHERE topic_id = ? AND (state <> 'not_started' OR artifact_passed = 1) LIMIT 1`,
     topicId,
   )
   const persisted = [
     ['messages', 'topic_id'],
     ['artifacts', 'progress_id'],
-    ['quiz_attempts', 'topic_id'],
     ['exam_attempts', 'topic_id'],
   ].some(([table, column]) => {
     if (column === 'progress_id') return get(`SELECT 1 FROM ${table} a JOIN progress p ON p.id = a.progress_id WHERE p.topic_id = ? LIMIT 1`, topicId)
@@ -747,7 +746,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
 
       const lessonsWithProgress = lessons.map((lesson) => {
         const prog = get(
-          'SELECT state, quiz_score, quiz_attempts FROM progress WHERE topic_id = ? AND lesson_id = ?',
+          'SELECT state FROM progress WHERE topic_id = ? AND lesson_id = ?',
           topicId, lesson.id
         )
         let prerequisites = []
@@ -779,8 +778,6 @@ router.get('/topics/:id/curriculum', (req, res) => {
           artifact_required: !!lesson.artifact_required,
           task_spec: taskSpec,
           state: prog?.state || 'not_started',
-          quiz_score: prog?.quiz_score ?? null,
-          quiz_attempts: prog?.quiz_attempts ?? 0,
         }
       })
 

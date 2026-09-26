@@ -15,7 +15,7 @@ describe('ArtifactPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders the artifact submission form', async () => {
+  it('renders the Build submission form', async () => {
     getArtifact.mockRejectedValue(new Error('No artifact'))
 
     render(
@@ -28,9 +28,9 @@ describe('ArtifactPanel', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Submit Artifact/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Submit Build/i })).toBeInTheDocument()
     })
-    expect(screen.getByRole('textbox', { name: /artifact submission/i })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /Build submission/i })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Paste your code/i)).toBeInTheDocument()
     expect(screen.getByText(/Evaluation Rubric/i)).toBeInTheDocument()
   })
@@ -159,10 +159,10 @@ describe('ArtifactPanel', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Submit Artifact/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Submit Build/i })).toBeInTheDocument()
     })
 
-    const btn = screen.getByRole('button', { name: /Submit Artifact/i })
+    const btn = screen.getByRole('button', { name: /Submit Build/i })
     expect(btn).toBeDisabled()
   })
 
@@ -197,10 +197,10 @@ describe('ArtifactPanel', () => {
 
     const textarea = screen.getByPlaceholderText(/Paste your code/i)
     fireEvent.change(textarea, { target: { value: 'function add(a, b) { return a + b; }' } })
-    fireEvent.click(screen.getByRole('button', { name: /Submit Artifact/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Submit Build/i }))
 
     await waitFor(() => {
-      expect(screen.getByText(/Artifact Approved/i)).toBeInTheDocument()
+      expect(screen.getByText(/Build complete/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/Correctness/i)).toBeInTheDocument()
     expect(screen.getByText(/Completeness/i)).toBeInTheDocument()
@@ -242,10 +242,10 @@ describe('ArtifactPanel', () => {
     fireEvent.change(screen.getByPlaceholderText(/Paste your code/i), {
       target: { value: 'bad code' },
     })
-    fireEvent.click(screen.getByRole('button', { name: /Submit Artifact/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Submit Build/i }))
 
     await waitFor(() => {
-      expect(screen.getByText(/Needs Revision/i)).toBeInTheDocument()
+      expect(screen.getByText(/Ready to revise/i)).toBeInTheDocument()
     })
     expect(screen.getAllByText(/Evidence:/i)).toHaveLength(4)
     expect(screen.getAllByText(/Next step:/i)).toHaveLength(4)
@@ -278,7 +278,7 @@ describe('ArtifactPanel', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Artifact Approved/i)).toBeInTheDocument()
+      expect(screen.getByText(/Build complete/i)).toBeInTheDocument()
     })
   })
 
@@ -345,7 +345,7 @@ describe('ArtifactPanel', () => {
     })
     render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code', artifact_required: true }} onBack={vi.fn()} onPassed={onPassed} />)
     fireEvent.change(await screen.findByPlaceholderText(/Paste your code/i), { target: { value: 'verified work' } })
-    fireEvent.click(screen.getByRole('button', { name: /submit artifact/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit build/i }))
     await waitFor(() => expect(onPassed).toHaveBeenCalledTimes(1))
   })
 
@@ -355,14 +355,14 @@ describe('ArtifactPanel', () => {
     submitArtifact.mockResolvedValueOnce({ evaluation: { overallScore: 40, passed: false, scores: {}, feedback: {} } })
     const { unmount } = render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code' }} onBack={vi.fn()} onPassed={onPassed} />)
     fireEvent.change(await screen.findByPlaceholderText(/Paste your code/i), { target: { value: 'partial work' } })
-    fireEvent.click(screen.getByRole('button', { name: /submit artifact/i }))
-    await screen.findByText(/Needs Revision/i)
+    fireEvent.click(screen.getByRole('button', { name: /submit build/i }))
+    await screen.findByText(/Ready to revise/i)
     expect(onPassed).not.toHaveBeenCalled()
 
     getArtifact.mockResolvedValueOnce({ content: 'complete work', passed: true, evaluation: { overallScore: 90, passed: true, scores: {}, feedback: {} } })
     unmount()
     render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'code' }} onBack={vi.fn()} onPassed={onPassed} />)
-    await screen.findByText(/Artifact Approved/i)
+    await screen.findByText(/Build complete/i)
     expect(onPassed).not.toHaveBeenCalled()
   })
 })

@@ -81,6 +81,17 @@ describe('course lineage utilities', () => {
     expect(JSON.stringify(summary).length).toBeLessThan(12000)
   })
 
+  it('does not infer continuation gaps from retired per-Session quiz fields', () => {
+    const seeded = seedCourse(dbModule.default)
+    const lessonId = seeded.lessonIds[0]
+    dbModule.run('UPDATE progress SET quiz_score = ?, last_gaps = ? WHERE topic_id = ? AND lesson_id = ?', 20, '["stale quiz gap"]', seeded.topicId, lessonId)
+
+    const summary = lineage.buildCourseSummary(seeded.topicId)
+
+    expect(summary.gaps).not.toContain('stale quiz gap')
+    expect(summary.gaps.some((gap) => gap.includes('quiz score'))).toBe(false)
+  })
+
   it('completes an eligible course atomically and records completion metadata', () => {
     const seeded = seedCourse(dbModule.default)
     dbModule.run('UPDATE modules SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE topic_id = ?', 'completed', seeded.topicId)

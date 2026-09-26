@@ -3,9 +3,6 @@ import { render, screen } from '@testing-library/react'
 import {
   SkeletonText,
   SkeletonCard,
-  SkeletonGraph,
-  SkeletonLesson,
-  SkeletonQuiz,
   SkeletonOnboarding,
   SkeletonSettings,
 } from '../components/Skeleton.jsx'
@@ -29,36 +26,6 @@ describe('SkeletonCard', () => {
     render(<SkeletonCard count={2} />)
     const cards = document.querySelectorAll('[data-skeleton="card"]')
     expect(cards.length).toBe(2)
-  })
-})
-
-describe('SkeletonGraph', () => {
-  it('renders graph placeholder with multiple nodes', () => {
-    render(<SkeletonGraph />)
-    const nodes = document.querySelectorAll('[data-skeleton="graph-node"]')
-    expect(nodes.length).toBe(8)
-  })
-
-  it('uses a quiet, non-animated placeholder for nodes', () => {
-    render(<SkeletonGraph />)
-    const node = document.querySelector('[data-skeleton="graph-node"]')
-    expect(node).toHaveClass('ui-skeleton')
-    expect(node).not.toHaveClass('animate-pulse')
-  })
-})
-
-describe('SkeletonLesson', () => {
-  it('renders lesson chat placeholder', () => {
-    render(<SkeletonLesson />)
-    expect(screen.getByRole('status', { name: 'Loading lesson' })).toBeInTheDocument()
-  })
-})
-
-describe('SkeletonQuiz', () => {
-  it('renders quiz placeholder with question cards', () => {
-    render(<SkeletonQuiz />)
-    const questions = document.querySelectorAll('[data-skeleton="question"]')
-    expect(questions.length).toBe(3)
   })
 })
 

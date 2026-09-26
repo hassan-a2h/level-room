@@ -32,7 +32,7 @@ export function logMistake(topicId, lessonId, description) {
 }
 
 /**
- * Update mistakes after a lesson/quiz result.
+ * Update mistakes after a structured Session or checkpoint result.
  * On pass: increments cleared_after for active mistakes not in current gaps.
  *           Resets cleared_after for mistakes that ARE in current gaps.
  *           When cleared_after reaches 2, the mistake is considered cleared.

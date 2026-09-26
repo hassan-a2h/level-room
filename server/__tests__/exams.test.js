@@ -151,10 +151,10 @@ describe('Chapter checkpoint API', () => {
     expect(response.body).toMatchObject({ examNotReady: true, lessonsRemaining: 1 })
   })
 
-  it('unlocks a Chapter checkpoint after Sessions are passed or tested out', async () => {
+  it('keeps the Chapter locked when a Session has a retired test-out state', async () => {
     db.run('UPDATE progress SET state = ? WHERE topic_id = ? AND lesson_id = (SELECT id FROM lessons WHERE module_id = ? ORDER BY lesson_index DESC LIMIT 1)', 'tested_out', topicId, moduleId)
-    const response = await request(app).post(`/api/topics/${topicId}/modules/${moduleId}/exam`).expect(201)
-    expect(response.body.questions).toHaveLength(4)
+    const response = await request(app).post(`/api/topics/${topicId}/modules/${moduleId}/exam`).expect(403)
+    expect(response.body).toMatchObject({ examNotReady: true, lessonsRemaining: 1 })
   })
 
   it('requires complete answers and scores choice questions locally before completing the Chapter', async () => {

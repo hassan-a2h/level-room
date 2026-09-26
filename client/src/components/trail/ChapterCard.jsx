@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 function sessionLabel(session, isLocked) {
   if (isLocked) return 'Locked'
-  if (session.state === 'passed' || session.state === 'tested_out') return 'Mastered'
+  if (session.state === 'passed') return 'Mastered'
   if (session.state === 'practicing') return 'In progress'
   return 'Ready'
 }
@@ -61,7 +61,7 @@ export default function ChapterCard({
                   <span className="block text-base font-semibold ui-text">{chapter.title}</span>
                   <span className="mt-0.5 block text-sm ui-text-muted">
                     {isCurrent ? 'Current Chapter' : 'Completed'}
-                    {sessions.length > 0 ? ` · ${sessions.filter((session) => ['passed', 'tested_out'].includes(session.state)).length} of ${sessions.length} Sessions mastered` : ''}
+                    {sessions.length > 0 ? ` · ${sessions.filter((session) => session.state === 'passed').length} of ${sessions.length} Sessions mastered` : ''}
                   </span>
                 </span>
                 <span aria-hidden="true" className="ui-text-muted">{expanded ? '−' : '+'}</span>
@@ -116,7 +116,7 @@ export default function ChapterCard({
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-medium ui-text">{session.title}</span>
-                              <span className={`ui-status ${session.state === 'passed' || session.state === 'tested_out' ? 'ui-status-success' : session.state === 'practicing' ? 'ui-status-progress' : locked ? 'ui-status-neutral' : 'ui-status-neutral'}`}>
+                              <span className={`ui-status ${session.state === 'passed' ? 'ui-status-success' : session.state === 'practicing' ? 'ui-status-progress' : 'ui-status-neutral'}`}>
                                 {label}
                               </span>
                               {session.buildRequired && <span className="ui-status ui-status-warning">Build session</span>}
@@ -131,7 +131,7 @@ export default function ChapterCard({
                             disabled={locked}
                             onClick={() => onStartSession?.(session)}
                           >
-                            {locked ? 'Locked' : session.state === 'practicing' ? 'Continue' : ['passed', 'tested_out'].includes(session.state) ? 'Review' : 'Start'}
+                            {locked ? 'Locked' : session.state === 'practicing' ? 'Continue' : session.state === 'passed' ? 'Review' : 'Start'}
                           </button>
                         </li>
                       )

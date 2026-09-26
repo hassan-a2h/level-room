@@ -36,9 +36,9 @@ function RubricPreview() {
               {dim === 'Edge Cases' && 'Does it handle boundary conditions?'}
             </div>
             <div className="mt-1.5 flex items-center gap-1 text-[10px] ui-text-muted" aria-hidden="true">
-              <span className="inline-block w-2 h-2 rounded-sm bg-red-200" />0
-              <span className="inline-block w-2 h-2 rounded-sm bg-yellow-200 ml-1" />1
-              <span className="inline-block w-2 h-2 rounded-sm bg-green-200 ml-1" />2
+              <span className="rubric-score-swatch rubric-score-missing" />0
+              <span className="rubric-score-swatch rubric-score-developing ml-1" />1
+              <span className="rubric-score-swatch rubric-score-strong ml-1" />2
             </div>
           </div>
         ))}
@@ -58,7 +58,7 @@ function ScoreBadge({ score }) {
 
 function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence }) {
   const isPass = evaluation.passed
-  const heading = taskEvidence ? (isPass ? 'Build complete' : 'Ready to revise') : (isPass ? 'Artifact Approved' : 'Needs Revision')
+  const heading = isPass ? 'Build complete' : 'Ready to revise'
   const nextStepFor = (score, feedback) => {
     if (score >= 2) return 'Keep this approach in your next Build.'
     if (score === 1) return feedback ? `Strengthen this by addressing: ${feedback}` : 'Add one specific detail to make this stronger.'
@@ -124,7 +124,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence 
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={onRevise}
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+            className="ui-button ui-button-primary min-h-10 px-5 py-2.5 text-sm transition-colors"
           >
             Revise & Resubmit
           </button>
@@ -134,7 +134,7 @@ function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence 
       {isPass && (
         <div className="flex items-center justify-center">
             <p className="text-sm ui-text-secondary font-medium">
-            {taskEvidence ? 'Your Build checkpoint is complete. Continue your Trail.' : 'Great work! Your artifact has been approved.'}
+            {taskEvidence ? 'Your Build checkpoint is complete. Continue your Trail.' : 'Great work! Your Build has been approved.'}
           </p>
         </div>
       )}
@@ -258,9 +258,9 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
           <div className="flex justify-center pb-6">
             <button
               onClick={onBack}
-              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              className="ui-button ui-button-primary min-h-10 px-5 py-2.5 text-sm transition-colors"
             >
-              {prevEvidence ? 'Continue Trail' : 'Back to Lesson'}
+              {prevEvidence ? 'Continue Trail' : 'Back to Session'}
             </button>
           </div>
         )}
@@ -274,7 +274,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold ui-text">{taskSpec ? 'Build' : 'Submit Artifact'}</h2>
+          <h2 className="text-lg font-bold ui-text">Build</h2>
           {artifactType && (
             <StatusBadge status="progress">
               {taskSpec ? 'Build' : artifactType}
@@ -340,7 +340,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
             ))
           ) : (
             <>
-              <label htmlFor="artifact-submission" className="ui-field-label">Your artifact submission</label>
+              <label htmlFor="artifact-submission" className="ui-field-label">Your Build submission</label>
               <textarea
                 id="artifact-submission"
                 value={content}
@@ -358,7 +358,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
 
           {isDesign && (
             <div className="flex items-center gap-3">
-              <label className="cursor-pointer rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors">
+              <label className="ui-button ui-button-secondary min-h-10 cursor-pointer px-3 py-2 text-sm transition-colors">
                 <input
                   type="file"
                   accept="image/*,.pdf,.svg,.png,.jpg,.jpeg,.gif"
@@ -369,9 +369,9 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
                 📎 Upload File
               </label>
               {fileName && (
-                <span className="text-sm text-gray-600">{fileName}</span>
+                <span className="text-sm ui-text-secondary">{fileName}</span>
               )}
-              <span className="text-xs text-gray-400">Max 5MB</span>
+              <span className="text-xs ui-text-muted">Max 5MB</span>
             </div>
           )}
         </div>
@@ -380,14 +380,14 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
           <button
             onClick={handleSubmit}
             disabled={loading || (taskSpec ? !evidenceComplete : !content.trim())}
-            className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ui-button ui-button-primary min-h-10 px-6 py-2.5 text-sm transition-colors disabled:cursor-not-allowed"
           >
-            {loading ? 'Evaluating…' : taskSpec ? 'Submit Build' : 'Submit Artifact'}
+            {loading ? 'Evaluating…' : 'Submit Build'}
           </button>
           <button
             onClick={onBack}
             disabled={loading}
-            className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
+            className="ui-button ui-button-secondary min-h-10 px-5 py-2.5 text-sm transition-colors"
           >
             Cancel
           </button>

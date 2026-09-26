@@ -53,7 +53,7 @@ function readiness(topicId, moduleId) {
   const lessons = all(`SELECT l.id, p.state FROM lessons l
     LEFT JOIN progress p ON p.lesson_id = l.id AND p.topic_id = ?
     WHERE l.module_id = ? ORDER BY l.lesson_index`, topicId, moduleId)
-  const passed = lessons.filter((lesson) => ['passed', 'tested_out'].includes(lesson.state)).length
+  const passed = lessons.filter((lesson) => lesson.state === 'passed').length
   return { ready: lessons.length > 0 && passed === lessons.length, total: lessons.length, passed, remaining: lessons.length - passed }
 }
 

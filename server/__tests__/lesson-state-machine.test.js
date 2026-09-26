@@ -29,17 +29,6 @@ describe('Session state primitives', () => {
 
   it('exposes only not_started, practicing, and passed', () => {
     expect(Object.values(stateMachine.STATES)).toEqual(['not_started', 'practicing', 'passed'])
-    expect(stateMachine.isValidState('not_started')).toBe(true)
-    expect(stateMachine.isValidState('practicing')).toBe(true)
-    expect(stateMachine.isValidState('passed')).toBe(true)
-    expect(stateMachine.isValidState('tested_out')).toBe(false)
-  })
-
-  it('never permits a generic transition from practicing to passed', () => {
-    expect(stateMachine.canTransition('not_started', 'practicing')).toBe(true)
-    expect(stateMachine.canTransition('practicing', 'passed')).toBe(false)
-    expect(stateMachine.canTransition('passed', 'practicing')).toBe(false)
-    expect(stateMachine.getValidTransitions('practicing')).not.toContain('passed')
   })
 
   it('treats only passed prerequisite Sessions as unlocked', () => {
@@ -48,7 +37,7 @@ describe('Session state primitives', () => {
     const prerequisite = dbModule.run('INSERT INTO lessons (module_id, lesson_index, title) VALUES (?, 0, ?)', module.lastInsertRowid, 'Components')
     const lesson = dbModule.run('INSERT INTO lessons (module_id, lesson_index, title, prerequisites) VALUES (?, 1, ?, ?)', module.lastInsertRowid, 'Hooks', JSON.stringify([{ lessonId: prerequisite.lastInsertRowid, title: 'Components' }]))
 
-    dbModule.run('INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)', topic.lastInsertRowid, prerequisite.lastInsertRowid, 'tested_out')
+    dbModule.run('INSERT INTO progress (topic_id, lesson_id, state) VALUES (?, ?, ?)', topic.lastInsertRowid, prerequisite.lastInsertRowid, 'skipped')
     expect(stateMachine.checkPrerequisites(topic.lastInsertRowid, lesson.lastInsertRowid).locked).toBe(true)
     dbModule.run('UPDATE progress SET state = ? WHERE lesson_id = ?', 'passed', prerequisite.lastInsertRowid)
     expect(stateMachine.checkPrerequisites(topic.lastInsertRowid, lesson.lastInsertRowid).locked).toBe(false)

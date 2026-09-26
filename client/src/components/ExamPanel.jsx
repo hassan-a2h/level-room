@@ -43,8 +43,8 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   const outcomes = exam?.outcomes?.length ? exam.outcomes : chapterOutcomes
   const currentQuestion = questions[currentIndex]
   const answeredCount = questions.filter((question) => hasAnswer(answers[question.id])).length
-  const firstIncompleteLesson = useMemo(() => moduleLessons.find((lesson) => !['passed', 'tested_out'].includes(lesson.state)), [moduleLessons])
-  const incompleteLessonCount = moduleLessons.filter((lesson) => !['passed', 'tested_out'].includes(lesson.state)).length
+  const firstIncompleteLesson = useMemo(() => moduleLessons.find((lesson) => lesson.state !== 'passed'), [moduleLessons])
+  const incompleteLessonCount = moduleLessons.filter((lesson) => lesson.state !== 'passed').length
 
   const persistAnswers = useCallback((snapshot) => {
     const nextSave = saveChainRef.current.catch(() => {}).then(() => saveExamProgress(topicId, moduleId, snapshot))

@@ -104,7 +104,7 @@ export function buildCourseSummary(topicId) {
     for (const outcome of Array.isArray(declaredOutcomes) ? declaredOutcomes : []) appendUniqueOutcome(outcomes, outcomeIds, outcome)
   }
   const lessonRows = all(
-    `SELECT l.id, l.title, l.outcomes, p.state, p.quiz_score, p.last_gaps
+    `SELECT l.id, l.title, l.outcomes, p.state
      FROM lessons l
      JOIN modules m ON m.id = l.module_id
      LEFT JOIN progress p ON p.topic_id = ? AND p.lesson_id = l.id
@@ -116,12 +116,9 @@ export function buildCourseSummary(topicId) {
 
   for (const lesson of lessonRows) {
     const lessonOutcomes = parseJson(lesson.outcomes, [])
-    if (['passed', 'tested_out'].includes(lesson.state)) {
+    if (lesson.state === 'passed') {
       for (const outcome of Array.isArray(lessonOutcomes) ? lessonOutcomes : []) appendUniqueOutcome(strengths, strengthIds, outcome)
     }
-    if (typeof lesson.quiz_score === 'number' && lesson.quiz_score < 75) appendUnique(gaps, `${lesson.title}: quiz score ${lesson.quiz_score}`)
-    const lessonGaps = parseJson(lesson.last_gaps, [])
-    for (const gap of Array.isArray(lessonGaps) ? lessonGaps : []) appendUnique(gaps, gap)
   }
 
   const artifactRows = all(
