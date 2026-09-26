@@ -207,7 +207,9 @@ export async function collectCurriculumDraft(textStream, options = {}) {
   } catch {
     throw new CurriculumDraftError('The provider returned malformed curriculum JSON.', 'MALFORMED_CURRICULUM', true)
   }
-  const validation = validateCurriculum(parsed, options)
+  const { normalize, ...validationOptions } = options
+  const candidate = typeof normalize === 'function' ? normalize(parsed) : parsed
+  const validation = validateCurriculum(candidate, validationOptions)
   if (!validation.valid) throw new CurriculumDraftError(validation.error, 'INVALID_CURRICULUM', true)
   return validation.value
 }
