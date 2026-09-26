@@ -285,7 +285,7 @@ describe('database schema', () => {
       'curriculum_generation_started_at',
       'curriculum_generation_token',
     ]))
-    expect(placementColumns).toEqual(expect.arrayContaining(['target_score', 'stretch_score']))
+    expect(placementColumns).toEqual(expect.arrayContaining(['target_score', 'stretch_score', 'question_scores']))
 
     const topic = db.prepare('INSERT INTO topics (title) VALUES (?)').run('Recovery defaults')
     expect(db.prepare('SELECT curriculum_state, curriculum_draft, curriculum_error FROM topics WHERE id = ?').get(topic.lastInsertRowid)).toEqual({
@@ -293,6 +293,46 @@ describe('database schema', () => {
       curriculum_draft: null,
       curriculum_error: null,
     })
+  })
+
+  it('creates durable curriculum generation jobs with one active job per topic', () => {
+    const db = dbModule.default
+    const jobs = db.prepare('PRAGMA table_info(curriculum_generation_jobs)').all().map((column) => column.name)
+    expect(jobs).toEqual(expect.arrayContaining([
+      'id', 'topic_id', 'state', 'attempt', 'max_attempts', 'provider', 'model',
+      'reasoning_effort', 'lease_owner', 'lease_expires_at', 'next_attempt_at', 'deadline_at',
+      'error_code', 'error_message', 'created_at', 'updated_at',
+    ]))
+    const index = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_curriculum_generation_active_topic'").get()
+    expect(index?.sql).toMatch(/WHERE state IN/i)
+  })
+
+  it('migrates an in-flight legacy topic into a resumable queued job', () => {
+    const db = dbModule.default
+    const topic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', ?)").run('Legacy generation', 'legacy-token')
+    const duplicateTokenTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', ?)").run('Legacy duplicate token', 'legacy-token')
+    const blankTokenTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_token) VALUES (?, 'generating', '')").run('Legacy generation without token')
+    const malformedStartedTopic = db.prepare("INSERT INTO topics (title, curriculum_state, curriculum_generation_started_at) VALUES (?, 'generating', ?)").run('Legacy malformed timestamp', 'not-a-timestamp')
+    db.exec('DROP TABLE curriculum_generation_jobs')
+    db.prepare("DELETE FROM migrations WHERE name IN ('015_add_curriculum_generation_jobs', '016_add_curriculum_generation_lease_owner', '017_add_placement_question_scores')").run()
+
+    dbModule.initSchema()
+
+    const job = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(topic.lastInsertRowid)
+    expect(job).toMatchObject({ id: 'legacy-token', topic_id: topic.lastInsertRowid, state: 'queued' })
+    expect(job.deadline_at).toBeTruthy()
+    const duplicateJob = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(duplicateTokenTopic.lastInsertRowid)
+    expect(duplicateJob).toMatchObject({ topic_id: duplicateTokenTopic.lastInsertRowid, state: 'queued' })
+    expect(duplicateJob.id).not.toBe(job.id)
+    expect(duplicateJob.deadline_at).toBeTruthy()
+    expect(db.prepare('SELECT curriculum_generation_token FROM topics WHERE id = ?').get(duplicateTokenTopic.lastInsertRowid).curriculum_generation_token).toBe(duplicateJob.id)
+    const generatedJob = db.prepare('SELECT id, topic_id, state, deadline_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(blankTokenTopic.lastInsertRowid)
+    expect(generatedJob.id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(generatedJob.deadline_at).toBeTruthy()
+    expect(db.prepare('SELECT curriculum_generation_token FROM topics WHERE id = ?').get(blankTokenTopic.lastInsertRowid).curriculum_generation_token).toBe(generatedJob.id)
+    const malformedJob = db.prepare('SELECT deadline_at, created_at FROM curriculum_generation_jobs WHERE topic_id = ?').get(malformedStartedTopic.lastInsertRowid)
+    expect(malformedJob.deadline_at).toBeTruthy()
+    expect(malformedJob.created_at).toBeTruthy()
   })
 
   it('uses safe Core defaults for existing topic and lesson rows', () => {

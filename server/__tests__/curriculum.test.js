@@ -45,8 +45,8 @@ vi.mock('../llm/client.js', () => ({
         return Promise.resolve({
           text: JSON.stringify({
             questions: [
-              { id: 'q1', text: 'Which approach best explains JSX?', type: 'multiple_choice', difficulty_band: 'target', options: [{ value: 'A', label: 'A syntax extension' }, { value: 'B', label: 'A database' }], correct_answer: 'A' },
-              { id: 'q2', text: 'Which approach best handles component state?', type: 'multiple_choice', difficulty_band: 'target', options: [{ value: 'A', label: 'Local state' }, { value: 'B', label: 'Random globals' }], correct_answer: 'A' },
+              { id: 'q1', text: 'Explain why JSX is useful in a practical component.', type: 'objective', difficulty_band: 'target', rubric: 'Explains JSX and its practical trade-off.' },
+              { id: 'q2', text: 'Describe a sound approach to component state and why.', type: 'objective', difficulty_band: 'target', rubric: 'Connects state ownership to component behavior.' },
               { id: 'q3', text: 'Explain how you would debug a render loop.', type: 'objective', difficulty_band: 'target', rubric: 'Names a reproducible debugging process.' },
               { id: 'q4', text: 'Describe a maintainable component boundary.', type: 'objective', difficulty_band: 'target', rubric: 'Connects boundaries to cohesion and change.' },
               { id: 'q5', text: 'How would you test a user interaction?', type: 'objective', difficulty_band: 'target', rubric: 'Describes a behavior-focused test.' },
@@ -57,8 +57,14 @@ vi.mock('../llm/client.js', () => ({
       }
       return Promise.resolve({
         text: JSON.stringify({
-          target_score: 88,
-          stretch_score: 20,
+          scores: [
+            { question_id: 'q1', score: 88, feedback: 'Clear practical explanation.' },
+            { question_id: 'q2', score: 88, feedback: 'Sound state reasoning.' },
+            { question_id: 'q3', score: 88, feedback: 'Reproducible debugging process.' },
+            { question_id: 'q4', score: 88, feedback: 'Good component boundary.' },
+            { question_id: 'q5', score: 88, feedback: 'Behavior-focused test plan.' },
+            { question_id: 'q6', score: 20, feedback: 'Needs deeper performance trade-offs.' },
+          ],
           feedback: ['Strong grasp of the core concepts.'],
           gaps: [],
         }),
@@ -108,6 +114,7 @@ vi.mock('../llm/client.js', () => ({
     res.write(`data: ${JSON.stringify('[DONE]')}\n\n`)
     res.end()
   }),
+  wrapSdkError: (error) => error,
   LlmClientError: class LlmClientError extends Error {
     constructor(message, { code, retryable = false } = {}) {
       super(message)
@@ -120,6 +127,15 @@ vi.mock('../llm/client.js', () => ({
 
 function tempDbPath() {
   return path.join(os.tmpdir(), `test-curriculum-db-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+}
+
+async function waitFor(condition, timeout = 1000) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Condition was not met before the test deadline.')
 }
 
 describe('Curriculum API', () => {
@@ -230,7 +246,7 @@ describe('Curriculum API', () => {
   })
 
   describe('placement assessment', () => {
-    it('generates mixed diagnostic questions and verifies a non-beginner profile', async () => {
+    it('generates text-only diagnostic questions and verifies a non-beginner profile', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status) VALUES (?, ?)", "React", "active")
       const start = await request(app)
         .post(`/api/topics/${topic.lastInsertRowid}/placement/start`)
@@ -239,18 +255,11 @@ describe('Curriculum API', () => {
       expect(start.status).toBe(200)
       expect(start.body.assessmentId).toBeTypeOf('number')
       expect(start.body.questions).toHaveLength(6)
-      expect(start.body.questions).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: 'multiple_choice', options: expect.any(Array) }),
-        expect.objectContaining({ type: 'objective' }),
-      ]))
-      expect(start.body.questions.every((question) => !question.correct_answer && !question.rubric)).toBe(true)
+      expect(start.body.questions.every((question) => question.type === 'objective' && !question.options && !question.correct_answer)).toBe(true)
       expect(start.body.questions.filter((question) => question.difficultyBand === 'target')).toHaveLength(5)
       expect(start.body.questions.filter((question) => question.difficultyBand === 'stretch')).toHaveLength(1)
 
-      const answers = Object.fromEntries(start.body.questions.map((question) => [
-        question.id,
-        question.type === 'multiple_choice' ? question.options[0].value : 'A technically grounded explanation.',
-      ]))
+      const answers = Object.fromEntries(start.body.questions.map((question) => [question.id, 'A technically grounded explanation with a practical trade-off.']))
       const submit = await request(app)
         .post(`/api/topics/${topic.lastInsertRowid}/placement/submit`)
         .send({ assessmentId: start.body.assessmentId, answers })
@@ -285,13 +294,13 @@ describe('Curriculum API', () => {
   })
 
   describe('POST /api/topics/:id/curriculum/generate', () => {
-    it('streams a generated curriculum as SSE', async () => {
+    it('returns a durable generation job', async () => {
       const topic = dbModule.run("INSERT INTO topics (title, status, level, time_per_week) VALUES (?, ?, ?, ?)", "React", "active", "Beginner", "30 min/day")
       const res = await request(app)
         .post(`/api/topics/${topic.lastInsertRowid}/curriculum/generate`)
-        .set('Accept', 'text/event-stream')
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toMatch(/text\/event-stream/)
+      expect(res.status).toBe(202)
+      expect(res.body.generation).toMatchObject({ topicId: Number(topic.lastInsertRowid), state: 'queued' })
+      await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topic.lastInsertRowid).curriculum_state === 'draft_ready')
     })
 
     it('returns 404 for nonexistent topic', async () => {
@@ -409,9 +418,9 @@ describe('Curriculum API', () => {
 
       const res = await request(app)
         .post(`/api/topics/${topic.lastInsertRowid}/curriculum/regenerate`)
-        .set('Accept', 'text/event-stream')
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toMatch(/text\/event-stream/)
+      expect(res.status).toBe(202)
+      expect(res.body.generation).toMatchObject({ topicId: Number(topic.lastInsertRowid), state: 'queued' })
+      await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topic.lastInsertRowid).curriculum_state === 'draft_ready')
     })
   })
 

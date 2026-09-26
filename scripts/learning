@@ -96,6 +96,28 @@ require_repo() {
   [[ -x "$REPO_DIR/node_modules/.bin/vite" ]] || fail 2 "dependencies are not installed; run npm install"
 }
 
+ensure_native_dependencies() {
+  local probe_output runtime_version sqlite_probe
+  [[ -f "$REPO_DIR/node_modules/better-sqlite3/package.json" ]] || return 0
+  sqlite_probe="const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.close()"
+
+  if probe_output="$(cd "$REPO_DIR" && node -e "$sqlite_probe" 2>&1)"; then
+    return 0
+  fi
+  if [[ "$probe_output" != *'ERR_DLOPEN_FAILED'* && "$probe_output" != *'different Node.js version'* && "$probe_output" != *'self-register'* ]]; then
+    fail 1 'better-sqlite3 could not be loaded; run npm install and retry'
+  fi
+
+  runtime_version="$(node --version 2>/dev/null || printf 'the active Node runtime')"
+  printf 'learning: rebuilding better-sqlite3 for %s\n' "$runtime_version" >&2
+  if ! (cd "$REPO_DIR" && npm rebuild better-sqlite3 --no-audit --no-fund); then
+    fail 1 "could not rebuild better-sqlite3 for $runtime_version"
+  fi
+  if ! (cd "$REPO_DIR" && node -e "$sqlite_probe" >/dev/null 2>&1); then
+    fail 1 "better-sqlite3 is still incompatible with $runtime_version"
+  fi
+}
+
 prepare_log() {
   if [[ -L "$LOG_FILE" ]]; then
     runtime_error "log path is a symlink: $LOG_FILE"
@@ -308,6 +330,7 @@ start_command() {
   if listeners_exist; then
     fail 3 'port conflict: 3200 or 3201 is already listening'
   fi
+  ensure_native_dependencies
 
   prepare_log
   setsid "$SUPERVISOR" "$REPO_DIR" 9>&- >>"$LOG_FILE" 2>&1 &

@@ -80,7 +80,7 @@ export async function createProviderAdapter({ provider, apiKey, model }) {
  * @param {Error} err
  * @returns {LlmClientError}
  */
-function wrapSdkError(err) {
+export function wrapSdkError(err) {
   const message = err.message || ''
 
   // Auth / API key errors
@@ -147,9 +147,8 @@ export async function streamText(params) {
     const options = {
       model: languageModel,
       messages,
-    }
-    if (system) {
-      options.system = system
+      ...(system ? { system } : {}),
+      ...(params.signal ? { abortSignal: params.signal } : {}),
     }
 
     return aiStreamText(options)
@@ -182,9 +181,8 @@ export async function generateText(params) {
     const options = {
       model: languageModel,
       messages,
-    }
-    if (system) {
-      options.system = system
+      ...(system ? { system } : {}),
+      ...(params.signal ? { abortSignal: params.signal } : {}),
     }
 
     return await aiGenerateText(options)

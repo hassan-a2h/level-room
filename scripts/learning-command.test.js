@@ -73,7 +73,7 @@ function startFakeSupervisor() {
   ], { stdio: 'ignore' })
 }
 
-function makeStartFixture() {
+function makeStartFixture({ nativeBindingMismatch = false } = {}) {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'learning-start-fixture-'))
   const scripts = path.join(fixture, 'scripts')
   const bins = path.join(fixture, 'node_modules', '.bin')
@@ -81,6 +81,10 @@ function makeStartFixture() {
   mkdirSync(scripts, { recursive: true, mode: 0o700 })
   mkdirSync(bins, { recursive: true, mode: 0o700 })
   mkdirSync(tools, { mode: 0o700 })
+  if (nativeBindingMismatch) {
+    mkdirSync(path.join(fixture, 'node_modules', 'better-sqlite3'), { recursive: true, mode: 0o700 })
+    writeFileSync(path.join(fixture, 'node_modules', 'better-sqlite3', 'package.json'), '{}\n')
+  }
   copyFileSync(command, path.join(scripts, 'learning'))
   chmodSync(path.join(scripts, 'learning'), 0o755)
   writeFileSync(path.join(scripts, 'learning-supervisor'), `#!/usr/bin/env bash
@@ -101,6 +105,25 @@ else
 fi
 `)
   writeFileSync(path.join(tools, 'ss'), '#!/usr/bin/env bash\n')
+  if (nativeBindingMismatch) {
+    const rebuiltMarker = path.join(fixture, 'native-binding-rebuilt')
+    writeFileSync(path.join(tools, 'node'), `#!/usr/bin/env bash
+if [[ "$*" == *"new Database"* ]]; then
+  [[ -f ${JSON.stringify(rebuiltMarker)} ]] && exit 0
+  printf 'Error: better-sqlite3 was compiled for a different Node.js version\\n' >&2
+  exit 1
+fi
+exit 0
+`)
+    writeFileSync(path.join(tools, 'npm'), `#!/usr/bin/env bash
+if [[ "$1" == rebuild && "$2" == better-sqlite3 ]]; then
+  touch ${JSON.stringify(rebuiltMarker)}
+fi
+exit 0
+`)
+    chmodSync(path.join(tools, 'node'), 0o755)
+    chmodSync(path.join(tools, 'npm'), 0o755)
+  }
   chmodSync(path.join(tools, 'curl'), 0o755)
   chmodSync(path.join(tools, 'ss'), 0o755)
   return { fixture, script: path.join(scripts, 'learning'), path: `${tools}:${process.env.PATH}` }
@@ -252,6 +275,25 @@ test('start does not leave the control lock held by the supervisor', () => {
     const status = spawnSync(fixture.script, ['status'], { cwd: '/tmp', encoding: 'utf8', env })
     assert.equal(status.status, 0, `${status.stdout}${status.stderr}`)
     assert.match(status.stdout, /running/)
+  } finally {
+    const metadataPath = path.join(runtime, 'process.meta')
+    if (existsSync(metadataPath)) {
+      const pid = Number(readFileSync(metadataPath, 'utf8').match(/^pid=(\d+)$/m)?.[1])
+      if (pid) process.kill(-pid, 'SIGKILL')
+    }
+    cleanup(fixture.fixture)
+    cleanup(runtime)
+  }
+})
+
+test('start rebuilds a native SQLite binding for the active Node runtime', () => {
+  const runtime = makeRuntime()
+  const fixture = makeStartFixture({ nativeBindingMismatch: true })
+  const env = { ...process.env, LEARNING_RUNTIME_DIR: runtime, PATH: fixture.path }
+  try {
+    const start = spawnSync(fixture.script, ['start'], { cwd: '/tmp', encoding: 'utf8', env })
+    assert.equal(start.status, 0, `${start.stdout}${start.stderr}`)
+    assert.equal(existsSync(path.join(fixture.fixture, 'native-binding-rebuilt')), true, `${start.stdout}${start.stderr}`)
   } finally {
     const metadataPath = path.join(runtime, 'process.meta')
     if (existsSync(metadataPath)) {

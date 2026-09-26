@@ -9,7 +9,7 @@
     "dev:client": "PORT=3201 npx vite --config client/vite.config.js client --host 127.0.0.1",
     "build": "cd client && npx vite build --config ./vite.config.js",
     "test": "npm run test:backend && npm run test:frontend",
-    "test:backend": "npx vitest run server",
+    "test:backend": "npx vitest run --config ./server/vitest.config.js server",
     "test:frontend": "cd client && npx vitest run --config ./vitest.config.js",
     "lint": "echo 'No lint configured'",
     "typecheck": "echo 'No typecheck configured'"

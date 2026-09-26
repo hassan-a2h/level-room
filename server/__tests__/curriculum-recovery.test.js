@@ -11,6 +11,7 @@ const generateText = vi.fn()
 vi.mock('../llm/client.js', () => ({
   streamText,
   generateText,
+  wrapSdkError: (error) => error,
   LlmClientError: class LlmClientError extends Error {},
 }))
 
@@ -56,6 +57,15 @@ function streamFor(value) {
   })
 }
 
+async function waitFor(condition, timeout = 1000) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Condition was not met before the test deadline.')
+}
+
 describe('curriculum recovery API', () => {
   let dbPath
   let dbModule
@@ -91,12 +101,13 @@ describe('curriculum recovery API', () => {
     delete process.env.OPENAI_API_KEY
   })
 
-  it('persists a validated draft before returning the generated stream', async () => {
+  it('returns a durable job and persists the validated draft asynchronously', async () => {
     const response = await request(app)
       .post(`/api/topics/${topicId}/curriculum/generate`)
-      .set('Accept', 'text/event-stream')
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(202)
+    expect(response.body.generation).toMatchObject({ topicId, state: 'queued' })
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
     const state = dbModule.get('SELECT curriculum_state, curriculum_draft, curriculum_error FROM topics WHERE id = ?', topicId)
     expect(state.curriculum_state).toBe('draft_ready')
     expect(JSON.parse(state.curriculum_draft)).toEqual(curriculum())
@@ -105,6 +116,7 @@ describe('curriculum recovery API', () => {
 
   it('exposes the saved draft through the recovery endpoint', async () => {
     await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
 
     const response = await request(app).get(`/api/topics/${topicId}/curriculum/recovery`)
 
@@ -122,8 +134,9 @@ describe('curriculum recovery API', () => {
 
     const response = await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
 
-    expect(response.status).toBe(400)
-    expect(response.body.code).toBe('INVALID_CURRICULUM')
+    expect(response.status).toBe(202)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'failed')
+    expect(dbModule.get('SELECT error_code FROM curriculum_generation_jobs WHERE topic_id = ? ORDER BY created_at DESC LIMIT 1', topicId).error_code).toBe('INVALID_CURRICULUM')
     const state = dbModule.get('SELECT curriculum_state, curriculum_error FROM topics WHERE id = ?', topicId)
     expect(state.curriculum_state).toBe('failed')
     expect(state.curriculum_error).toMatch(/module|curriculum/i)
@@ -137,7 +150,8 @@ describe('curriculum recovery API', () => {
 
     const response = await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(202)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
     expect(dbModule.get('SELECT curriculum_state, curriculum_generation_token FROM topics WHERE id = ?', topicId).curriculum_state).toBe('draft_ready')
     expect(dbModule.get('SELECT curriculum_generation_token FROM topics WHERE id = ?', topicId).curriculum_generation_token).not.toBe('stale-token')
   })
@@ -156,6 +170,7 @@ describe('curriculum recovery API', () => {
 
   it('confirms the saved draft and transitions the topic to confirmed', async () => {
     await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
     const draft = JSON.parse(dbModule.get('SELECT curriculum_draft FROM topics WHERE id = ?', topicId).curriculum_draft)
 
     const response = await request(app)
@@ -172,6 +187,7 @@ describe('curriculum recovery API', () => {
 
   it('invalidates an unconfirmed draft when the profile changes', async () => {
     await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
 
     const response = await request(app)
       .post(`/api/topics/${topicId}/profile`)
@@ -186,9 +202,10 @@ describe('curriculum recovery API', () => {
 
   it('updates the durable draft when a user tweaks it before confirmation', async () => {
     await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
     const updated = curriculum()
     updated.modules[0].title = 'Tweaked module'
-    generateText.mockResolvedValue({ text: JSON.stringify(updated) })
+    streamText.mockImplementationOnce(() => streamFor(updated))
 
     const response = await request(app)
       .post(`/api/topics/${topicId}/curriculum/tweak`)
@@ -200,5 +217,38 @@ describe('curriculum recovery API', () => {
       curriculum_state: 'draft_ready',
     })
     expect(JSON.parse(dbModule.get('SELECT curriculum_draft FROM topics WHERE id = ?', topicId).curriculum_draft).modules[0].title).toBe('Tweaked module')
+  })
+
+  it('uses the streaming provider path for a full curriculum tweak response', async () => {
+    await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
+    const updated = curriculum()
+    updated.modules[0].title = 'Streamed tweak'
+    streamText.mockImplementationOnce(() => streamFor(updated))
+
+    const response = await request(app)
+      .post(`/api/topics/${topicId}/curriculum/tweak`)
+      .send({ request: 'Rename the first module.' })
+
+    expect(response.status).toBe(200)
+    expect(response.body.modules[0].title).toBe('Streamed tweak')
+    expect(generateText).not.toHaveBeenCalled()
+  })
+
+  it('passes the client request signal to a streamed curriculum tweak', async () => {
+    await request(app).post(`/api/topics/${topicId}/curriculum/generate`)
+    await waitFor(() => dbModule.get('SELECT curriculum_state FROM topics WHERE id = ?', topicId).curriculum_state === 'draft_ready')
+    let capturedParams
+    streamText.mockImplementationOnce((params) => {
+      capturedParams = params
+      return streamFor(curriculum())
+    })
+
+    const response = await request(app)
+      .post(`/api/topics/${topicId}/curriculum/tweak`)
+      .send({ request: 'Keep the existing structure.' })
+
+    expect(response.status).toBe(200)
+    expect(capturedParams.signal).toBeInstanceOf(AbortSignal)
   })
 })

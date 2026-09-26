@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   createTopic,
@@ -12,6 +12,7 @@ import {
   getSettings,
   startPlacementAssessment,
   submitPlacementAssessment,
+  waitForCurriculumGeneration,
 } from '../api.js'
 import { readCurriculumStream } from '../curriculumStream.js'
 import { normalizeSetupQuestions } from '../setupQuestions.js'
@@ -47,7 +48,9 @@ export default function OnboardingFlow() {
   const [curriculum, setCurriculum] = useState(null)
   const [llmConfigured, setLlmConfigured] = useState(true)
   const [generationMode, setGenerationMode] = useState('auto')
+  const [generationStatus, setGenerationStatus] = useState(null)
   const [recoveryCanResume, setRecoveryCanResume] = useState(true)
+  const generationAbortRef = useRef(null)
   const [searchParams] = useSearchParams()
   const recoveryTopicId = searchParams.get('topicId')
 
@@ -100,6 +103,14 @@ export default function OnboardingFlow() {
           return
         }
 
+        if (data.generation && ['queued', 'running', 'retrying'].includes(data.generation.state)) {
+          setGenerationStatus(data.generation)
+          setRecoveryCanResume(true)
+          setError('Your roadmap is still being generated. You can safely leave this page and return later.')
+          setStep('generating')
+          return
+        }
+
         setGenerationMode('manual')
         setError(
           data.curriculumError
@@ -122,6 +133,26 @@ export default function OnboardingFlow() {
       active = false
     }
   }, [recoveryTopicId])
+
+  useEffect(() => () => {
+    generationAbortRef.current?.abort()
+    generationAbortRef.current = null
+  }, [])
+
+  const prepareGenerationWait = useCallback(() => {
+    generationAbortRef.current?.abort()
+    const controller = new AbortController()
+    generationAbortRef.current = controller
+    return controller
+  }, [])
+
+  const waitForGeneration = useCallback(async (generation, controller) => {
+    try {
+      return await waitForCurriculumGeneration(topicId, generation, setGenerationStatus, { signal: controller.signal })
+    } finally {
+      if (generationAbortRef.current === controller) generationAbortRef.current = null
+    }
+  }, [topicId])
 
   const handleTopicSubmit = useCallback(
     async (e) => {
@@ -279,18 +310,27 @@ export default function OnboardingFlow() {
     setGenerating(true)
     setError('')
     setCurriculum(null)
+    const controller = prepareGenerationWait()
     try {
-      const res = await generateCurriculum(topicId)
-      const parsed = await readCurriculumStream(res)
+      const started = await generateCurriculum(topicId)
+      if (controller.signal.aborted) return
+      setGenerationStatus(started?.generation || null)
+      const parsed = started?.generation
+        ? await waitForGeneration(started.generation, controller)
+        : started?.body
+          ? await readCurriculumStream(started)
+          : started
       setCurriculum(parsed)
       setStep('confirmation')
     } catch (err) {
+      if (err?.name === 'AbortError') return
       setError(err.message || 'Failed to generate curriculum. Please check your API key and try again.')
       setGenerationMode('manual')
     } finally {
+      if (generationAbortRef.current === controller) generationAbortRef.current = null
       setGenerating(false)
     }
-  }, [topicId])
+  }, [topicId, prepareGenerationWait, waitForGeneration])
 
   useEffect(() => {
     if (step === 'generating' && generationMode === 'auto') {
@@ -362,18 +402,27 @@ export default function OnboardingFlow() {
     setGenerationMode('manual')
     setStep('generating')
     setError('')
+    const controller = prepareGenerationWait()
     try {
-      const res = await regenerateCurriculum(topicId)
-      const parsed = await readCurriculumStream(res)
+      const started = await regenerateCurriculum(topicId)
+      if (controller.signal.aborted) return
+      setGenerationStatus(started?.generation || null)
+      const parsed = started?.generation
+        ? await waitForGeneration(started.generation, controller)
+        : started?.body
+          ? await readCurriculumStream(started)
+          : started
       setCurriculum(parsed)
       setStep('confirmation')
     } catch (err) {
+      if (err?.name === 'AbortError') return
       setError(err.message || 'Failed to regenerate curriculum.')
       setStep('confirmation')
     } finally {
+      if (generationAbortRef.current === controller) generationAbortRef.current = null
       setGenerating(false)
     }
-  }, [topicId])
+  }, [topicId, prepareGenerationWait, waitForGeneration])
 
   const handleBack = () => {
     if (step === 'setup_questions') {
@@ -572,6 +621,15 @@ export default function OnboardingFlow() {
                   {placementResult.feedback?.length > 0 && (
                     <p className="text-sm ui-text-secondary mb-4">{placementResult.feedback[0]}</p>
                   )}
+                  {placementResult.questionScores?.length > 0 && (
+                    <ul className="text-sm ui-text-secondary mb-4 space-y-2" aria-label="Question feedback">
+                      {placementResult.questionScores.map((item) => (
+                        <li key={item.questionId}>
+                          <strong>{item.questionId}: {item.score}%</strong>{item.feedback ? ` — ${item.feedback}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
@@ -668,7 +726,8 @@ export default function OnboardingFlow() {
               <h1 className="text-xl font-bold ui-text mb-2">Designing your learning path...</h1>
               <p className="ui-text-secondary text-center max-w-md text-sm sm:text-base">
                 Our AI tutor is building a finite 80/20 curriculum with modules, practical tasks, and skill checks.
-                This takes about 30–60 seconds.
+                This can take a few minutes; you can safely leave and return while it continues.
+                {generationStatus?.state === 'retrying' && ` Retrying attempt ${generationStatus.attempt + 1} of ${generationStatus.maxAttempts}.`}
               </p>
             </div>
           ) : (

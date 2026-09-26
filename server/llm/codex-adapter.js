@@ -1,8 +1,8 @@
 import { CODEX_PROVIDER_ID } from './codex-credential-store.js'
 import { LlmClientError } from './errors.js'
 
-const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 45_000
-const DEFAULT_IDLE_TIMEOUT_MS = 90_000
+const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 90_000
+const DEFAULT_IDLE_TIMEOUT_MS = 180_000
 const DEFAULT_COMPLETION_TIMEOUT_MS = 10 * 60_000
 
 export function createCodexAdapter({
@@ -53,8 +53,10 @@ export function createCodexAdapter({
 
   async function streamText(params) {
     const request = prepareRequest(params)
+    const streamFirstByteTimeoutMs = resolveTimeout(params.firstByteTimeoutMs, firstByteTimeoutMs)
+    const streamIdleTimeoutMs = resolveTimeout(params.idleTimeoutMs, idleTimeoutMs)
     const controller = new AbortController()
-    const options = makeOptions(request.reasoning, controller, idleTimeoutMs)
+    const options = makeOptions(request.reasoning, controller, streamIdleTimeoutMs)
     const stream = auth.runWithCredentialGeneration(
       request.credentialGeneration,
       () => models.streamSimple(request.model, request.context, options),
@@ -66,8 +68,8 @@ export function createCodexAdapter({
         generation: request.credentialGeneration,
         controller,
         callerSignal: request.signal,
-        firstByteTimeoutMs,
-        idleTimeoutMs,
+        firstByteTimeoutMs: streamFirstByteTimeoutMs,
+        idleTimeoutMs: streamIdleTimeoutMs,
       }),
     }
   }
@@ -147,6 +149,10 @@ function emptyUsage() {
 
 function makeOptions(reasoning, controller, timeoutMs) {
   return { reasoning, transport: 'sse', signal: controller.signal, timeoutMs }
+}
+
+function resolveTimeout(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
 function createTextStream({ stream, auth, generation, controller, callerSignal, firstByteTimeoutMs, idleTimeoutMs }) {

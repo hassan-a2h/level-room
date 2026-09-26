@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { randomUUID } from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -445,6 +446,99 @@ export function initSchema() {
       `)
 
       db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration014)
+    })()
+  }
+
+  const migration015 = '015_add_curriculum_generation_jobs'
+  const check015 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration015)
+  if (!check015) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS curriculum_generation_jobs (
+          id TEXT PRIMARY KEY,
+          topic_id INTEGER NOT NULL,
+          state TEXT NOT NULL DEFAULT 'queued',
+          attempt INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 3,
+          provider TEXT,
+          model TEXT,
+          reasoning_effort TEXT,
+          lease_owner TEXT,
+          lease_expires_at DATETIME,
+          next_attempt_at DATETIME,
+          deadline_at DATETIME,
+          error_code TEXT,
+          error_message TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE,
+          CHECK (state IN ('queued', 'running', 'retrying', 'completed', 'failed')),
+          CHECK (attempt >= 0 AND max_attempts > 0 AND attempt <= max_attempts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_curriculum_generation_jobs_topic
+          ON curriculum_generation_jobs(topic_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_curriculum_generation_jobs_ready
+          ON curriculum_generation_jobs(state, next_attempt_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_curriculum_generation_active_topic
+          ON curriculum_generation_jobs(topic_id)
+          WHERE state IN ('queued', 'running', 'retrying');
+      `)
+
+      const legacyGenerating = db.prepare(`
+        SELECT id, curriculum_generation_token, curriculum_generation_started_at
+        FROM topics
+        WHERE curriculum_state = 'generating'
+          AND NOT EXISTS (
+            SELECT 1 FROM curriculum_generation_jobs jobs
+            WHERE jobs.topic_id = topics.id
+              AND jobs.state IN ('queued', 'running', 'retrying')
+          )
+      `).all()
+      const insert = db.prepare(`
+        INSERT INTO curriculum_generation_jobs
+          (id, topic_id, state, provider, model, reasoning_effort, next_attempt_at, deadline_at, created_at, updated_at)
+        VALUES (?, ?, 'queued', NULL, NULL, NULL, CURRENT_TIMESTAMP,
+                datetime(COALESCE(?, CURRENT_TIMESTAMP), '+25 minutes'),
+                COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      `)
+      const existingJob = db.prepare('SELECT 1 FROM curriculum_generation_jobs WHERE id = ?')
+      const updateToken = db.prepare('UPDATE topics SET curriculum_generation_token = ? WHERE id = ?')
+      for (const topic of legacyGenerating) {
+        let jobId = topic.curriculum_generation_token || randomUUID()
+        if (existingJob.get(jobId)) jobId = randomUUID()
+        const startedAtMs = Date.parse(topic.curriculum_generation_started_at || '')
+        const startedAt = Number.isFinite(startedAtMs) ? new Date(startedAtMs).toISOString() : null
+        insert.run(jobId, topic.id, startedAt, startedAt)
+        if (!topic.curriculum_generation_token || topic.curriculum_generation_token !== jobId) updateToken.run(jobId, topic.id)
+      }
+
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration015)
+    })()
+  }
+
+  const migration016 = '016_add_curriculum_generation_lease_owner'
+  const check016 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration016)
+  if (!check016) {
+    db.transaction(() => {
+      try {
+        db.exec('ALTER TABLE curriculum_generation_jobs ADD COLUMN lease_owner TEXT')
+      } catch (err) {
+        if (!/duplicate column name/i.test(err.message)) throw err
+      }
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration016)
+    })()
+  }
+
+  const migration017 = '017_add_placement_question_scores'
+  const check017 = db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(migration017)
+  if (!check017) {
+    db.transaction(() => {
+      try {
+        db.exec('ALTER TABLE placement_assessments ADD COLUMN question_scores TEXT')
+      } catch (err) {
+        if (!/duplicate column name/i.test(err.message)) throw err
+      }
+      db.prepare('INSERT INTO migrations (name) VALUES (?)').run(migration017)
     })()
   }
 }

@@ -1,12 +1,21 @@
 const VALID_LEVELS = ['Beginner', 'Intermediate', 'Advanced']
 
+export class PlacementAssessmentError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'PlacementAssessmentError'
+    this.code = 'INVALID_PLACEMENT_ASSESSMENT'
+    this.retryable = true
+  }
+}
+
 function normalizeLevel(value) {
   if (typeof value !== 'string') return null
   return VALID_LEVELS.find((level) => level.toLowerCase() === value.trim().toLowerCase()) || null
 }
 
 function invalid(message) {
-  throw new Error(message)
+  throw new PlacementAssessmentError(message)
 }
 
 export function normalizePlacementQuestions(parsed, requestedLevel) {
@@ -32,33 +41,8 @@ export function normalizePlacementQuestions(parsed, requestedLevel) {
       : null
     if (!difficultyBand) invalid('Placement assessment contains an invalid difficulty band')
 
-    const type = question?.type === 'multiple_choice' || question?.type === 'multiple-choice'
-      ? 'multiple_choice'
-      : question?.type === 'objective' || question?.type === 'open'
-        ? 'objective'
-        : null
-    if (!type) invalid('Placement assessment contains an invalid question type')
-
-    if (type === 'multiple_choice') {
-      if (!Array.isArray(question.options) || question.options.length < 2 || question.options.length > 5) {
-        invalid('Placement assessment contains invalid multiple-choice options')
-      }
-      const optionValues = new Set()
-      const options = question.options.map((option) => {
-        const value = typeof option === 'string' ? option.trim() : option?.value?.toString().trim()
-        const label = typeof option === 'string' ? option.trim() : option?.label?.toString().trim()
-        if (!value || !label || value.length > 100 || label.length > 200) invalid('Placement assessment contains an invalid option')
-        if (optionValues.has(value)) invalid('Placement assessment contains duplicate options')
-        optionValues.add(value)
-        return { value, label }
-      })
-      const correctAnswer = typeof question.correct_answer === 'string' ? question.correct_answer.trim() : ''
-      if (!correctAnswer || !options.some((option) => option.value === correctAnswer)) {
-        invalid('Placement assessment is missing a valid answer key')
-      }
-      return { id, text, type, difficulty_band: difficultyBand, options, correct_answer: correctAnswer }
-    }
-
+    const type = question?.type === 'objective' || question?.type === 'open' ? 'objective' : null
+    if (!type) invalid('Placement assessment questions must be free-response')
     const rubric = typeof question.rubric === 'string' ? question.rubric.trim() : ''
     if (!rubric || rubric.length > 1000) invalid('Placement assessment is missing an objective rubric')
     return { id, text, type, difficulty_band: difficultyBand, rubric }
@@ -68,9 +52,6 @@ export function normalizePlacementQuestions(parsed, requestedLevel) {
   const stretchCount = questions.filter((question) => question.difficulty_band === 'stretch').length
   if (targetCount !== 5 || stretchCount !== 1) invalid('Placement assessment must contain exactly five target questions and one stretch question')
 
-  const multipleChoiceCount = questions.filter((question) => question.type === 'multiple_choice').length
-  const objectiveCount = questions.filter((question) => question.type === 'objective').length
-  if (multipleChoiceCount < 2 || objectiveCount < 2) invalid('Placement assessment must include multiple-choice and objective questions')
   return questions
 }
 
@@ -108,5 +89,62 @@ export function evaluatePlacementScores({ requestedLevel, targetScore, stretchSc
     stretchScore: Math.round(stretch),
     recommendedLevel,
     passed: recommendedLevel === level,
+  }
+}
+
+function normalizeFeedbackList(value) {
+  return Array.isArray(value)
+    ? value
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.slice(0, 500))
+      .slice(0, 8)
+    : []
+}
+
+export function normalizePlacementEvaluation({ requestedLevel, questions, scores, feedback, gaps }) {
+  if (!Array.isArray(questions) || questions.length !== 6 || !Array.isArray(scores) || scores.length !== questions.length) {
+    invalid('Placement question scores must contain exactly one result per question')
+  }
+
+  const questionById = new Map(questions.map((question) => [question.id, question]))
+  const seen = new Set()
+  const questionScores = scores.map((entry) => {
+    const questionId = typeof entry?.question_id === 'string' ? entry.question_id.trim() : ''
+    const score = entry?.score
+    if (!questionId || seen.has(questionId) || !questionById.has(questionId)) {
+      invalid('Placement question scores must cover each question exactly once')
+    }
+    if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100) {
+      invalid('Placement question scores must be numbers from 0 to 100')
+    }
+    if (typeof entry?.feedback !== 'string' || !entry.feedback.trim()) {
+      invalid('Placement question scores must include evidence-based feedback')
+    }
+    seen.add(questionId)
+    const itemFeedback = typeof entry?.feedback === 'string' ? entry.feedback.trim().slice(0, 500) : ''
+    return { questionId, score: Math.round(score), feedback: itemFeedback }
+  })
+
+  if (seen.size !== questionById.size) invalid('Placement question scores must cover each question exactly once')
+
+  const targetScores = questionScores
+    .filter((entry) => questionById.get(entry.questionId).difficulty_band === 'target')
+    .map((entry) => entry.score)
+  const stretchScores = questionScores
+    .filter((entry) => questionById.get(entry.questionId).difficulty_band === 'stretch')
+    .map((entry) => entry.score)
+  if (targetScores.length !== 5 || stretchScores.length !== 1) {
+    invalid('Placement question scores must contain five target results and one stretch result')
+  }
+
+  const targetScore = targetScores.reduce((sum, score) => sum + score, 0) / targetScores.length
+  const stretchScore = stretchScores[0]
+  return {
+    ...evaluatePlacementScores({ requestedLevel, targetScore, stretchScore }),
+    questionScores,
+    feedback: normalizeFeedbackList(feedback),
+    gaps: normalizeFeedbackList(gaps),
   }
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url'
 import db, { initSchema } from './db.js'
 import settingsRouter from './routes/settings.js'
 import dashboardRouter from './routes/dashboard.js'
-import curriculumRouter from './routes/curriculum.js'
+import curriculumRouter, { startCurriculumGenerationWorker } from './routes/curriculum.js'
 import continuationRouter from './routes/continuations.js'
 import lessonsRouter from './routes/lessons.js'
 import examsRouter from './routes/exams.js'
@@ -54,6 +54,8 @@ app.use('/api', examsRouter)
 app.use('/api', reviewsRouter)
 app.use('/api', streakRouter)
 app.use('/api/data', dataRouter)
+
+startCurriculumGenerationWorker()
 
 const PORT = process.env.PORT || 3200
 const HOST = process.env.HOST || '127.0.0.1'

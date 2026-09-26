@@ -207,6 +207,21 @@ describe('LLM Client', () => {
       }))
     })
 
+    it('passes the caller abort signal to the provider SDK', async () => {
+      streamText.mockReturnValue({ textStream: (async function* () { yield 'ok' })() })
+      const signal = new AbortController().signal
+
+      await llmModule.streamText({
+        provider: 'openai',
+        apiKey: 'sk-test',
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'hi' }],
+        signal,
+      })
+
+      expect(streamText).toHaveBeenCalledWith(expect.objectContaining({ abortSignal: signal }))
+    })
+
     it('wraps ai.streamText errors in a clear LlmClientError', async () => {
       streamText.mockImplementation(() => {
         throw new Error('API key invalid')
@@ -256,6 +271,21 @@ describe('LLM Client', () => {
         messages: [{ role: 'user', content: 'compute 2+2' }],
       }))
       expect(result.text).toBe('Result')
+    })
+
+    it('passes the caller abort signal to non-streaming provider requests', async () => {
+      generateText.mockResolvedValue({ text: 'Result' })
+      const signal = new AbortController().signal
+
+      await llmModule.generateText({
+        provider: 'openai',
+        apiKey: 'sk-test',
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'hi' }],
+        signal,
+      })
+
+      expect(generateText).toHaveBeenCalledWith(expect.objectContaining({ abortSignal: signal }))
     })
 
     it('returns graceful error for invalid key in generateText', async () => {

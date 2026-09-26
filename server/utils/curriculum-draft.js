@@ -178,6 +178,7 @@ export async function collectCurriculumDraft(textStream, options = {}) {
   for await (const chunk of textStream) {
     const value = typeof chunk === 'string' ? chunk : ''
     buffer += value
+    if (typeof options.onChunk === 'function') options.onChunk(value)
     if (Buffer.byteLength(buffer, 'utf8') > maxBytes) throw new CurriculumDraftError('The curriculum draft is too large.', 'CURRICULUM_TOO_LARGE')
   }
   if (!buffer.trim()) throw new CurriculumDraftError('The provider returned an empty curriculum.', 'EMPTY_CURRICULUM', true)

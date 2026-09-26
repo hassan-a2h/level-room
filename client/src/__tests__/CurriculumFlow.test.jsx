@@ -16,6 +16,7 @@ vi.mock('../api.js', () => ({
   tweakCurriculum: vi.fn(),
   startPlacementAssessment: vi.fn(),
   submitPlacementAssessment: vi.fn(),
+  waitForCurriculumGeneration: vi.fn(),
 }))
 
 import {
@@ -30,6 +31,7 @@ import {
   tweakCurriculum,
   startPlacementAssessment,
   submitPlacementAssessment,
+  waitForCurriculumGeneration,
 } from '../api.js'
 
 describe('OnboardingFlow', () => {
@@ -129,6 +131,34 @@ describe('OnboardingFlow', () => {
     fireEvent.click(screen.getByRole('button', { name: /retry questions/i }))
     expect(await screen.findByText(/what is your current level/i)).toBeInTheDocument()
     expect(getSetupQuestions).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders placement checks as free-response prompts only', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 2, title: 'React' } })
+    getSetupQuestions.mockResolvedValue({ questions: [
+      { text: 'What is your current level?', options: ['Beginner', 'Intermediate', 'Advanced'] },
+      { text: 'How much time per day?', options: ['30 min'] },
+    ] })
+    startPlacementAssessment.mockResolvedValue({
+      assessmentId: 7,
+      questions: Array.from({ length: 6 }, (_, index) => ({
+        id: `q${index + 1}`,
+        text: `Explain scenario ${index + 1}.`,
+        type: 'objective',
+      })),
+    })
+
+    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
+    fireEvent.change(await screen.findByPlaceholderText(/enter a topic/i), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: /start learning/i }))
+    fireEvent.click(await screen.findByText('Intermediate'))
+    fireEvent.click(screen.getByText('30 min'))
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    expect(await screen.findByLabelText('Explain scenario 1.')).toBeInTheDocument()
+    expect(screen.getAllByRole('textbox')).toHaveLength(6)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    expect(waitForCurriculumGeneration).not.toHaveBeenCalled()
   })
 
   it('advances to generating state after answering setup questions', async () => {

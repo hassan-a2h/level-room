@@ -186,8 +186,9 @@ export async function getCurriculum(topicId) {
   return res.json()
 }
 
-export async function getCurriculumRecovery(topicId) {
-  const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/recovery`)
+export async function getCurriculumRecovery(topicId, { signal } = {}) {
+  const url = `${API_BASE}/api/topics/${topicId}/curriculum/recovery`
+  const res = signal ? await fetch(url, { signal }) : await fetch(url)
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `HTTP ${res.status}`)
@@ -224,25 +225,111 @@ export async function tweakCurriculum(topicId, request) {
 export async function regenerateCurriculum(topicId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/regenerate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
-  }
-  return res
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
 }
 
 export async function generateCurriculum(topicId) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/curriculum/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `HTTP ${res.status}`)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  return body
+}
+
+function abortError() {
+  const error = new Error('Roadmap generation wait was cancelled.')
+  error.name = 'AbortError'
+  return error
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError()
+}
+
+function waitForPoll(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError())
+      return
+    }
+    let timer
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(abortError())
+    }
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function recoverGeneration(topicId, generation, onStatus, signal) {
+  while (true) {
+    throwIfAborted(signal)
+    const recovery = await getCurriculumRecovery(topicId, { signal })
+    throwIfAborted(signal)
+    const status = recovery.generation || generation
+    onStatus?.(status)
+    if (recovery.curriculumState === 'draft_ready' && recovery.curriculum) return recovery.curriculum
+    if (status?.state === 'failed' || recovery.curriculumState === 'failed') {
+      throw new Error(status?.error || recovery.curriculumError || 'Roadmap generation failed.')
+    }
+    await waitForPoll(1500, signal)
   }
-  return res
+}
+
+export async function waitForCurriculumGeneration(topicId, generation, onStatus, { signal } = {}) {
+  if (!generation?.id) throw new Error('Roadmap generation did not return a job ID.')
+  throwIfAborted(signal)
+  if (typeof EventSource === 'undefined') return recoverGeneration(topicId, generation, onStatus, signal)
+
+  return new Promise((resolve, reject) => {
+    const eventsUrl = `${API_BASE}/api/topics/${topicId}/curriculum/generation/${encodeURIComponent(generation.id)}/events`
+    const source = new EventSource(eventsUrl)
+    let settled = false
+    let polling = false
+    let abortHandler
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      source.close()
+      signal?.removeEventListener('abort', abortHandler)
+      callback(value)
+    }
+    abortHandler = () => finish(reject, abortError())
+    signal?.addEventListener('abort', abortHandler, { once: true })
+    source.addEventListener('generation', (event) => {
+      let status
+      try { status = JSON.parse(event.data) } catch { return finish(reject, new Error('Generation status was malformed.')) }
+      onStatus?.(status)
+      if (status.state === 'completed') {
+        recoverGeneration(topicId, status, onStatus, signal).then(
+          (curriculum) => finish(resolve, curriculum),
+          (error) => finish(reject, error),
+        )
+      } else if (status.state === 'failed') {
+        finish(reject, new Error(status.error || 'Roadmap generation failed.'))
+      }
+    })
+    source.onerror = () => {
+      if (settled || polling) return
+      polling = true
+      source.close()
+      recoverGeneration(topicId, generation, onStatus, signal).then(
+        (curriculum) => finish(resolve, curriculum),
+        (error) => finish(reject, error),
+      )
+    }
+  })
 }
 
 // Advanced continuation API. Generation is intentionally transient until confirm.

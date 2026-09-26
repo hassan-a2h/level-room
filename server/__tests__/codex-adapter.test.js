@@ -105,6 +105,19 @@ describe('Codex LLM adapter', () => {
     expect(chunks).toEqual(['hello', ' world'])
   })
 
+  it('honors caller-specific streaming timeout budgets', async () => {
+    const { adapter, optionsCaptured } = await setup()
+    await adapter.streamText({
+      model: model.id,
+      reasoningEffort: 'minimal',
+      messages: [{ role: 'user', content: 'Generate a full curriculum.' }],
+      firstByteTimeoutMs: 120_000,
+      idleTimeoutMs: 180_000,
+    })
+
+    expect(optionsCaptured[0]).toMatchObject({ timeoutMs: 180_000 })
+  })
+
   it('rejects unsupported roles, non-text content, and model reasoning levels', async () => {
     const { adapter, models } = await setup()
     await expect(adapter.streamText({
