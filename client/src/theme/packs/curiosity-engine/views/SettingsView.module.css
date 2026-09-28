@@ -1,4 +1,13 @@
-.root { position: relative; isolation: isolate; }
-.root :global(.settings-section) { border: 1px solid var(--border); box-shadow: 5px 5px 0 var(--canvas-subtle); }
-.root :global(.settings-category-nav) { position: sticky; top: .5rem; z-index: 2; padding: .4rem; border: 1px solid var(--border); background: var(--panel); box-shadow: 3px 3px 0 var(--canvas-subtle); }
+.root { position: relative; padding: 1.5rem 1rem 4rem; }
+.container { width: min(100%, 66rem); margin-inline: auto; }
+.hero { display: flex; align-items: center; gap: 1rem; max-width: 52rem; margin: 0 auto 1.5rem; padding: 1.25rem 1.5rem; border: 1px solid var(--border); border-radius: 1.5rem; background: linear-gradient(120deg, var(--panel), color-mix(in srgb, var(--primary) 6%, var(--panel))); }
+.hero h1 { margin: .1rem 0; color: var(--ink); font: 700 clamp(1.8rem, 4vw, 2.5rem)/1.1 var(--font-display); letter-spacing: -.03em; }
+.hero p:last-child { margin: .35rem 0 0; color: var(--ink-soft); }
+.kicker { margin: 0; color: var(--primary); font: 700 .72rem/1.4 var(--font-label); letter-spacing: .09em; text-transform: uppercase; }
+.mark { display: grid; width: 3rem; aspect-ratio: 1; flex: 0 0 auto; place-items: center; border-radius: 1rem; color: var(--primary-contrast); background: var(--primary); font-size: 1.5rem; }
+.root :global(.settings-category-nav) { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem; width: fit-content; max-width: 100%; margin: 0 auto 1rem; padding: .35rem; border-radius: 1.2rem; background: var(--inset); }
 .root :global(.settings-category-nav button[aria-pressed="true"]) { color: var(--primary-contrast); background: var(--primary); }
+.content { max-width: 52rem; margin-inline: auto; }
+.root :global(.settings-section) { border-radius: 1rem; box-shadow: 0 12px 32px rgb(36 55 93 / 7%); }
+@media (max-width: 40rem) { .root { padding-inline: .75rem; } .hero { align-items: flex-start; padding: 1rem; } .mark { width: 2.5rem; } .root :global(.settings-category-nav) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; } .root :global(.settings-category-nav button) { white-space: nowrap; } }
+@media (prefers-reduced-motion: reduce) { .root, .root * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

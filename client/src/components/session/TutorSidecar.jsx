@@ -55,7 +55,7 @@ function GuideMessages({ messages, streamingText, busy }) {
   </div>
 }
 
-export default function TutorSidecar({ topicId, lessonId, activityBlockId, messages: initialMessages = [], draft: controlledDraft, open: controlledOpen, onDraftChange, onOpenChange }) {
+export default function TutorSidecar({ topicId, lessonId, activityBlockId, messages: initialMessages = [], draft: controlledDraft, open: controlledOpen, onDraftChange, onOpenChange, onMessagesChange }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState(initialMessages)
   const [streamingText, setStreamingText] = useState('')
@@ -98,7 +98,9 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
     try {
       const response = await sendChatMessage(topicId, lessonId, content, activityBlockId)
       const text = await readTutorStream(response, setStreamingText)
-      setMessages((current) => [...current, { id: `user-${Date.now()}`, role: 'user', content }, { id: `guide-${Date.now()}`, role: 'assistant', content: text }])
+      const nextMessages = [...messages, { id: `user-${Date.now()}`, role: 'user', content }, { id: `guide-${Date.now()}`, role: 'assistant', content: text }]
+      setMessages(nextMessages)
+      onMessagesChange?.(nextMessages)
       changeDraft('')
       setStreamingText('')
     } catch (requestError) {
@@ -107,7 +109,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
     } finally {
       setBusy(false)
     }
-  }, [activityBlockId, busy, changeDraft, currentDraft, lessonId, topicId])
+  }, [activityBlockId, busy, changeDraft, currentDraft, lessonId, messages, onMessagesChange, topicId])
 
   const content = (variant) => <>
     <GuideMessages messages={messages} streamingText={streamingText} busy={busy} />

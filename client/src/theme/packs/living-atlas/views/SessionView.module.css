@@ -1,0 +1,17 @@
+.root { min-height: calc(100vh - 4rem); color: var(--ink); background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--secondary) 11%, transparent), transparent 36rem); }
+.layout { display: grid; grid-template-columns: minmax(0, 48rem) minmax(14rem, 19rem); align-items: start; gap: 1.25rem; width: min(100% - 2rem, 68rem); margin: 1.5rem auto 4rem; }
+.header { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: .35rem 1rem; align-items: end; padding: 0 0 .85rem; border-bottom: 1px solid var(--border); }
+.header h1 { margin: .15rem 0 0; color: var(--ink); font: 600 clamp(1.7rem, 4vw, 2.4rem)/1.1 var(--font-display); }
+.header > strong { color: var(--primary); font: 700 .8rem/1.4 var(--font-label); }
+.back { grid-column: 1 / -1; color: var(--ink-muted); font-size: .8rem; }
+.work { min-width: 0; }
+.progress { display: grid; gap: .6rem; margin-bottom: 1rem; padding: 1rem 1.2rem; border: 1px solid var(--border); border-radius: 1.4rem .8rem; background: var(--panel); }
+.progress > div:first-child { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; color: var(--ink-soft); font-size: .85rem; }
+.kicker { color: var(--primary); font: 700 .67rem/1.4 var(--font-label); letter-spacing: .13em; }
+.track { height: .45rem; overflow: hidden; border-radius: 999px; background: var(--inset); }
+.track span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width var(--motion-standard) ease; }
+.review { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: .75rem; padding: .75rem 1rem; border-radius: 1rem; color: var(--ink-soft); background: var(--inset); font-size: .85rem; }
+.review button { color: var(--primary); font-weight: 700; }
+.guide { position: sticky; top: 1rem; min-width: 0; }
+@media (max-width: 48rem) { .layout { grid-template-columns: minmax(0, 1fr); width: min(100% - 1.25rem, 40rem); margin-top: .75rem; } .guide { position: static; } .review { align-items: flex-start; flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .track span { transition: none; } }

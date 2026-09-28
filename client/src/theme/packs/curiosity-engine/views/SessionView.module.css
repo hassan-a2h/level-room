@@ -1,0 +1,21 @@
+.root { min-height: calc(100vh - 4rem); background: radial-gradient(circle at 85% 12%, color-mix(in srgb, var(--accent-sun) 18%, transparent), transparent 15rem); }
+.container { width: min(100% - 2rem, 72rem); margin: 1rem auto 4rem; }
+.header { display: grid; grid-template-columns: 1fr auto; gap: .4rem 1rem; align-items: center; margin-bottom: 1rem; padding: 1rem 1.2rem; border: 1px solid var(--border); border-radius: 1.25rem; background: var(--panel); }
+.header h1 { margin: .1rem 0; color: var(--ink); font: 700 clamp(1.65rem, 4vw, 2.2rem)/1.1 var(--font-display); }
+.header span { color: var(--ink-soft); font-size: .85rem; }
+.header > strong { color: var(--primary); font-size: 1.25rem; }
+.back { grid-column: 1 / -1; color: var(--ink-muted); font-size: .8rem; }
+.meter { padding: 1rem 1.2rem; border: 1px solid var(--border); border-radius: 1.2rem; background: var(--panel); box-shadow: 0 10px 28px rgb(44 62 103 / 7%); }
+.meterCopy { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: .65rem; color: var(--ink-soft); font-size: .85rem; }
+.track { height: .55rem; overflow: hidden; border-radius: 999px; background: var(--inset); }
+.track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--secondary)); transition: width var(--motion-standard) ease; }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; margin-top: 1rem; }
+.activity { min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid var(--border); border-radius: 1.4rem; background: var(--panel); box-shadow: 0 16px 34px rgb(44 62 103 / 7%); }
+.guide { position: sticky; top: 1rem; min-width: 0; }
+.review { margin: 1rem 0; padding: 1rem; border: 1px solid color-mix(in srgb, var(--accent-warm) 55%, var(--border)); border-radius: 1rem; background: color-mix(in srgb, var(--accent-warm) 12%, var(--panel)); }
+.review > span { color: var(--primary); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+.review p { margin: .3rem 0 .65rem; color: var(--ink-soft); }
+.review button { color: var(--primary); font-weight: 700; }
+.complete { max-width: 52rem; margin-inline: auto; padding: 1rem; }
+@media (max-width: 48rem) { .container { width: min(100% - 1rem, 42rem); margin-top: .6rem; } .stage { grid-template-columns: 1fr; } .guide { position: static; } }
+@media (prefers-reduced-motion: reduce) { .track span { transition: none; } }

@@ -15,10 +15,11 @@ function ThemeSwatches({ theme }) {
   )
 }
 
-export default function ThemeSwitcher({ variant = 'cards', themeId: controlledThemeId, onChange, className = '' }) {
+export default function ThemeSwitcher({ variant = 'cards', themeId: controlledThemeId, value, themes: themeOptions = THEMES, onChange, className = '' }) {
   const { theme, selectTheme, storageMessage } = useTheme()
-  const selectedId = controlledThemeId ?? theme.id
-  const selected = THEMES.find((item) => item.id === selectedId) ?? theme
+  const selectedId = value ?? controlledThemeId ?? theme.id
+  const themes = Array.isArray(themeOptions) ? themeOptions : THEMES
+  const selected = themes.find((item) => item.id === selectedId) ?? theme
   const change = (id) => {
     if (onChange) onChange(id)
     else selectTheme(id)
@@ -29,7 +30,7 @@ export default function ThemeSwitcher({ variant = 'cards', themeId: controlledTh
       <label className={`theme-switcher theme-switcher--menu ${className}`.trim()}>
         <span className="theme-switcher__label">Theme</span>
         <select aria-label="Theme" value={selected.id} onChange={(event) => change(event.target.value)}>
-          {THEMES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {themes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>
     )
@@ -44,7 +45,7 @@ export default function ThemeSwitcher({ variant = 'cards', themeId: controlledTh
       <fieldset className="theme-switcher__options">
         <legend className="sr-only">Appearance themes</legend>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {THEMES.map((item) => (
+          {themes.map((item) => (
             <label key={item.id} className={`theme-card ${selected.id === item.id ? 'is-selected' : ''}`}>
               <input
                 className="sr-only"

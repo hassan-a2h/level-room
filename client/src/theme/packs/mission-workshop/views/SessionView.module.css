@@ -1,0 +1,18 @@
+.root { min-height: calc(100vh - 4rem); color: var(--ink); background: linear-gradient(135deg, color-mix(in srgb, var(--accent-warm) 4%, var(--canvas)), var(--canvas) 55%); }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; align-items: start; gap: 1rem; max-width: 78rem; margin: .75rem auto 4rem; padding: 0 1rem; }
+.header { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: .35rem 1rem; align-items: end; padding: .75rem 0; border-bottom: 1px solid var(--border-strong); }
+.header h1 { margin: .15rem 0; color: var(--ink); font: 600 clamp(1.6rem, 4vw, 2.3rem)/1.1 var(--font-display); }
+.header span { color: var(--ink-muted); font: .75rem/1.4 var(--font-label); }
+.header > strong { color: var(--primary); font: 600 1rem/1.2 var(--font-label); }
+.back { grid-column: 1 / -1; color: var(--ink-muted); font: .68rem/1.4 var(--font-label); }
+.work { min-width: 0; padding: 1rem; border: 1px solid var(--border-strong); background: var(--panel); box-shadow: 4px 4px 0 rgb(0 0 0 / 18%); }
+.progress { display: grid; gap: .55rem; margin-bottom: 1rem; padding: .75rem; border: 1px solid var(--border-strong); background: var(--inset); }
+.progress > div:first-child { display: flex; justify-content: space-between; gap: 1rem; color: var(--ink-soft); font: .7rem/1.4 var(--font-label); }
+.kicker { color: var(--accent-sun); font: 600 .68rem/1.4 var(--font-label); letter-spacing: .14em; }
+.track { height: .35rem; background: var(--border); }
+.track span { display: block; height: 100%; background: var(--primary); transition: width var(--motion-standard) ease; }
+.review { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .75rem 0; padding: .7rem; border-left: 3px solid var(--accent-sun); color: var(--ink-soft); background: var(--inset); font: .72rem/1.5 var(--font-label); }
+.review button { flex: 0 0 auto; color: var(--primary); font: 600 .7rem/1.4 var(--font-label); text-decoration: underline; }
+.guide { position: sticky; top: .75rem; min-width: 0; }
+@media (max-width: 48rem) { .layout { grid-template-columns: 1fr; margin-top: .5rem; padding: 0 .55rem; } .guide { position: static; } .review { align-items: flex-start; flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .track span { transition: none; } }

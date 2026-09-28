@@ -1,0 +1,14 @@
+.root { max-width: 70rem; margin: 1rem auto; padding: 1.25rem; border: 1px solid var(--border); border-radius: 1.75rem .9rem; background: var(--panel); box-shadow: 0 18px 45px rgb(35 60 42 / 7%); }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.heading h2 { margin: .15rem 0 0; color: var(--ink); font: 600 1.75rem/1.15 var(--font-display); }
+.heading > span { padding: .45rem .75rem; border-radius: 999px; color: var(--primary); background: var(--inset); font: 700 .68rem/1.3 var(--font-label); text-transform: uppercase; }
+.kicker { margin: 0; color: var(--primary); font: 700 .66rem/1.4 var(--font-label); letter-spacing: .12em; }
+.stages { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; margin: 1rem 0; padding: 0; list-style: none; color: var(--ink-muted); font-size: .72rem; }
+.stages li { padding: .4rem .65rem; border-radius: 999px; background: var(--inset); }
+.stages li[aria-current="step"] { color: var(--primary-contrast); background: var(--primary); }
+.finish { display: flex; justify-content: center; padding: 1rem; }
+.root :global(.build-brief), .root :global(.build-result > .ui-panel) { border-radius: 1.25rem .7rem; }
+.root :global(.build-safety-note) { padding: .7rem; border-left: 3px solid var(--accent-sun); color: var(--ink-soft); background: var(--inset); }
+.root :global(.build-evidence-fields textarea) { min-height: 6rem; }
+@media (max-width: 36rem) { .root { margin: .65rem; padding: .9rem; } .heading { align-items: flex-start; flex-direction: column; } .stages { justify-content: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .root, .root * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
