@@ -1,0 +1,81 @@
+.trail-scene {
+  min-height: calc(100vh - 8rem);
+  padding: 1.5rem 1rem 3rem;
+  color: var(--ui-text);
+}
+
+.trail-scene-inner {
+  width: min(100%, 80rem);
+  margin: 0 auto;
+}
+
+.trail-heading,
+.trail-heading-copy,
+.trail-layout,
+.trail-path-heading,
+.trail-sheet-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.trail-heading { margin-bottom: 1.25rem; }
+.trail-heading-copy { align-items: flex-end; justify-content: flex-start; flex-wrap: wrap; }
+.trail-eyebrow { margin: 0; color: var(--ui-text-muted); font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.trail-page-title { margin: .25rem 0 0; font-size: clamp(1.65rem, 4vw, 2.35rem); font-weight: 700; line-height: 1.1; }
+.trail-heading-subtitle { margin: 0 0 .15rem; color: var(--ui-text-muted); font-size: .9rem; }
+.trail-topic-popover { position: relative; z-index: 4; flex: 0 1 auto; min-width: 0; }
+.trail-topic-trigger { max-width: min(20rem, 46vw); min-height: 2.75rem; gap: .75rem; }
+.trail-topic-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trail-topic-menu { position: absolute; top: calc(100% + .5rem); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: .5rem; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); box-shadow: 0 16px 40px rgb(0 0 0 / 16%); }
+.trail-topic-menu[hidden] { display: none; }
+.trail-topic-option { display: flex; align-items: center; gap: .25rem; padding: .25rem; border-radius: .65rem; }
+.trail-topic-option[aria-current="true"], .trail-topic-option:has([aria-pressed="true"]) { background: var(--ui-surface-alt); }
+.trail-topic-select { display: block; flex: 1; min-width: 0; padding: .45rem .55rem; text-align: left; }
+.trail-topic-option-title { display: block; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.trail-topic-option-state { display: block; color: var(--ui-text-muted); font-size: .75rem; }
+.trail-topic-delete { flex: none; min-height: 2.25rem; padding: .25rem .5rem; font-size: .75rem; }
+.trail-topic-new { display: block; margin-top: .25rem; padding: .65rem; border-top: 1px solid var(--ui-border); color: var(--ui-action); font-weight: 650; }
+.trail-error { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: .85rem 1rem; border: 1px solid var(--ui-danger-border); border-radius: var(--ui-radius-md); background: var(--ui-danger-bg); color: var(--ui-danger-text); }
+.trail-statusline { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0 0 .65rem; color: var(--ui-text-muted); font-size: .8rem; }
+.trail-progress-label { white-space: nowrap; }
+.trail-next-action { margin-bottom: 1.25rem; }
+.trail-next-action > section { min-height: 8rem; }
+.trail-complete-note, .trail-state-card { max-width: 54rem; margin: 1.5rem auto; padding: clamp(1.5rem, 4vw, 3rem); }
+.trail-empty { display: flex; min-height: 45vh; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: clamp(1.5rem, 5vw, 3rem); text-align: center; }
+.trail-empty-mark { display: grid; width: 3.5rem; height: 3.5rem; place-items: center; margin-bottom: .75rem; border-radius: 50%; background: var(--accent-soft); font-size: 1.6rem; }
+.trail-layout { align-items: flex-start; }
+.trail-path { flex: 1 1 66%; min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
+.trail-path-heading { margin-bottom: 1rem; align-items: flex-end; }
+.trail-track-title { overflow-wrap: anywhere; margin: .25rem 0 0; font-size: clamp(1.25rem, 3vw, 1.65rem); font-weight: 700; }
+.trail-progress { width: min(12rem, 30%); height: .5rem; flex: none; overflow: hidden; border-radius: 99px; background: var(--ui-surface-alt); }
+.trail-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--ui-action); }
+.trail-parent-track { margin: 0 0 1rem; padding: .45rem .7rem; border: 1px solid var(--ui-border); border-radius: .8rem; color: var(--ui-text-secondary); font-size: .85rem; }
+.trail-chapter-list { position: relative; display: flex; flex-direction: column; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.trail-chapter-list > li { list-style: none; }
+.trail-chapter-list > li article { min-width: 0; }
+.trail-chapter-list h3, .trail-chapter-list button { overflow-wrap: anywhere; }
+.trail-no-chapters { padding: 1rem; border: 1px dashed var(--ui-border); border-radius: .85rem; color: var(--ui-text-secondary); font-size: .9rem; }
+.trail-window-note { margin: .5rem 0; color: var(--ui-text-muted); font-size: .78rem; text-align: center; }
+.trail-open-track { width: 100%; margin-top: 1rem; }
+.trail-support { display: flex; width: min(30%, 22rem); flex-direction: column; gap: .75rem; }
+.trail-open-progress { width: 100%; min-height: 2.75rem; border: 1px solid var(--ui-border); border-radius: .8rem; }
+.trail-sheet-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(10 17 19 / 58%); }
+.trail-sheet { display: flex; width: min(100%, 64rem); max-height: min(90vh, 56rem); flex-direction: column; padding: 1rem; }
+.trail-sheet-heading { position: sticky; top: 0; z-index: 1; flex: none; padding-bottom: .75rem; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
+.trail-sheet-content { overflow: auto; padding: 1rem .15rem .25rem; }
+.trail-progress-sheet { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 1rem; }
+
+@media (max-width: 48rem) {
+  .trail-scene { padding: 1rem .75rem 2rem; }
+  .trail-heading { align-items: flex-start; }
+  .trail-heading-copy { display: block; }
+  .trail-heading-subtitle { margin-top: .5rem; }
+  .trail-topic-trigger { max-width: 38vw; }
+  .trail-statusline { align-items: flex-start; flex-direction: column; gap: .25rem; }
+  .trail-layout { flex-direction: column; }
+  .trail-path, .trail-support { width: 100%; }
+  .trail-support { display: grid; grid-template-columns: 1fr; }
+  .trail-progress-sheet { grid-template-columns: 1fr; }
+}

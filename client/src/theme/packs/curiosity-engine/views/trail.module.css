@@ -1,0 +1,72 @@
+:global(.trail-scene--curiosity) {
+  background-image: radial-gradient(ellipse at 50% 0, color-mix(in srgb, var(--accent-soft) 82%, transparent), transparent 42%);
+}
+
+:global(.trail-scene--curiosity .trail-page-title),
+:global(.trail-scene--curiosity .trail-track-title) {
+  letter-spacing: -.035em;
+}
+
+:global(.trail-scene--curiosity .trail-next-action > section) {
+  color: var(--primary-contrast);
+  border: 0;
+  background: linear-gradient(125deg, var(--primary), var(--secondary));
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+:global(.trail-scene--curiosity .trail-next-action > section h2),
+:global(.trail-scene--curiosity .trail-next-action > section p),
+:global(.trail-scene--curiosity .trail-next-action > section span) {
+  color: inherit;
+}
+
+:global(.trail-scene--curiosity .trail-next-action .ui-button-primary) {
+  background: var(--ui-surface);
+  color: var(--primary);
+}
+
+:global(.trail-scene--curiosity .trail-next-action .ui-button-secondary) {
+  border-color: color-mix(in srgb, white 72%, transparent);
+  color: white;
+}
+
+:global(.trail-scene--curiosity .trail-path) {
+  overflow: hidden;
+  border-radius: 2rem 2rem 2rem .7rem;
+}
+
+:global(.trail-scene--curiosity .trail-chapter-list) {
+  position: relative;
+  gap: 1.1rem;
+  padding: .25rem .25rem .25rem 1.3rem;
+}
+
+:global(.trail-scene--curiosity .trail-chapter-list::before) {
+  position: absolute;
+  top: .75rem;
+  bottom: .75rem;
+  left: .35rem;
+  width: 1.2rem;
+  border-right: 2px solid var(--ui-action);
+  border-radius: 0 58% 58% 0;
+  content: '';
+  opacity: .7;
+}
+
+:global(.trail-scene--curiosity .trail-chapter-list > li) {
+  border: 0;
+  padding: 0;
+}
+
+:global(.trail-scene--curiosity .trail-chapter-list > li:nth-child(even)) {
+  margin-left: 1.35rem;
+}
+
+:global(.trail-scene--curiosity .trail-chapter-list > li article) {
+  border-radius: 1.4rem 1.4rem 1.4rem .5rem;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+:global(.trail-scene--curiosity .trail-open-track) {
+  transform: rotate(-1deg);
+}

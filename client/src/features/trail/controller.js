@@ -28,17 +28,20 @@ export function buildTrailViewModel({
 } = {}) {
   const chapters = chaptersFromDashboard(dashboard)
   const resolvedState = state || (loading ? 'loading' : dashboard ? 'ready' : topics?.length === 0 ? 'empty' : 'loading')
+  const requestedChapter = chapters.find((chapter) => chapter.id === currentChapterId)
+  const actionChapter = chapters.find((chapter) => chapter.id === dashboard?.nextAction?.moduleId)
+  const resolvedCurrentChapterId = requestedChapter?.id ?? actionChapter?.id ?? chapters.find((chapter) => chapter.status !== 'completed')?.id ?? chapters.at(-1)?.id ?? null
   return {
     state: resolvedState,
     topic: dashboard?.topic || {},
     topics: Array.isArray(topics) ? topics : [],
     nextAction: dashboard?.nextAction || {},
     chapters,
-    visibleChapters: fiveChapterWindow(chapters, currentChapterId),
+    visibleChapters: fiveChapterWindow(chapters, resolvedCurrentChapterId),
     review: dashboard?.reviewSummary || reviewCounts || {},
     rhythm: dashboard?.weeklyRhythm || {},
     focusAreas: Array.isArray(dashboard?.focusAreas) ? dashboard.focusAreas : [],
-    ui: { activeTopicId, examChapterId },
+    ui: { activeTopicId, examChapterId, currentChapterId: resolvedCurrentChapterId },
     busy: { loading, switching },
     error,
   }

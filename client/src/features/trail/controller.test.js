@@ -44,4 +44,21 @@ describe('buildTrailViewModel', () => {
       .toEqual([4, 5, 6, 7, 8])
     expect(buildTrailViewModel({}).chapters).toEqual([])
   })
+
+  it('falls back to a real incomplete Chapter when the requested Chapter is missing', () => {
+    const model = buildTrailViewModel({
+      dashboard: {
+        modules: [
+          { id: 1, status: 'completed' },
+          { id: 2, status: 'active' },
+          { id: 3, status: 'active' },
+        ],
+        nextAction: { kind: 'start_session', moduleId: 999 },
+      },
+      currentChapterId: 999,
+    })
+
+    expect(model.ui.currentChapterId).toBe(2)
+    expect(model.visibleChapters.map((chapter) => chapter.id)).toEqual([1, 2, 3])
+  })
 })

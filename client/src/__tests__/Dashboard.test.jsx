@@ -117,33 +117,24 @@ describe('Dashboard', () => {
     expect(getDashboard).toHaveBeenCalledWith(1, '2026-09-26', 'Asia/Karachi')
   })
 
-  it('preserves the required mobile reading order while keeping each area semantic', async () => {
+  it('keeps the next step before the route and support details', async () => {
     renderDashboard()
-    await screen.findByRole('region', { name: /today's next step/i })
-
-    const labels = [
-      /today's next step/i,
-      /your trail so far/i,
-      /reviews due/i,
-      /remaining trail/i,
-      /weekly rhythm/i,
-      /focus areas/i,
-    ]
-    const regions = labels.map((label) => screen.getByRole('region', { name: label }))
-    for (let index = 0; index < regions.length - 1; index += 1) {
-      expect(regions[index].compareDocumentPosition(regions[index + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    }
+    const scene = await screen.findByRole('main')
+    const action = within(scene).getByRole('region', { name: /today's next step/i })
+    const path = within(scene).getByRole('region', { name: /your trail so far/i })
+    const support = within(scene).getByRole('region', { name: /reviews due/i })
+    expect(action.compareDocumentPosition(path) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(path.compareDocumentPosition(support) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('places the learning path in the wide desktop column and support cards in the narrow rail', async () => {
+  it('keeps the support details available without adding another dashboard fetch', async () => {
     renderDashboard()
-    const today = await screen.findByRole('region', { name: /today's next step/i })
-    const layout = today.parentElement.parentElement
-    expect(layout).toHaveClass('lg:grid-cols-12')
-    expect(today.parentElement).toHaveClass('lg:col-span-8', 'lg:row-start-1')
-    expect(screen.getByRole('region', { name: /weekly rhythm/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-1')
-    expect(screen.getByRole('region', { name: /reviews due/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-2')
-    expect(screen.getByRole('region', { name: /focus areas/i }).parentElement).toHaveClass('lg:col-start-9', 'lg:col-span-4', 'lg:row-start-3')
+    await screen.findByRole('region', { name: /today's next step/i })
+    fireEvent.click(screen.getByRole('button', { name: /progress and focus/i }))
+    expect(screen.getByRole('dialog', { name: /progress and focus/i })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /weekly rhythm/i })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /focus areas/i })).toBeInTheDocument()
+    expect(getDashboard).toHaveBeenCalledTimes(1)
   })
 
   it('expands the current Chapter, collapses completed Chapters, marks Builds, and explains locked work', async () => {
@@ -159,17 +150,19 @@ describe('Dashboard', () => {
     renderDashboard()
 
     await screen.findByRole('region', { name: /your trail so far/i })
-    expect(screen.getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'false')
-    const currentChapter = screen.getByRole('button', { name: /chapter 2, state and events/i })
+    fireEvent.click(screen.getByRole('button', { name: /view full track/i }))
+    const track = screen.getByRole('dialog', { name: /full track/i })
+    expect(within(track).getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'true')
+    const currentChapter = within(track).getByRole('button', { name: /chapter 2, state and events/i })
     expect(currentChapter).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText(/build session/i)).toBeInTheDocument()
-    expect(screen.getByText(/checkpoint ready/i)).toBeInTheDocument()
-    const locked = screen.getByRole('button', { name: /compose a flow, locked/i })
+    expect(within(track).getByText(/build session/i)).toBeInTheDocument()
+    expect(within(track).getByText(/checkpoint ready/i)).toBeInTheDocument()
+    const locked = within(track).getByRole('button', { name: /compose a flow, locked/i })
     expect(locked).toBeDisabled()
-    expect(screen.getByText(/complete the earlier chapter first/i)).toBeInTheDocument()
+    expect(within(track).getByText(/complete the earlier chapter first/i)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /chapter 1, components/i }))
-    expect(screen.getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(within(track).getByRole('button', { name: /chapter 1, components/i }))
+    expect(within(track).getByRole('button', { name: /chapter 1, components/i })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('switches Trails and selects a continuation from the URL without guessing priority', async () => {
@@ -180,7 +173,8 @@ describe('Dashboard', () => {
     renderDashboard()
 
     await screen.findByRole('region', { name: /today's next step/i })
-    fireEvent.click(screen.getByRole('button', { name: /^calcul(us)?/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choose trail/i }))
+    fireEvent.click(screen.getByText('Calculus').closest('button'))
     await waitFor(() => expect(selectTopic).toHaveBeenCalledWith(2))
     expect(await screen.findByRole('heading', { name: /^calcul(us)?$/i })).toBeInTheDocument()
 
@@ -198,6 +192,7 @@ describe('Dashboard', () => {
     renderDashboard()
 
     await screen.findByRole('region', { name: /today's next step/i })
+    fireEvent.click(screen.getByRole('button', { name: /choose trail/i }))
     expect(screen.queryByRole('button', { name: /delete trail react/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /delete trail calculus/i })).toBeInTheDocument()
   })

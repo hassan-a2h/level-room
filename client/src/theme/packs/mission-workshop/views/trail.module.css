@@ -1,0 +1,48 @@
+:global(.trail-scene--workshop .trail-scene-inner) {
+  max-width: 76rem;
+}
+
+:global(.trail-scene--workshop .trail-heading) {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+:global(.trail-scene--workshop .trail-eyebrow),
+:global(.trail-scene--workshop .trail-statusline),
+:global(.trail-scene--workshop .trail-progress-label) {
+  font-family: var(--font-label);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+:global(.trail-scene--workshop .trail-next-action > section) {
+  border: 1px solid var(--border-strong);
+  border-top: .35rem solid var(--accent-sun);
+  border-radius: .35rem;
+  background: linear-gradient(165deg, var(--ui-surface), color-mix(in srgb, var(--accent-soft) 48%, var(--ui-surface)));
+  box-shadow: 5px 6px 0 color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+:global(.trail-scene--workshop .trail-path) {
+  border-radius: .45rem;
+  border-left: .35rem solid var(--ui-action);
+}
+
+:global(.trail-scene--workshop .trail-chapter-list) {
+  gap: .75rem;
+  padding-left: .75rem;
+}
+
+:global(.trail-scene--workshop .trail-chapter-list > li) {
+  border-left: 2px dashed var(--border-strong);
+}
+
+:global(.trail-scene--workshop .trail-chapter-list > li article) {
+  border-radius: .4rem;
+}
+
+:global(.trail-scene--workshop .trail-open-track) {
+  border-radius: .35rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}

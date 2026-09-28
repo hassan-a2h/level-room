@@ -1,0 +1,32 @@
+:global(.trail-scene--atlas) {
+  background-image: radial-gradient(ellipse at 14% 12%, color-mix(in srgb, var(--accent-soft) 74%, transparent) 0, transparent 34%), radial-gradient(ellipse at 90% 42%, color-mix(in srgb, var(--ui-surface-alt) 78%, transparent) 0, transparent 30%);
+}
+
+:global(.trail-scene--atlas .trail-path) {
+  border-radius: 1.5rem;
+  background-image: repeating-radial-gradient(ellipse at 2rem 2rem, transparent 0 23px, color-mix(in srgb, var(--ui-border) 12%, transparent) 24px 25px, transparent 26px 38px);
+}
+
+:global(.trail-scene--atlas .trail-chapter-list) {
+  gap: 1rem;
+  padding-left: .5rem;
+}
+
+:global(.trail-scene--atlas .trail-chapter-list > li) {
+  border-left: 2px solid var(--ui-action);
+  padding-left: 1.1rem;
+}
+
+:global(.trail-scene--atlas .trail-chapter-list > li article) {
+  border-radius: 1.25rem;
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+:global(.trail-scene--atlas .trail-next-action > section) {
+  border-left: .35rem solid var(--ui-action);
+  background-image: linear-gradient(110deg, var(--ui-surface) 70%, var(--accent-soft));
+}
+
+:global(.trail-scene--atlas .trail-open-track) {
+  border-radius: 999px;
+}

@@ -19,25 +19,27 @@ export default function ChapterCard({
   chapterNumber,
   isCurrent = false,
   isFuture = false,
+  showAllDetails = false,
   onStartSession,
   onStartCheckpoint,
 }) {
   const completed = chapter.status === 'completed'
-  const [expanded, setExpanded] = useState(isCurrent || (!completed && !isFuture))
+  const [expanded, setExpanded] = useState(showAllDetails || isCurrent || (!completed && !isFuture))
   const contentId = `chapter-details-${chapter.id}`
   const checkpoint = checkpointPresentation(chapter.checkpointStatus)
-  const sessions = Array.isArray(chapter.lessons) ? chapter.lessons : []
+  const sessions = Array.isArray(chapter.sessions) ? chapter.sessions : Array.isArray(chapter.lessons) ? chapter.lessons : []
   const outcomes = Array.isArray(chapter.skill_outcomes) ? chapter.skill_outcomes.slice(0, 3) : []
 
   useEffect(() => {
-    if (isCurrent) setExpanded(true)
+    if (showAllDetails) setExpanded(true)
+    else if (isCurrent) setExpanded(true)
     else if (completed) setExpanded(false)
     else if (isFuture) setExpanded(false)
-  }, [isCurrent, completed, isFuture])
+  }, [isCurrent, completed, isFuture, showAllDetails])
 
   return (
     <li className={`relative list-none border-l-2 pl-4 sm:pl-6 ${isCurrent ? 'border-[var(--ui-focus)]' : 'ui-divider'}`}>
-      <article className={`ui-surface ${isCurrent ? 'ui-surface-raised' : 'ui-surface-flat'} p-4 sm:p-5`}>
+      <article aria-label={`Chapter ${chapterNumber}: ${chapter.title}`} className={`ui-surface ${isCurrent ? 'ui-surface-raised' : 'ui-surface-flat'} p-4 sm:p-5`}>
         <div className="flex items-start gap-3">
           <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold" aria-hidden="true" style={{ color: isCurrent ? 'var(--ui-action-text)' : 'var(--ui-text-secondary)', backgroundColor: isCurrent ? 'var(--ui-action)' : 'var(--ui-surface-alt)' }}>
             {completed ? '✓' : chapterNumber}
@@ -68,7 +70,7 @@ export default function ChapterCard({
               </button>
             )}
 
-            {isFuture ? (
+            {isFuture && !showAllDetails ? (
               <div id={contentId} className="mt-3 space-y-2">
                 <p className="text-xs ui-text-muted">Complete the earlier Chapter first.</p>
                 {sessions[0] && (
