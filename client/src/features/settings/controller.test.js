@@ -51,4 +51,12 @@ describe('settings controller', () => {
       codexConnection: {}, ready: false, saving: false, pendingBackup: null,
     })
   })
+
+  it('accepts the active application theme catalog through injection', async () => {
+    const themes = [{ id: 'theme-a', name: 'Theme A' }]
+    const getSettingsFn = vi.fn().mockResolvedValue({ provider: '', providers, envStatus: [] })
+    const { result } = renderHook(() => useSettingsController({ themes, getSettingsFn }))
+    await waitFor(() => expect(result.current.model.phase).toBe('ready'))
+    expect(result.current.model.themes).toEqual(themes)
+  })
 })

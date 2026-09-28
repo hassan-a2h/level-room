@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { exportData, getSettings, importData, saveSettings } from '../../api.js'
-import { THEMES } from '../../theme/themes.js'
 import { toPublicError } from '../../lib/publicError.js'
 
 export function buildSettingsViewModel(state = {}) {
   return {
     phase: state.loading === false ? 'ready' : state.phase || 'loading',
     category: state.category || 'appearance',
-    themes: Array.isArray(state.themes) ? state.themes : THEMES,
+    themes: Array.isArray(state.themes) ? state.themes : [],
     themeId: state.themeId || 'morning-mist',
     providers: Array.isArray(state.providers) ? state.providers : [],
     provider: state.provider || null,
@@ -27,6 +26,7 @@ export function buildSettingsViewModel(state = {}) {
 
 export function useSettingsController({
   themeId = 'morning-mist',
+  themes = [],
   getSettingsFn = getSettings,
   saveSettingsFn = saveSettings,
   exportDataFn = exportData,
@@ -172,11 +172,11 @@ export function useSettingsController({
   }, [provider])
 
   const modelView = useMemo(() => buildSettingsViewModel({
-    loading, category, themeId, providers, provider, model, reasoningEffort, environmentStatuses,
+    loading, category, themeId, themes, providers, provider, model, reasoningEffort, environmentStatuses,
     codexConnection, ready, saving,
     exportState: { exporting }, importState: { importing, progress: importProgress },
     pendingBackup, success, error,
-  }), [category, codexConnection, error, environmentStatuses, exporting, importProgress, importing, loading, model, pendingBackup, provider, providers, ready, reasoningEffort, saving, success, themeId])
+  }), [category, codexConnection, error, environmentStatuses, exporting, importProgress, importing, loading, model, pendingBackup, provider, providers, ready, reasoningEffort, saving, success, themeId, themes])
 
   return { model: modelView, apiKeySet, changeProvider, changeModel, changeReasoningEffort, save, exportBackup, readImportFile, confirmImport, cancelImport, onCodexConnectionChange }
 }
