@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getExam,
@@ -10,9 +10,8 @@ import {
   submitPartialRetest,
   getLocalDate,
 } from '../api.js'
-import CheckpointIntro from './checkpoint/CheckpointIntro.jsx'
-import CheckpointQuestion from './checkpoint/CheckpointQuestion.jsx'
-import CheckpointResults from './checkpoint/CheckpointResults.jsx'
+import { useThemeView } from '../theme/ThemeProvider.jsx'
+import { buildCheckpointViewModel } from '../features/checkpoint/controller.js'
 
 const SAVE_DEBOUNCE_MS = 500
 
@@ -39,6 +38,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   const saveChainRef = useRef(Promise.resolve())
   const answerControlRef = useRef(null)
   const navigate = useNavigate()
+  const CheckpointThemeView = useThemeView('CheckpointView')
 
   const outcomes = exam?.outcomes?.length ? exam.outcomes : chapterOutcomes
   const currentQuestion = questions[currentIndex]
@@ -122,13 +122,27 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     setError('')
   }, [persistAnswers])
 
-  const handleSubmit = useCallback(async () => {
+  const handleReview = useCallback(() => {
     const incompleteIndex = questions.findIndex((question) => !hasAnswer(answers[question.id]))
     if (incompleteIndex >= 0) {
       const missingQuestion = questions[incompleteIndex]
       setCurrentIndex(incompleteIndex)
       setFocusQuestionId(missingQuestion.id)
       setError(`There ${questions.length - answeredCount === 1 ? 'is' : 'are'} still ${questions.length - answeredCount} unanswered ${questions.length - answeredCount === 1 ? 'question' : 'questions'}. We’ve taken you to the first one.`)
+      return
+    }
+    setError('')
+    setPhase('answer-review')
+  }, [answers, answeredCount, questions])
+
+  const handleSubmit = useCallback(async () => {
+    if (phase !== 'answer-review') return
+    const incompleteIndex = questions.findIndex((question) => !hasAnswer(answers[question.id]))
+    if (incompleteIndex >= 0) {
+      setPhase('player')
+      setCurrentIndex(incompleteIndex)
+      setFocusQuestionId(questions[incompleteIndex].id)
+      setError('Please answer every question before submitting.')
       return
     }
 
@@ -147,6 +161,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
       if (submitError.unansweredQuestionIds?.length) {
         const missingIndex = questions.findIndex((question) => question.id === submitError.unansweredQuestionIds[0])
         if (missingIndex >= 0) {
+          setPhase('player')
           setCurrentIndex(missingIndex)
           setFocusQuestionId(questions[missingIndex].id)
         }
@@ -155,7 +170,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     } finally {
       setLoading(false)
     }
-  }, [answers, answeredCount, isPartialRetest, moduleId, persistAnswers, questions, retestId, topicId])
+  }, [answers, isPartialRetest, moduleId, persistAnswers, phase, questions, retestId, topicId])
 
   const handlePartialRetest = useCallback(() => {
     const failedOutcomeIds = evaluation?.failedOutcomeIds || []
@@ -167,101 +182,29 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     navigate(`/topic/${topicId}/lesson/${lessonId}`)
   }, [navigate, topicId])
 
-  if (loading && phase === 'intro' && !error && !exam) {
-    return <div className="checkpoint-loading" role="status">Getting your Chapter ready…</div>
+  if (loading && phase === 'intro' && !error && !exam) return <div className="checkpoint-loading" role="status">Getting your Chapter ready…</div>
+
+  const checkpointModel = buildCheckpointViewModel({
+    phase, exam, module: { title: exam?.moduleTitle || moduleTitle, lessons: moduleLessons }, outcomes,
+    questions, answers, currentIndex, saveState, evaluation, isPartialRetest, ready,
+    lessonsRemaining: lessonsRemaining || incompleteLessonCount,
+    busy: { loading }, error: error ? { message: error } : null, answerRef: answerControlRef,
+  })
+  checkpointModel.actions = {
+    start: () => launchAttempt(() => startExam(topicId, moduleId)),
+    continueLearning: firstIncompleteLesson ? () => handleReviewLesson(firstIncompleteLesson.id) : null,
+    answer: handleAnswerChange,
+    previous: () => { setCurrentIndex((index) => Math.max(0, index - 1)); setFocusQuestionId(null) },
+    next: () => { setCurrentIndex((index) => Math.min(questions.length - 1, index + 1)); setFocusQuestionId(null) },
+    selectQuestion: (index) => { setCurrentIndex(index); setFocusQuestionId(null) },
+    review: handleReview,
+    submit: handleSubmit,
+    backToQuestions: () => setPhase('player'),
+    editQuestion: (index) => { setCurrentIndex(index); setFocusQuestionId(null); setPhase('player') },
+    back: onBack || (() => navigate('/')),
+    retake: () => launchAttempt(() => retakeExam(topicId, moduleId)),
+    partialRetest: handlePartialRetest,
+    reviewLesson: handleReviewLesson,
   }
-
-  if (phase === 'results' && evaluation) {
-    return (
-      <CheckpointResults
-        evaluation={evaluation}
-        outcomes={outcomes}
-        moduleLessons={moduleLessons}
-        questions={questions}
-        answers={answers}
-        loading={loading}
-        error={error}
-        onBack={onBack}
-        onRetake={() => launchAttempt(() => retakeExam(topicId, moduleId))}
-        onPartialRetest={handlePartialRetest}
-        onReviewLesson={handleReviewLesson}
-      />
-    )
-  }
-
-  if (phase === 'intro') {
-    return (
-      <CheckpointIntro
-        moduleTitle={exam?.moduleTitle || moduleTitle}
-        outcomes={outcomes}
-        lessonCount={moduleLessons.length}
-        ready={ready}
-        lessonsRemaining={lessonsRemaining || incompleteLessonCount}
-        loading={loading}
-        error={error}
-        onStart={() => launchAttempt(() => startExam(topicId, moduleId))}
-        onContinueLearning={firstIncompleteLesson ? () => handleReviewLesson(firstIncompleteLesson.id) : null}
-      />
-    )
-  }
-
-  return (
-    <section className="checkpoint-player" aria-labelledby="checkpoint-player-title">
-      <header className="checkpoint-player-header">
-        <div>
-          <div className="checkpoint-eyebrow">{isPartialRetest ? 'Targeted practice' : 'Chapter checkpoint'}</div>
-          <h2 id="checkpoint-player-title">{exam?.moduleTitle || moduleTitle || 'Your learning, together'}</h2>
-        </div>
-        <div className="checkpoint-save-state" role="status" aria-live="polite">
-          {saveState === 'saving' ? 'Saving your place…' : saveState === 'saved' ? 'Saved as you go' : saveState === 'error' ? 'Save paused — we’ll retry when you continue' : 'Autosave is on'}
-        </div>
-      </header>
-
-      <div className="checkpoint-progress-row">
-        <span>{answeredCount} of {questions.length} answered</span>
-        <div className="checkpoint-progress-track" role="progressbar" aria-label="Checkpoint questions answered" aria-valuemin={0} aria-valuemax={questions.length} aria-valuenow={answeredCount}>
-          <span style={{ width: `${questions.length ? (answeredCount / questions.length) * 100 : 0}%` }} />
-        </div>
-      </div>
-
-      {error && <div className="ui-alert ui-alert-danger checkpoint-inline-error" role="alert">{error}</div>}
-
-      <nav className="checkpoint-question-nav" aria-label="Checkpoint questions">
-        {questions.map((question, index) => {
-          const answered = hasAnswer(answers[question.id])
-          return (
-            <button
-              key={question.id}
-              type="button"
-              className={`checkpoint-question-nav-item${index === currentIndex ? ' is-current' : ''}${answered ? ' is-answered' : ''}`}
-              aria-label={`Question ${index + 1}${index === currentIndex ? ', current' : ''}${answered ? ', answered' : ', unanswered'}`}
-              aria-current={index === currentIndex ? 'step' : undefined}
-              onClick={() => { setCurrentIndex(index); setFocusQuestionId(null) }}
-            >{answered ? '✓' : index + 1}</button>
-          )
-        })}
-      </nav>
-
-      {currentQuestion && (
-        <CheckpointQuestion
-          question={currentQuestion}
-          answer={answers[currentQuestion.id] || ''}
-          index={currentIndex}
-          total={questions.length}
-          onAnswerChange={handleAnswerChange}
-          answerRef={answerControlRef}
-          disabled={loading}
-        />
-      )}
-
-      <footer className="checkpoint-player-actions">
-        <button className="ui-button ui-button-secondary" type="button" onClick={() => { setCurrentIndex((index) => Math.max(0, index - 1)); setFocusQuestionId(null) }} disabled={currentIndex === 0 || loading}>← Previous</button>
-        {currentIndex < questions.length - 1 ? (
-          <button className="ui-button ui-button-primary" type="button" onClick={() => { setCurrentIndex((index) => Math.min(questions.length - 1, index + 1)); setFocusQuestionId(null) }} disabled={loading}>Next question →</button>
-        ) : (
-          <button className="ui-button ui-button-primary" type="button" onClick={handleSubmit} disabled={loading}>{loading ? 'Checking your work…' : 'Finish checkpoint'}</button>
-        )}
-      </footer>
-    </section>
-  )
+  return <Suspense fallback={<div className="checkpoint-loading" role="status">Preparing your Chapter checkpoint…</div>}><CheckpointThemeView model={checkpointModel} /></Suspense>
 }

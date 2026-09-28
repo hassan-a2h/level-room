@@ -1,0 +1,34 @@
+.root { display: block; width: min(100% - 2rem, 58rem); margin: 0 auto; padding: 1.5rem 0 3rem; }
+.root :global(.review-page-heading), .root :global(.review-session-heading) { margin-bottom: 1.25rem; }
+.root :global(.review-page-heading h1), .root :global(.review-session-heading h1) { margin: .35rem 0; font-family: var(--font-display); font-size: clamp(1.8rem, 4vw, 2.5rem); color: var(--ink); }
+.root :global(.review-session-heading > p:last-child) { color: var(--ink-muted); }
+.root :global(.review-queue-summary), .root :global(.review-session-progress) { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--panel); }
+.root :global(.review-queue-summary p) { display: flex; align-items: center; gap: .75rem; margin: 0; color: var(--ink-soft); }
+.root :global(.review-session-progress) { display: block; }
+.root :global(.review-session-progress p) { margin: .6rem 0 0; color: var(--ink-muted); font-size: .875rem; }
+.root :global(.review-queue-list) { display: grid; gap: .85rem; }
+.root :global(.review-queue-card), .root :global(.review-session-card), .root :global(.checkpoint-answer-review) { padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid var(--border); background-color: var(--panel); color: var(--ink); }
+.root :global(.review-queue-card-meta), .root :global(.review-question-meta), .root :global(.review-session-actions), .root :global(.review-answer-list li), .root :global(.checkpoint-review-answers li) { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.root :global(.review-queue-card-meta) { justify-content: flex-start; flex-wrap: wrap; color: var(--ink-muted); font-size: .8rem; }
+.root :global(.review-queue-card h2), .root :global(.review-session-card h2), .root :global(.checkpoint-answer-review h2) { margin: .65rem 0; color: var(--ink); font-family: var(--font-display); }
+.root :global(.review-queue-card p), .root :global(.review-session-card p), .root :global(.checkpoint-answer-review p) { color: var(--ink-soft); }
+.root :global(.review-empty), .root :global(.review-expired) { display: grid; justify-items: center; gap: .75rem; margin: 3rem auto; padding: 2rem; text-align: center; border: 1px solid var(--border); border-radius: var(--radius-hero); background: var(--panel); }
+.root :global(.review-empty h2), .root :global(.review-expired h1) { margin: 0; font-family: var(--font-display); color: var(--ink); }
+.root :global(.review-empty p), .root :global(.review-expired p) { max-width: 36rem; color: var(--ink-soft); }
+.root :global(.review-empty-mark) { color: var(--primary); font-size: 2.5rem; }
+.root :global(.review-answer-list), .root :global(.checkpoint-review-answers) { display: grid; gap: .75rem; margin: 1.25rem 0; padding: 0; list-style: none; }
+.root :global(.review-answer-list li), .root :global(.checkpoint-review-answers li) { align-items: flex-start; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--inset); }
+.root :global(.review-answer-list li > div), .root :global(.checkpoint-review-answers li > div) { min-width: 0; }
+.root :global(.review-answer-list li span), .root :global(.checkpoint-review-answers li span) { color: var(--ink-muted); font-size: .75rem; }
+.root :global(.review-answer-list li p), .root :global(.checkpoint-review-answers li p) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.root :global(.review-session-actions) { margin-top: 1.25rem; }
+.root :global(.review-feedback-status) { margin-bottom: .75rem; }
+.root :global(.review-feedback-copy) { min-height: 4rem; font-size: 1.05rem; line-height: 1.6; }
+.root :global(.review-summary-score) { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.root :global(.review-summary-score strong) { color: var(--primary); font-size: 2.5rem; }
+.root :global(.review-summary-items) { width: 100%; margin: 1rem 0; }
+.root :global(.review-summary-items h3) { color: var(--ink-muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; }
+.root :global(.review-summary-items > div) { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem; border-bottom: 1px solid var(--border); color: var(--ink-soft); }
+.root :global(.checkpoint-answer-review) { max-width: 56rem; margin: .25rem auto 2rem; }
+.root :global(.checkpoint-answer-review > p) { margin: .5rem 0; }
+@media (max-width: 40rem) { .root :global(.review-queue-summary), .root :global(.review-answer-list li), .root :global(.checkpoint-review-answers li) { align-items: stretch; flex-direction: column; } .root :global(.review-session-actions) { align-items: stretch; flex-wrap: wrap; } }

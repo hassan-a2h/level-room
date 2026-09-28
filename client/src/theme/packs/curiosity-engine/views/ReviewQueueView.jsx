@@ -1,7 +1,6 @@
-export default function ReviewQueueView({ model, children }) {
-  return (
-    <main data-theme-view="ReviewQueueView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Review Queue</h1>}
-    </main>
-  )
+import ReviewQueueSurface from '../../../core/ReviewQueueSurface.jsx'
+import styles from './ReviewQueueView.module.css'
+
+export default function ReviewQueueView({ model }) {
+  return <ReviewQueueSurface model={model} variant="curiosity" className={styles.root} />
 }

@@ -1,0 +1,4 @@
+.root { position: relative; isolation: isolate; }
+.root :global(.checkpoint-intro), .root :global(.checkpoint-player), .root :global(.checkpoint-answer-review), .root :global(.checkpoint-results), .root :global(.review-session-card), .root :global(.review-queue-card) { border-radius: 1.6rem .85rem 1.6rem .85rem; }
+.root :global(.review-queue-card) { border-inline-start: 4px solid var(--primary); }
+.root :global(.review-session-progress) { border-radius: 1.5rem .75rem; }

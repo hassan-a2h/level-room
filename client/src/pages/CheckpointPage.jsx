@@ -45,7 +45,7 @@ export default function CheckpointPage() {
   return (
     <div className="min-h-screen ui-bg-canvas ui-text">
       <AppHeader variant="focus" title={state.chapter?.title || 'Chapter checkpoint'} returnTo="/" returnLabel="Trail" />
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:py-8" aria-busy={state.phase === 'loading'}>
+      <div className="mx-auto max-w-5xl px-4 py-6 sm:py-8" aria-busy={state.phase === 'loading'}>
         {state.phase === 'loading' && <p role="status" className="ui-text-secondary">Loading this Chapter…</p>}
         {state.phase === 'error' && <p role="alert" className="ui-alert ui-alert-danger">{state.error}</p>}
         {state.phase === 'ready' && (
@@ -59,7 +59,7 @@ export default function CheckpointPage() {
             />
           </section>
         )}
-      </main>
+      </div>
     </div>
   )
 }

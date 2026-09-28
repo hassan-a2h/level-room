@@ -1,0 +1,4 @@
+.root { position: relative; }
+.root :global(.checkpoint-intro), .root :global(.checkpoint-player), .root :global(.checkpoint-answer-review), .root :global(.checkpoint-results), .root :global(.review-session-card), .root :global(.review-queue-card) { border: 1px solid var(--border); border-radius: .3rem; box-shadow: 0 .25rem 0 color-mix(in srgb, var(--border) 50%, transparent), .5rem .5rem 0 color-mix(in srgb, var(--border) 22%, transparent); }
+.root :global(.review-session-card), .root :global(.review-queue-card) { background-image: repeating-linear-gradient(0deg, transparent 0 2rem, color-mix(in srgb, var(--border) 14%, transparent) 2rem calc(2rem + 1px)); }
+.root :global(.checkpoint-player-actions), .root :global(.review-session-actions) { border-top: 1px solid var(--border); padding-top: 1rem; }

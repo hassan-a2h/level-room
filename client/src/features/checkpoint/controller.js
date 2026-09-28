@@ -44,5 +44,6 @@ export function buildCheckpointViewModel(input = {}) {
     lessonsRemaining: Number.isFinite(state.lessonsRemaining) ? Math.max(0, state.lessonsRemaining) : 0,
     busy: state.busy,
     error: typeof state.error === 'string' ? state.error : state.error ? toPublicError(state.error) : null,
+    answerRef: state.answerRef || null,
   }
 }

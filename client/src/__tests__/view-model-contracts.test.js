@@ -20,12 +20,12 @@ const fixtures = {
   },
   Checkpoint: {
     phase: 'intro', module: {}, outcomes: [], questions: [], currentQuestion: null, currentIndex: 0, answers: {}, answeredCount: 0,
-    saveState: '', evaluation: null, isPartialRetest: false, ready: true, lessonsRemaining: 0, busy: {}, error: null,
+    saveState: '', evaluation: null, isPartialRetest: false, ready: true, lessonsRemaining: 0, busy: {}, error: null, actions: {},
   },
   Review: {
     phase: 'queue', counts: {}, dueItems: [], sessionId: null, questions: [], currentQuestion: null, currentIndex: 0,
     totalQuestions: 0, remainingCount: 0, answers: {}, feedbackByQuestionId: {}, feedbackIndex: 0, result: null,
-    ui: {}, busy: {}, error: null,
+    ui: {}, busy: {}, error: null, actions: {},
   },
   Build: {
     phase: 'brief', taskSpec: {}, artifactType: '', evidence: {}, currentEvidenceStep: '', content: '', fileName: null, rubric: [],

@@ -32,11 +32,11 @@ export const VIEW_MODEL_FIELDS = Object.freeze({
   ]),
   Checkpoint: Object.freeze([
     'phase', 'module', 'outcomes', 'questions', 'currentQuestion', 'currentIndex', 'answers', 'answeredCount', 'saveState',
-    'evaluation', 'isPartialRetest', 'ready', 'lessonsRemaining', 'busy', 'error',
+    'evaluation', 'isPartialRetest', 'ready', 'lessonsRemaining', 'busy', 'error', 'actions',
   ]),
   Review: Object.freeze([
     'phase', 'counts', 'dueItems', 'sessionId', 'questions', 'currentQuestion', 'currentIndex', 'totalQuestions', 'remainingCount',
-    'answers', 'feedbackByQuestionId', 'feedbackIndex', 'result', 'ui', 'busy', 'error',
+    'answers', 'feedbackByQuestionId', 'feedbackIndex', 'result', 'ui', 'busy', 'error', 'actions',
   ]),
   Build: Object.freeze([
     'phase', 'taskSpec', 'artifactType', 'evidence', 'currentEvidenceStep', 'content', 'fileName', 'rubric', 'evaluation', 'ui', 'error', 'busy',

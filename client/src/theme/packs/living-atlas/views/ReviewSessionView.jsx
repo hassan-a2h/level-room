@@ -1,7 +1,6 @@
-export default function ReviewSessionView({ model, children }) {
-  return (
-    <main data-theme-view="ReviewSessionView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Review Session</h1>}
-    </main>
-  )
+import ReviewSessionSurface from '../../../core/ReviewSessionSurface.jsx'
+import styles from './ReviewSessionView.module.css'
+
+export default function ReviewSessionView({ model }) {
+  return <ReviewSessionSurface model={model} variant="atlas" className={styles.root} />
 }

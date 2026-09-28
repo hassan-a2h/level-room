@@ -118,14 +118,17 @@ describe('Chapter checkpoint experience', () => {
     fireEvent.change(screen.getByPlaceholderText(/write your thinking/i), { target: { value: 'The left row remains.' } })
     fireEvent.click(screen.getByRole('button', { name: /next question/i }))
     fireEvent.click(screen.getByRole('radio', { name: /missing or unknown/i }))
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/connection dropped/i)
+    expect(screen.getByRole('heading', { name: /review your answers/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /back to questions/i }))
     expect(screen.getByRole('radio', { name: /missing or unknown/i })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'Question 2, answered' }))
     expect(screen.getByPlaceholderText(/write your thinking/i)).toHaveValue('The left row remains.')
     fireEvent.click(screen.getByRole('button', { name: 'Question 3, answered' }))
-    expect(screen.getByRole('button', { name: /finish checkpoint/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /review answers/i })).toBeInTheDocument()
   })
 
   it('takes the learner to the first unanswered question and focuses its answer control', async () => {
@@ -133,7 +136,7 @@ describe('Chapter checkpoint experience', () => {
     renderPanel()
     fireEvent.click(await screen.findByRole('button', { name: /next question/i }))
     fireEvent.change(screen.getByPlaceholderText(/write your thinking/i), { target: { value: 'The left side remains.' } })
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/unanswered question/i)
     const missing = screen.getByRole('radio', { name: /left join/i })
@@ -154,7 +157,8 @@ describe('Chapter checkpoint experience', () => {
     })
     renderPanel()
     fireEvent.change(await screen.findByPlaceholderText(/write your thinking/i), { target: { value: 'Unmatched left rows stay and right fields are NULL.' } })
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
 
     expect(await screen.findByRole('heading', { name: /chapter checkpoint cleared/i })).toBeInTheDocument()
     expect(screen.getAllByText('92%')).toHaveLength(2)
@@ -178,7 +182,8 @@ describe('Chapter checkpoint experience', () => {
     renderPanel()
 
     fireEvent.click(await screen.findByRole('radio', { name: /inner join/i }))
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
     expect(await screen.findByRole('heading', { name: /strengthen a few ideas/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /review join tables/i }))
     expect(navigation.navigate).toHaveBeenCalledWith('/topic/2/lesson/11')
@@ -187,7 +192,8 @@ describe('Chapter checkpoint experience', () => {
     expect(await screen.findByText(choiceQuestion.text)).toBeInTheDocument()
     expect(startPartialRetest).toHaveBeenCalledWith(2, 3, ['joins-core'])
     fireEvent.click(screen.getByRole('radio', { name: /left join/i }))
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
     expect(await screen.findByRole('heading', { name: /chapter checkpoint cleared/i })).toBeInTheDocument()
     expect(submitPartialRetest).toHaveBeenCalledWith(2, 3, 42, { 'join-choice': 'left' }, '2026-09-26')
   })
@@ -206,7 +212,8 @@ describe('Chapter checkpoint experience', () => {
     fireEvent.click(await screen.findByRole('radio', { name: /inner join/i }))
     fireEvent.click(screen.getByRole('button', { name: /next question/i }))
     fireEvent.click(screen.getByRole('radio', { name: /equals zero/i }))
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
 
     expect(await screen.findByRole('heading', { name: /strengthen a few ideas/i })).toBeInTheDocument()
     expect(document.querySelector('.checkpoint-results.is-review .checkpoint-celebration-mark')).toBeNull()
@@ -224,7 +231,8 @@ describe('Chapter checkpoint experience', () => {
     renderPanel()
 
     fireEvent.click(await screen.findByRole('radio', { name: /inner join/i }))
-    fireEvent.click(screen.getByRole('button', { name: /finish checkpoint/i }))
+    fireEvent.click(screen.getByRole('button', { name: /review answers/i }))
+    fireEvent.click(screen.getByRole('button', { name: /submit checkpoint/i }))
     fireEvent.click(await screen.findByRole('button', { name: /take full checkpoint again/i }))
     expect(await screen.findByText(breadthQuestion.text)).toBeInTheDocument()
     expect(retakeExam).toHaveBeenCalledWith(2, 3)
