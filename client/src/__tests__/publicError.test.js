@@ -14,6 +14,7 @@ describe('toPublicError', () => {
     const fallbackMessage = 'Could not load this learning activity.'
     const unsafeMessages = [
       'SQLITE_CONSTRAINT: FOREIGN KEY constraint failed',
+      'SQLITE_ERROR: disk I/O error',
       'Error: request failed\n    at ProviderClient.complete (src/provider.js:4:2)',
       'OpenAI API returned internal request id sk-secret-123',
       'x'.repeat(500),

@@ -1,5 +1,5 @@
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.'
-const INTERNAL_DETAIL = /\b(?:sqlite|sql|database|foreign key|constraint|table|column|stack trace|exception|provider|openai|anthropic|gemini|ai sdk|api key|authorization|bearer|sk-[a-z0-9_-]+)\b/i
+const INTERNAL_DETAIL = /(?:sqlite[_-]|\b(?:sqlite|sql|database|foreign key|constraint|table|column|stack trace|exception|provider|openai|anthropic|gemini|ai sdk|api key|authorization|bearer|sk-[a-z0-9_-]+)\b)/i
 
 function errorStatus(error) {
   const status = Number(error?.status ?? error?.statusCode)
