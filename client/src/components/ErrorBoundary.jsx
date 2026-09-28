@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import Button from './ui/Button.jsx'
+import { toPublicError } from '../lib/publicError.js'
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -12,8 +13,7 @@ class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    // Log to console for debugging
-    console.error('ErrorBoundary caught an error:', error, errorInfo)
+    this.setState({ supportError: toPublicError(error, 'We could not display this learning view. You can reload or return to your Trail.') })
   }
 
   handleReload = () => {
@@ -22,6 +22,8 @@ class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      const supportError = this.state.supportError || toPublicError(null, 'We could not display this learning view. You can reload or return to your Trail.')
+      const supportHref = `/support?kind=${encodeURIComponent(supportError.kind)}&message=${encodeURIComponent(supportError.message)}`
       return (
         <div className="ui-page min-h-screen flex items-center justify-center px-4 py-8">
           <div className="ui-panel p-8 max-w-md w-full text-center">
@@ -40,6 +42,7 @@ class ErrorBoundary extends Component {
                 Reload Page
               </Button>
               <a href="/" className="ui-button ui-button-secondary w-full sm:w-auto">Continue Trail</a>
+              <a href={supportHref} className="ui-button ui-button-quiet w-full sm:w-auto">Get support</a>
             </div>
           </div>
         </div>

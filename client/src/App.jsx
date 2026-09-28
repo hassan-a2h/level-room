@@ -6,6 +6,7 @@ import AppShell from './components/layout/AppShell.jsx'
 
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx'))
+const SupportPage = lazy(() => import('./pages/SupportPage.jsx'))
 const OnboardingFlow = lazy(() => import('./pages/OnboardingFlow.jsx'))
 const ContinuationFlow = lazy(() => import('./pages/ContinuationFlow.jsx'))
 const SessionPage = lazy(() => import('./pages/SessionPage.jsx'))
@@ -26,6 +27,7 @@ function App() {
               <Route path="/onboarding" element={<OnboardingFlow />} />
               <Route path="/topic/:topicId/continue" element={<ContinuationFlow />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/support" element={<SupportPage />} />
               <Route path="/reviews" element={<ReviewQueue />} />
               <Route path="/review/:sessionId" element={<ReviewSession />} />
               <Route path="/topic/:topicId/lesson/:lessonId" element={<SessionPage />} />

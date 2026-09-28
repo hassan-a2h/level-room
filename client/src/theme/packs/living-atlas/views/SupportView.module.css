@@ -1,0 +1,4 @@
+.root { position: relative; isolation: isolate; }
+.root::before { position: absolute; z-index: -1; inset: 8% 6% auto auto; width: 12rem; height: 12rem; content: ''; border: 1px dashed var(--secondary); border-radius: 45% 55% 65% 35%; opacity: .23; }
+.root :global(.ui-panel) { border-radius: 2rem 1rem 2rem 1rem; }
+.root :global(.ui-alert) { border-radius: 1rem; }

@@ -7,6 +7,7 @@ import {
   startCodexLogin,
   submitCodexManualCode,
 } from '../api.js'
+import { toPublicError } from '../lib/publicError.js'
 
 const DEVICE_URL = 'https://auth.openai.com/codex/device'
 
@@ -94,7 +95,7 @@ export default function CodexConnection({ onConnectionChange }) {
       setFlow(started)
       await updateFlow(started.flowId)
     } catch (err) {
-      setError(err.message || 'Could not start Codex sign-in.')
+      setError(toPublicError(err, 'Could not start Codex sign-in.').message)
     } finally {
       if (alive.current) setBusy(false)
     }
@@ -109,7 +110,7 @@ export default function CodexConnection({ onConnectionChange }) {
       setManualCode('')
       setError('')
     } catch (err) {
-      setError(err.message || 'Could not cancel Codex sign-in.')
+      setError(toPublicError(err, 'Could not cancel Codex sign-in.').message)
     } finally {
       setBusy(false)
     }
@@ -124,7 +125,7 @@ export default function CodexConnection({ onConnectionChange }) {
       await submitCodexManualCode(flow.flowId, manualCode.trim())
       setManualCode('')
     } catch (err) {
-      setError(err.message || 'Could not submit the authorization code.')
+      setError(toPublicError(err, 'Could not submit the authorization code.').message)
     } finally {
       setBusy(false)
     }
@@ -139,7 +140,7 @@ export default function CodexConnection({ onConnectionChange }) {
       setConnection(status)
       onConnectionChange?.(false)
     } catch (err) {
-      setError(err.message || 'Could not disconnect Codex.')
+      setError(toPublicError(err, 'Could not disconnect Codex.').message)
     } finally {
       setBusy(false)
     }

@@ -1,7 +1,6 @@
-export default function SupportView({ model, children }) {
-  return (
-    <main data-theme-view="SupportView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Support</h1>}
-    </main>
-  )
+import SupportSurface from '../../../core/SupportSurface.jsx'
+import styles from './SupportView.module.css'
+
+export default function SupportView({ model, actions }) {
+  return <main data-theme-view="SupportView" className={styles.root}><SupportSurface model={model} actions={actions} /></main>
 }

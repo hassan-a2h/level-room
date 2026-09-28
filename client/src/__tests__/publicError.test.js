@@ -17,6 +17,8 @@ describe('toPublicError', () => {
       'SQLITE_ERROR: disk I/O error',
       'Error: request failed\n    at ProviderClient.complete (src/provider.js:4:2)',
       'OpenAI API returned internal request id sk-secret-123',
+      'NetworkError when attempting to fetch resource.',
+      'TypeError: Failed to fetch',
       'x'.repeat(500),
     ]
 

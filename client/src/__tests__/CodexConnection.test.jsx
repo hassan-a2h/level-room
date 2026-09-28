@@ -34,6 +34,14 @@ describe('CodexConnection', () => {
     expect(screen.getByRole('button', { name: /use device code/i })).toBeInTheDocument()
   })
 
+  it('hides raw network and provider errors during sign-in', async () => {
+    startCodexLogin.mockRejectedValue(new Error('NetworkError from provider transport'))
+    render(<CodexConnection />)
+    fireEvent.click(await screen.findByRole('button', { name: /connect with browser/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not start Codex sign-in.')
+    expect(screen.queryByText(/NetworkError|provider transport/i)).not.toBeInTheDocument()
+  })
+
   it('opens only the validated authorization link and accepts a manual code', async () => {
     startCodexLogin.mockResolvedValue({ flowId: 'flow-1', state: 'starting', mode: 'browser' })
     getCodexLoginStatus.mockResolvedValue({

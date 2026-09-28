@@ -1,0 +1,4 @@
+.root { position: relative; isolation: isolate; }
+.root::after { position: absolute; z-index: -1; top: 4rem; left: 4%; width: 10rem; height: 10rem; content: ''; border: 2px solid var(--accent-warm); border-radius: 50% 20% 50% 20%; opacity: .2; }
+.root :global(.ui-panel) { border: 1px solid var(--border); box-shadow: 8px 8px 0 var(--canvas-subtle); }
+.root :global(.ui-alert) { border-left-width: .35rem; }

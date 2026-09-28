@@ -59,4 +59,11 @@ describe('ErrorBoundary', () => {
     )
     expect(screen.getByRole('link', { name: /continue trail/i })).toHaveAttribute('href', '/')
   })
+
+  it('routes boundary failures to Support without passing internal details', () => {
+    render(<ErrorBoundary><BombComponent shouldThrow="SQLITE_ERROR: private table details" /></ErrorBoundary>)
+    const supportLink = screen.getByRole('link', { name: /get support/i })
+    expect(supportLink).toHaveAttribute('href', expect.stringContaining('/support?'))
+    expect(supportLink.getAttribute('href')).not.toMatch(/SQLITE_ERROR|private table details/)
+  })
 })

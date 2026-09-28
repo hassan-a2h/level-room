@@ -38,6 +38,8 @@ describe('OfflineIndicator', () => {
     expect(screen.getByText(/saved learning data remains on this device/i)).toBeInTheDocument()
     expect(screen.getByRole('status')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveClass('ui-alert-warning')
+    expect(screen.getByTestId('offline-banner')).toHaveStyle({ position: 'fixed' })
+    expect(screen.getByTestId('offline-banner')).toHaveAttribute('data-error-kind', 'offline')
     expect(document.querySelector('.animate-pulse')).not.toBeInTheDocument()
   })
 

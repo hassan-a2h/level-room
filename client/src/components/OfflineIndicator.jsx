@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { toPublicError } from '../lib/publicError.js'
 
 const API_BASE = 'http://localhost:3200'
 const CHECK_INTERVAL_MS = 15000
@@ -7,6 +8,7 @@ export default function OfflineIndicator() {
   const [online, setOnline] = useState(true)
   const [dismissed, setDismissed] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [failureKind, setFailureKind] = useState(null)
   const intervalRef = useRef(null)
   const retryRef = useRef(null)
 
@@ -21,8 +23,15 @@ export default function OfflineIndicator() {
           method: 'GET',
           signal: controller.signal,
         })
-        setOnline(res.ok)
-      } catch {
+        if (res.ok) {
+          setFailureKind(null)
+          setOnline(true)
+        } else {
+          setFailureKind(toPublicError({ status: res.status }, 'Learning service is unavailable.').kind)
+          setOnline(false)
+        }
+      } catch (requestError) {
+        setFailureKind(toPublicError(requestError, 'Learning service is unavailable.').kind)
         setOnline(false)
       } finally {
         clearTimeout(timeout)
@@ -56,6 +65,8 @@ export default function OfflineIndicator() {
       className="ui-offline-banner ui-alert ui-alert-warning slide-down"
       role="status"
       data-testid="offline-banner"
+      data-error-kind={failureKind || 'offline'}
+      style={{ position: 'fixed', insetInline: 0, top: 0 }}
     >
       <span className="inline-flex flex-wrap items-center gap-1.5">
         <span className="ui-warning-dot w-2 h-2 rounded-full" aria-hidden="true" />
