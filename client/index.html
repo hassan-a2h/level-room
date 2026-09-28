@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mastery Roadmap</title>
+    <script>
+      (() => {
+        const ids = ['living-atlas', 'curiosity-engine', 'mission-workshop']
+        let theme = 'living-atlas'
+        try {
+          const storedTheme = localStorage.getItem('mastery-trail-theme-v2')
+          if (ids.includes(storedTheme)) theme = storedTheme
+        } catch {
+          // The default theme is painted when browser storage is unavailable.
+        }
+        document.documentElement.dataset.theme = theme
+        document.documentElement.style.colorScheme = theme === 'mission-workshop' ? 'dark' : 'light'
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

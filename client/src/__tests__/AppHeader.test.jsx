@@ -34,6 +34,16 @@ describe('AppHeader', () => {
     expect(document.activeElement).toBe(toggle)
   })
 
+  it('provides Trail, Reviews, Settings, New Trail, and a theme popover across routes', () => {
+    render(<MemoryRouter initialEntries={['/settings']}><AppHeader /></MemoryRouter>)
+    const nav = within(screen.getByRole('navigation', { name: 'Primary navigation' }))
+    expect(nav.getByRole('link', { name: 'Trail' })).not.toHaveAttribute('aria-current')
+    expect(nav.getByRole('link', { name: 'Reviews' })).toHaveAttribute('href', '/reviews')
+    expect(nav.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    expect(nav.getAllByRole('link', { name: 'New Trail' })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Open theme switcher' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('renders a focused route header with a clear return link', () => {
     render(<MemoryRouter><AppHeader variant="focus" title="Linux permissions" returnTo="/" returnLabel="Dashboard" /></MemoryRouter>)
     expect(screen.getByRole('heading', { name: 'Linux permissions' })).toBeInTheDocument()

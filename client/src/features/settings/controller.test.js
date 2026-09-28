@@ -46,7 +46,7 @@ describe('settings controller', () => {
 
   it('builds canonical theme and Codex/export/import state when defaults are missing', () => {
     expect(buildSettingsViewModel()).toMatchObject({
-      phase: 'loading', category: 'appearance', themes: expect.any(Array), themeId: 'morning-mist',
+      phase: 'loading', category: 'appearance', themes: expect.any(Array), themeId: 'living-atlas',
       providers: [], provider: null, model: null, reasoningEffort: null, environmentStatuses: [],
       codexConnection: {}, ready: false, saving: false, pendingBackup: null,
     })

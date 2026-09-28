@@ -19,6 +19,10 @@
   text-decoration: none;
 }
 .app-shell-page-context { display: none; color: var(--text-muted); font-size: 0.875rem; }
+.app-shell-theme-trigger { display: inline-grid; width: 2.75rem; min-width: 2.75rem; height: 2.75rem; place-items: center; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-soft); background: transparent; font: inherit; cursor: pointer; }
+.app-shell-theme-trigger:hover, .app-shell-theme-trigger[aria-expanded="true"] { border-color: var(--border); color: var(--text); background: var(--surface); }
+.app-shell-theme-menu { position: absolute; z-index: 30; top: calc(100% + var(--space-2)); right: max(1rem, calc((100vw - 80rem) / 2)); min-width: 14rem; border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: var(--space-2); background: var(--surface-raised); box-shadow: 0 0.5rem 1.25rem color-mix(in srgb, var(--shadow-color) 18%, transparent); }
+.app-shell-theme-menu[hidden] { display: none; }
 .app-shell-primary-nav { display: flex; align-items: center; gap: var(--space-1); }
 .app-shell-nav-trail { position: relative; display: flex; min-width: 0; align-items: center; }
 .app-shell-nav-link, .app-shell-new-trail {
@@ -427,6 +431,7 @@
   .app-shell-topbar { width: 100%; align-items: center; justify-content: space-between; }
   .app-shell-page-context { display: block; }
   .app-shell-primary-nav { position: fixed; z-index: 20; inset: auto 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1); border-top: 1px solid var(--border-strong); padding: var(--space-1) var(--space-2) max(var(--space-1), env(safe-area-inset-bottom)); background: var(--surface-raised); }
+  .app-shell-theme-menu { position: fixed; top: auto; right: 0.75rem; bottom: calc(4.25rem + env(safe-area-inset-bottom)); }
   .app-shell-nav-trail { width: 100%; }
   .app-shell-primary-nav .app-shell-nav-link { width: 100%; min-width: 0; padding: 0.5rem 0.25rem; }
   .app-shell-nav-trail .app-shell-nav-link { flex: 1; padding-right: 0; }

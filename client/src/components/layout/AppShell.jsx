@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import ThemeSwitcher from '../ThemeSwitcher.jsx'
+import { useTheme } from '../../theme/core/ThemeProvider.jsx'
 
 function isTrailPath(pathname) {
   return pathname === '/' || pathname === '/onboarding' || pathname.startsWith('/topic/')
@@ -29,19 +31,22 @@ function ReviewLink({ dueCount, className }) {
 
 export function AppShellHeader({ dueCount }) {
   const { pathname } = useLocation()
-  const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [openPopover, setOpenPopover] = useState(null)
   const switcherButton = useRef(null)
+  const themeButton = useRef(null)
+  const { theme, selectTheme } = useTheme()
 
   useEffect(() => {
-    if (!switcherOpen) return undefined
+    if (!openPopover) return undefined
     function closeOnEscape(event) {
       if (event.key !== 'Escape') return
-      setSwitcherOpen(false)
-      switcherButton.current?.focus()
+      setOpenPopover(null)
+      const activeButton = openPopover === 'theme' ? themeButton : switcherButton
+      activeButton.current?.focus()
     }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [switcherOpen])
+  }, [openPopover])
 
   const context = pathname.startsWith('/settings')
     ? 'Settings'
@@ -57,6 +62,20 @@ export function AppShellHeader({ dueCount }) {
         <div className="app-shell-topbar">
           <Link to="/" className="app-shell-brand" aria-label="Mastery Trail home">Mastery Trail</Link>
           <span className="app-shell-page-context">{context}</span>
+          <button
+            ref={themeButton}
+            className="app-shell-theme-trigger"
+            type="button"
+            aria-label={openPopover === 'theme' ? 'Close theme switcher' : 'Open theme switcher'}
+            aria-expanded={openPopover === 'theme'}
+            aria-controls="theme-switcher-menu"
+            onClick={() => setOpenPopover((open) => open === 'theme' ? null : 'theme')}
+          >
+            <span aria-hidden="true">◐</span>
+          </button>
+          <div id="theme-switcher-menu" className="app-shell-theme-menu" hidden={openPopover !== 'theme'}>
+            <ThemeSwitcher variant="menu" themeId={theme.id} onChange={(id) => { selectTheme(id); setOpenPopover(null) }} />
+          </div>
         </div>
         <nav className="app-shell-primary-nav" aria-label="Primary navigation">
           <div className="app-shell-nav-trail">
@@ -71,10 +90,10 @@ export function AppShellHeader({ dueCount }) {
               ref={switcherButton}
               className="app-shell-switcher-trigger"
               type="button"
-              aria-label={switcherOpen ? 'Close Trail switcher' : 'Open Trail switcher'}
-              aria-expanded={switcherOpen}
+              aria-label={openPopover === 'trail' ? 'Close Trail switcher' : 'Open Trail switcher'}
+              aria-expanded={openPopover === 'trail'}
               aria-controls="trail-switcher-menu"
-              onClick={() => setSwitcherOpen((open) => !open)}
+              onClick={() => setOpenPopover((open) => open === 'trail' ? null : 'trail')}
             >
               <span aria-hidden="true">⌄</span>
             </button>
@@ -83,9 +102,9 @@ export function AppShellHeader({ dueCount }) {
               className="app-shell-switcher-menu"
               role="group"
               aria-label="Trail switcher options"
-              hidden={!switcherOpen}
+              hidden={openPopover !== 'trail'}
             >
-              <Link to="/onboarding" onClick={() => setSwitcherOpen(false)}>New Trail</Link>
+              <Link to="/onboarding" onClick={() => setOpenPopover(null)}>New Trail</Link>
             </div>
           </div>
           <ReviewLink dueCount={dueCount} className="app-shell-nav-link" />

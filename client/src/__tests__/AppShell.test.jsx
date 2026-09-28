@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import AppShell, { AppShellHeader } from '../components/layout/AppShell.jsx'
+import { ThemeProvider } from '../theme/ThemeProvider.jsx'
 
 describe('AppShell', () => {
   it('provides one accessible navigation set that adapts to mobile with a Trail switcher', () => {
@@ -25,9 +26,9 @@ describe('AppShell', () => {
 
   it('opens the accessible Trail switcher and restores focus when Escape closes it', () => {
     render(
-      <MemoryRouter>
+      <ThemeProvider><MemoryRouter>
         <AppShell><AppShellHeader /></AppShell>
-      </MemoryRouter>,
+      </MemoryRouter></ThemeProvider>,
     )
 
     const trigger = screen.getByRole('button', { name: 'Open Trail switcher' })
@@ -35,6 +36,35 @@ describe('AppShell', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('group', { name: 'Trail switcher options' })).toHaveTextContent('New Trail')
 
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('opens the controlled theme menu from the header and closes it after selection', () => {
+    render(
+      <ThemeProvider><MemoryRouter>
+        <AppShell><AppShellHeader /></AppShell>
+      </MemoryRouter></ThemeProvider>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Open theme switcher' })
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('combobox', { name: 'Theme' })).toBeVisible()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'mission-workshop' } })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(document.documentElement.dataset.theme).toBe('mission-workshop')
+  })
+
+  it('closes the theme menu on Escape and restores focus to its trigger', () => {
+    render(
+      <ThemeProvider><MemoryRouter>
+        <AppShell><AppShellHeader /></AppShell>
+      </MemoryRouter></ThemeProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Open theme switcher' })
+    fireEvent.click(trigger)
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(document.activeElement).toBe(trigger)

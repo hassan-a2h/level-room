@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { exportData, getSettings, importData, saveSettings } from '../../api.js'
+import { DEFAULT_THEME_ID, THEMES } from '../../theme/index.js'
 import { toPublicError } from '../../lib/publicError.js'
 
 export function buildSettingsViewModel(state = {}) {
   return {
     phase: state.loading === false ? 'ready' : state.phase || 'loading',
     category: state.category || 'appearance',
-    themes: Array.isArray(state.themes) ? state.themes : [],
-    themeId: state.themeId || 'morning-mist',
+    themes: Array.isArray(state.themes) ? state.themes : THEMES,
+    themeId: state.themeId || DEFAULT_THEME_ID,
     providers: Array.isArray(state.providers) ? state.providers : [],
     provider: state.provider || null,
     model: state.model || null,
@@ -25,8 +26,8 @@ export function buildSettingsViewModel(state = {}) {
 }
 
 export function useSettingsController({
-  themeId = 'morning-mist',
-  themes = [],
+  themeId = DEFAULT_THEME_ID,
+  themes = THEMES,
   getSettingsFn = getSettings,
   saveSettingsFn = saveSettings,
   exportDataFn = exportData,

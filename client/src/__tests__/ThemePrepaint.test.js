@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { THEMES } from '../theme/index.js'
 import { prepaintTheme, THEME_STORAGE_KEY } from '../theme/core/ThemePrepaint.js'
 
@@ -14,6 +16,35 @@ function createRoot() {
 }
 
 describe('ThemePrepaint', () => {
+  it('runs the literal inline prepaint script before module scripts and allowlists saved IDs', () => {
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
+    const inlineScript = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
+    expect(inlineScript).toBeTruthy()
+    const scriptIndex = html.indexOf('<script>')
+    expect(scriptIndex).toBeLessThan(html.indexOf('type="module"'))
+    const stylesheetIndex = html.indexOf('rel="stylesheet"')
+    if (stylesheetIndex >= 0) expect(scriptIndex).toBeLessThan(stylesheetIndex)
+
+    for (const [storedId, expectedId, expectedMode] of [
+      ['mission-workshop', 'mission-workshop', 'dark'],
+      ['unknown-theme', 'living-atlas', 'light'],
+      [null, 'living-atlas', 'light'],
+    ]) {
+      const htmlDocument = document.implementation.createHTMLDocument()
+      new Function('document', 'localStorage', inlineScript)(htmlDocument, {
+        getItem: () => storedId,
+      })
+      expect(htmlDocument.documentElement.dataset.theme).toBe(expectedId)
+      expect(htmlDocument.documentElement.style.colorScheme).toBe(expectedMode)
+    }
+
+    const deniedDocument = document.implementation.createHTMLDocument()
+    new Function('document', 'localStorage', inlineScript)(deniedDocument, {
+      getItem() { throw new Error('denied') },
+    })
+    expect(deniedDocument.documentElement.dataset.theme).toBe('living-atlas')
+  })
+
   it('synchronously paints the saved theme using the versioned storage key', () => {
     const root = createRoot()
     const result = prepaintTheme({ root, storage: { getItem: (key) => key === THEME_STORAGE_KEY ? 'mission-workshop' : null } })

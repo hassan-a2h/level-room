@@ -7,10 +7,13 @@ vi.mock('../api.js', () => ({
   getTopics: vi.fn(() => Promise.resolve({ topics: [] })),
   getDefaultTopic: vi.fn(() => Promise.reject(new Error('No topics'))),
   getDashboard: vi.fn(),
+  getLocalDate: vi.fn(() => '2026-09-28'),
+  getLocalTimeZone: vi.fn(() => 'Asia/Karachi'),
   createTopic: vi.fn(),
   deleteTopic: vi.fn(),
   selectTopic: vi.fn(),
   getLesson: vi.fn(),
+  getExam: vi.fn(() => Promise.resolve({ questions: [] })),
   ensureActivities: vi.fn(),
 }))
 
@@ -42,5 +45,20 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Start' })).toBeInTheDocument()
     expect(getLesson).toHaveBeenCalledWith('2', '8')
     expect(ensureActivities).not.toHaveBeenCalled()
+  })
+
+  it('renders the public not-found page for unknown routes', async () => {
+    window.history.pushState({}, '', '/not-a-route')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+  })
+
+  it('routes checkpoint URLs to the focused checkpoint page', async () => {
+    const { getDashboard } = await import('../api.js')
+    getDashboard.mockResolvedValueOnce({ modules: [{ id: 8, title: 'SQL joins', skill_outcomes: [], lessons: [] }] })
+    window.history.pushState({}, '', '/topic/2/chapter/8/checkpoint')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'SQL joins' })).toBeInTheDocument()
+    expect(getDashboard).toHaveBeenCalledWith(2, expect.any(String), expect.any(String))
   })
 })
