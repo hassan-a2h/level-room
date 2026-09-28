@@ -28,7 +28,7 @@ export function createSessionState(values = {}) {
     error: null,
     artifactRequired: false,
     ...overrides,
-    draftsByBlockId,
+    draftsByBlockId: draftsByBlockId || {},
     tutor: { draft: '', expanded: false, messages: [], ...tutor },
     busy: { loading: false, mutating: false, refreshingBuild: false, ...busy },
   }

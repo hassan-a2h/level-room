@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { buildSessionViewModel, createSessionState } from './controller.js'
 
 describe('session controller model', () => {
+  it('normalizes an absent or null draft map before rendering blocks', () => {
+    expect(createSessionState({ draftsByBlockId: null }).draftsByBlockId).toEqual({})
+  })
+
   it('keeps all activity drafts, tutor state, and completed-step review state together', () => {
     const blocks = [{ id: 'read-1', type: 'read' }, { id: 'quiz-1', type: 'choice' }]
     const model = buildSessionViewModel(createSessionState({
