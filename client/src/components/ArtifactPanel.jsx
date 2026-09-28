@@ -1,5 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
-import { submitArtifact, getArtifact, getLocalDate } from '../api.js'
+import { useBuildController } from '../features/build/controller.js'
 import StatusBadge from './ui/StatusBadge.jsx'
 
 const RUBRIC_DIMENSIONS = ['Correctness', 'Completeness', 'Clarity', 'Edge Cases']
@@ -8,14 +7,6 @@ const SCORE_LABELS = {
   2: 'Strong',
   1: 'Needs Work',
   0: 'Missing',
-}
-
-function safeArtifactError(error, fallback) {
-  const message = typeof error?.message === 'string' ? error.message.trim() : ''
-  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
-    return fallback
-  }
-  return message
 }
 
 function RubricPreview() {
@@ -143,106 +134,19 @@ function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence 
 }
 
 export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPassed }) {
-  const [content, setContent] = useState('')
-  const [evidence, setEvidence] = useState({ setup: '', actions: '', result: '', reflection: '' })
-  const [showHints, setShowHints] = useState(false)
-  const [evaluation, setEvaluation] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [fileName, setFileName] = useState('')
-  const [prevContent, setPrevContent] = useState('')
-  const [prevEvidence, setPrevEvidence] = useState(null)
-
-  // Load existing artifact on mount
-  useEffect(() => {
-    async function loadArtifact() {
-      try {
-        const data = await getArtifact(topicId, lessonId)
-        if (data.evaluation) {
-          setEvaluation({
-            overallScore: data.evaluation.overallScore ?? 0,
-            passed: data.passed ?? false,
-            scores: data.evaluation.scores || {},
-            feedback: data.evaluation.feedback || {},
-          })
-        }
-        if (data.content) {
-          setContent(data.content)
-          setPrevContent(data.content)
-        }
-      } catch {
-        // No prior artifact
-      }
-    }
-    loadArtifact()
-  }, [topicId, lessonId])
-
-  const handleFileChange = useCallback((e) => {
-    const file = e.target.files[0]
-    if (!file) return
-
-    const MAX_FILE_SIZE_MB = 5
-    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-      setError(`File too large (max ${MAX_FILE_SIZE_MB}MB). Please upload a smaller file.`)
-      return
-    }
-
-    setFileName(file.name)
-    setError('')
-
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const text = ev.target.result
-      if (typeof text === 'string') {
-        setContent(text)
-      } else {
-        // Binary file — just store a reference
-        setContent(`Uploaded: ${file.name}`)
-      }
-    }
-    reader.readAsText(file)
-  }, [])
-
-  const handleSubmit = useCallback(async () => {
-    const taskSpec = lesson?.task_spec
-    const trimmed = content.trim()
-    if (taskSpec) {
-      if (Object.values(evidence).some((value) => !value.trim())) {
-        setError('Complete all four evidence fields before submitting.')
-        return
-      }
-    } else if (!trimmed) {
-        setError('Please enter or upload your solution before submitting.')
-        return
-    }
-
-    setLoading(true)
-    setError('')
-    try {
-      const result = await submitArtifact(topicId, lessonId, taskSpec ? '' : trimmed, getLocalDate(), taskSpec ? evidence : undefined)
-      if (result.evaluation) {
-        setEvaluation(result.evaluation)
-        setPrevContent(taskSpec ? JSON.stringify(evidence) : trimmed)
-        setPrevEvidence(taskSpec ? { ...evidence } : null)
-        if (!evaluation?.passed && result.evaluation.passed && !result.alreadyCompleted) onPassed?.(result)
-      }
-    } catch (err) {
-      setError(safeArtifactError(err, taskSpec
-        ? 'Could not evaluate this Build. Your evidence is still here. Try again.'
-        : 'Could not submit that artifact. Your work is still here. Try again.'))
-    } finally {
-      setLoading(false)
-    }
-  }, [topicId, lessonId, content, evidence, lesson, evaluation?.passed, onPassed])
-
-  const handleRevise = useCallback(() => {
-    setEvaluation(null)
-    setError('')
-    setContent(prevContent)
-  }, [prevContent])
+  const controller = useBuildController({ topicId, lessonId, lesson, onPassed })
+  const { model } = controller
+  const { content, evidence, error, fileName, evaluation } = model
+  const loading = model.busy.submitting
+  const taskSpec = model.taskSpec
+  const handleSubmit = controller.submit
+  const handleRevise = controller.revise
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0]
+    controller.importFile(file).finally(() => { event.target.value = '' })
+  }
 
   const artifactType = lesson?.artifact_type || 'code'
-  const taskSpec = lesson?.task_spec
   const isDesign = artifactType === 'design'
   const placeholder = isDesign
     ? 'Describe your design or upload a file...'
@@ -253,14 +157,14 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
   if (evaluation) {
     return (
       <div className="flex-1 overflow-y-auto">
-        <EvaluationResult evaluation={evaluation} onRevise={handleRevise} artifactContent={prevContent} taskEvidence={prevEvidence} />
+        <EvaluationResult evaluation={evaluation} onRevise={handleRevise} artifactContent={controller.previousContent} taskEvidence={controller.previousEvidence} />
         {evaluation.passed && (
           <div className="flex justify-center pb-6">
             <button
               onClick={onBack}
               className="ui-button ui-button-primary min-h-10 px-5 py-2.5 text-sm transition-colors"
             >
-              {prevEvidence ? 'Continue Trail' : 'Back to Session'}
+              {controller.previousEvidence ? 'Continue Trail' : 'Back to Session'}
             </button>
           </div>
         )}
@@ -301,10 +205,10 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
             {taskSpec.safety_notes?.length > 0 && <p className="mt-3 text-xs ui-text-muted"><strong>Safety:</strong> {taskSpec.safety_notes.join(' ')}</p>}
             {taskSpec.hints?.length > 0 && (
               <div className="mt-3">
-                <button type="button" className="text-xs ui-text-secondary underline" onClick={() => setShowHints((current) => !current)}>
-                  {showHints ? 'Hide hints' : 'Show hints'}
+              <button type="button" className="text-xs ui-text-secondary underline" onClick={controller.toggleHints}>
+                  {model.ui.showHints ? 'Hide hints' : 'Show hints'}
                 </button>
-                {showHints && <ul className="mt-1 list-disc pl-4 text-xs ui-text-secondary">{taskSpec.hints.map((hint) => <li key={hint}>{hint}</li>)}</ul>}
+                {model.ui.showHints && <ul className="mt-1 list-disc pl-4 text-xs ui-text-secondary">{taskSpec.hints.map((hint) => <li key={hint}>{hint}</li>)}</ul>}
               </div>
             )}
           </section>
@@ -331,7 +235,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
                 <textarea
                   aria-label={label}
                   value={evidence[field]}
-                  onChange={(e) => { setEvidence((current) => ({ ...current, [field]: e.target.value })); setError('') }}
+                  onChange={(e) => controller.setEvidenceField(field, e.target.value)}
                   rows={3}
                   disabled={loading}
                   className="ui-field mt-1 w-full resize-none disabled:cursor-not-allowed"
@@ -345,8 +249,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
                 id="artifact-submission"
                 value={content}
                 onChange={(e) => {
-                  setContent(e.target.value)
-                  setError('')
+                  controller.setContent(e.target.value)
                 }}
                 placeholder={placeholder}
                 rows={isDesign ? 4 : 10}
@@ -361,7 +264,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
               <label className="ui-button ui-button-secondary min-h-10 cursor-pointer px-3 py-2 text-sm transition-colors">
                 <input
                   type="file"
-                  accept="image/*,.pdf,.svg,.png,.jpg,.jpeg,.gif"
+                  accept=".txt,.md,.json,.csv,text/plain,text/markdown,application/json,text/csv"
                   onChange={handleFileChange}
                   disabled={loading}
                   className="hidden"
@@ -371,7 +274,7 @@ export default function ArtifactPanel({ topicId, lessonId, lesson, onBack, onPas
               {fileName && (
                 <span className="text-sm ui-text-secondary">{fileName}</span>
               )}
-              <span className="text-xs ui-text-muted">Max 5MB</span>
+              <span className="text-xs ui-text-muted">UTF-8 text only · Max 256 KiB (.txt, .md, .json, .csv)</span>
             </div>
           )}
         </div>

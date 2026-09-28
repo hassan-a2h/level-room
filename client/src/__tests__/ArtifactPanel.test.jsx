@@ -318,7 +318,7 @@ describe('ArtifactPanel', () => {
     })
   })
 
-  it('shows file upload for design artifacts', async () => {
+  it('limits design imports to small UTF-8 text files', async () => {
     getArtifact.mockRejectedValue(new Error('No artifact'))
 
     render(
@@ -333,7 +333,23 @@ describe('ArtifactPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(/Upload File/i)).toBeInTheDocument()
     })
-    expect(screen.getByText(/Max 5MB/i)).toBeInTheDocument()
+    expect(screen.getByText(/UTF-8 text only · Max 256 KiB/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Upload File/i)).toHaveAttribute('accept', expect.stringContaining('.txt,.md,.json,.csv'))
+  })
+
+  it('imports supported UTF-8 text and rejects unsupported file types', async () => {
+    getArtifact.mockRejectedValue(new Error('No artifact'))
+    render(<ArtifactPanel topicId={1} lessonId={1} lesson={{ artifact_type: 'design' }} onBack={vi.fn()} />)
+    const input = screen.getByLabelText(/Upload File/i)
+    const file = new File(['# Notes'], 'notes.md', { type: 'text/markdown' })
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => new TextEncoder().encode('# Notes').buffer })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(await screen.findByText('notes.md')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /Build submission/i })).toHaveValue('# Notes')
+
+    const invalidFile = new File(['not text'], 'image.png', { type: 'image/png' })
+    fireEvent.change(input, { target: { files: [invalidFile] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/\.txt, \.md, \.json, or \.csv/)
   })
 
   it('calls onPassed only after a newly passing Build result', async () => {
