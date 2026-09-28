@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
 export const UI_BUDGETS = Object.freeze({
-  sharedGzipBytes: 180_000,
-  routeThemeGzipBytes: 320_000,
+  sharedGzipBytes: 170_000,
+  routeThemeGzipBytes: 230_000,
 })
 
 export const UI_ROUTES = Object.freeze([
@@ -23,11 +23,24 @@ export const UI_ROUTES = Object.freeze([
 
 export const UI_THEMES = Object.freeze(['living-atlas', 'curiosity-engine', 'mission-workshop'])
 
-function closure(manifest, roots, includeDynamicImports = true) {
+export const UI_ROUTE_VIEWS = Object.freeze({
+  'src/pages/Dashboard.jsx': 'TrailView',
+  'src/pages/OnboardingFlow.jsx': 'OnboardingView',
+  'src/pages/ContinuationFlow.jsx': 'ContinuationView',
+  'src/pages/SettingsPage.jsx': 'SettingsView',
+  'src/pages/SupportPage.jsx': 'SupportView',
+  'src/pages/ReviewQueue.jsx': 'ReviewQueueView',
+  'src/components/ReviewSession.jsx': 'ReviewSessionView',
+  'src/pages/SessionPage.jsx': 'SessionView',
+  'src/pages/CheckpointPage.jsx': 'CheckpointView',
+  'src/pages/NotFoundPage.jsx': null,
+})
+
+function closure(manifest, roots, { includeDynamicImports = true, stopKeys = new Set() } = {}) {
   const visited = new Set()
   const chunks = new Set()
   const visit = (key) => {
-    if (visited.has(key)) return
+    if (visited.has(key) || stopKeys.has(key)) return
     const chunk = manifest[key]
     if (!chunk) throw new Error(`Manifest import is missing: ${key}`)
     visited.add(key)
@@ -57,28 +70,28 @@ function measureFiles(chunkFiles, files) {
   return { files: [...chunkFiles].sort(), gzipBytes }
 }
 
-export function measureBudgets({ manifest, files, routes = UI_ROUTES, themes = UI_THEMES, budgets = UI_BUDGETS }) {
+export function measureBudgets({ manifest, files, routes = UI_ROUTES, themes = UI_THEMES, budgets = UI_BUDGETS, routeViews = UI_ROUTE_VIEWS }) {
   const entryKeys = Object.entries(manifest).filter(([, chunk]) => chunk.isEntry).map(([key]) => key)
   if (entryKeys.length !== 1) throw new Error(`Expected one UI entry in manifest; found ${entryKeys.length}.`)
 
-  const shared = measureFiles(closure(manifest, entryKeys, false), files)
+  const shared = measureFiles(closure(manifest, entryKeys, { includeDynamicImports: false }), files)
   const routeKeys = routes.map((route) => Object.hasOwn(manifest, route) ? route : null)
   const missingRoutes = routes.filter((_, index) => !routeKeys[index])
   if (missingRoutes.length) throw new Error(`Manifest is missing route entries: ${missingRoutes.join(', ')}`)
 
-  const themeKeys = Object.fromEntries(themes.map((theme) => {
-    const prefix = `src/theme/packs/${theme}/views/`
-    const keys = Object.keys(manifest).filter((key) => key.startsWith(prefix) && /\.(jsx?|tsx?)$/.test(key))
-    if (!keys.length) throw new Error(`Manifest is missing view chunks for theme ${theme}.`)
-    return [theme, keys]
-  }))
-
   const scenarios = []
   const sharedFiles = new Set(shared.files)
   for (const route of routes) {
+    const viewName = routeViews[route]
+    if (!Object.hasOwn(routeViews, route)) throw new Error(`No selected-theme view is configured for route ${route}.`)
     for (const theme of themes) {
+      const viewKey = viewName && `src/theme/packs/${theme}/views/${viewName}.jsx`
+      if (viewKey && !Object.hasOwn(manifest, viewKey)) throw new Error(`Manifest is missing theme view ${viewKey}.`)
       const scenarioFiles = new Set(sharedFiles)
-      for (const file of closure(manifest, [route, ...themeKeys[theme]])) scenarioFiles.add(file)
+      const routeClosure = closure(manifest, [route, ...(viewKey ? [viewKey] : [])], {
+        stopKeys: new Set(entryKeys),
+      })
+      for (const file of routeClosure) scenarioFiles.add(file)
       const measured = measureFiles(scenarioFiles, files)
       scenarios.push({ name: `${route} + ${theme}`, ...measured })
     }

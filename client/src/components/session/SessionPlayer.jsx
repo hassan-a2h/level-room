@@ -5,7 +5,7 @@ import ArtifactPanel from '../ArtifactPanel.jsx'
 import ActivityRenderer from './ActivityRenderer.jsx'
 import SessionComplete from './SessionComplete.jsx'
 import TutorSidecar from './TutorSidecar.jsx'
-import { isFinalBlock, useSessionController } from '../../features/session/controller.js'
+import { isConnectionError, isFinalBlock, useSessionController } from '../../features/session/controller.js'
 import { useThemeView } from '../../theme/ThemeProvider.jsx'
 import { createSessionBlockActions } from '../../theme/core/sessionActionAdapters.js'
 
@@ -62,11 +62,12 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
         </li>
       })}
     </ol>
+    {reviewBlock && <div className="session-review-banner"><p>Reviewing a completed step. Your saved response cannot be changed.</p><button type="button" className="ui-button ui-button-quiet" onClick={() => setReviewBlockId(null)}>Return to current step</button></div>}
     {mutationError && <div className="session-mutation-alert" role="alert"><p>{mutationError.code === 'ACTIVITY_STATE_CONFLICT'
       ? 'Your saved progress was updated. The latest Session step is now shown.'
-      : mutationError instanceof TypeError || /failed to fetch|network|connection/i.test(mutationError.message || '')
+      : isConnectionError(mutationError)
         ? 'Connection dropped. Your answer is still here; reconnect and try again.'
-        : mutationError.message || 'That step could not be saved. Your answer is still here; try again.'}</p></div>}
+        : model.publicError?.message || 'That step could not be saved. Your answer is still here; try again.'}</p></div>}
     {viewedBlock && <article className={`session-activity-card ${busy ? 'is-busy' : ''}`} aria-labelledby={`activity-title-${viewedBlock.id}`}>
       <p className="session-eyebrow">{reviewBlock ? 'Completed step' : `Step ${currentIndex + 1} of ${blocks.filter((block) => block.required).length}`}</p>
       <h2 id={`activity-title-${viewedBlock.id}`} ref={reviewBlock ? undefined : activeHeading} tabIndex={-1}>{viewedBlock.title}</h2>

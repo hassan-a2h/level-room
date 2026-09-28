@@ -55,7 +55,7 @@ describe('SessionPage', () => {
     getLesson.mockResolvedValue(lessonPayload({ activityDocument: null, activityState: null, activityProgress: null }))
     ensureActivities.mockRejectedValueOnce(new Error('Provider unavailable.')).mockResolvedValueOnce({ activityDocument: doc, activityState: state, activityProgress: { completed: 0, total: 1 } })
     renderPage()
-    expect(await screen.findByText('Provider unavailable.')).toBeInTheDocument()
+    expect(await screen.findByText('The provider is busy. Please try again shortly.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /retry/i }))
     expect(await screen.findByTestId('player')).toBeInTheDocument()
     expect(ensureActivities).toHaveBeenCalledTimes(2)
@@ -75,5 +75,14 @@ describe('SessionPage', () => {
     expect(await screen.findByText(/saved session activity needs attention/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /back to trail/i })).toBeInTheDocument()
     expect(ensureActivities).not.toHaveBeenCalled()
+  })
+
+  it('never shows raw database details in a failed Session load', async () => {
+    getLesson.mockRejectedValueOnce(new Error('SQLITE_ERROR: select * from lesson_secrets'))
+    renderPage()
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByText(/SQLITE_ERROR|lesson_secrets/i)).not.toBeInTheDocument()
+    expect(screen.getByText('The Session could not be loaded. Please try again.')).toBeInTheDocument()
   })
 })

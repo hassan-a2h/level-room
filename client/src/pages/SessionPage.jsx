@@ -4,11 +4,12 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ensureActivities, getLesson } from '../api.js'
 import AppHeader from '../components/AppHeader.jsx'
 import SessionPlayer from '../components/session/SessionPlayer.jsx'
+import { toPublicError } from '../lib/publicError.js'
 
 function errorMessage(error) {
   if (error?.code === 'ACTIVITY_DOCUMENT_INVALID') return 'The saved Session activity could not be read safely. Return to your Trail or try loading it again.'
   if (error instanceof TypeError || /failed to fetch|network|connection/i.test(error?.message || '')) return 'Connection lost. Your saved Session progress is safe. Reconnect and retry.'
-  return error?.message || 'The Session could not be loaded. Please try again.'
+  return toPublicError(error, 'The Session could not be loaded. Please try again.').message
 }
 
 export default function SessionPage() {

@@ -1,15 +1,37 @@
 import { test, expect } from './fixtures/api-fixtures.js'
 
-test('selected theme survives a page reload', async ({ page, apiMocks }) => {
+test('versioned theme selection persists across a reload', async ({ page, apiMocks }) => {
+  await page.addInitScript(() => localStorage.setItem('mastery-trail-theme-v2', 'mission-workshop'))
   apiMocks.useScenario('settings')
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible()
-  await page.getByRole('radio', { name: /Midnight Ink/ }).evaluate((radio) => radio.click())
-
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight-ink')
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('mastery-roadmap-theme'))).toBe('midnight-ink')
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'mission-workshop')
+  await expect(page.getByRole('radio', { name: /Mission Workshop/ })).toBeChecked()
 
   await page.reload()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight-ink')
-  await expect(page.getByRole('radio', { name: /Midnight Ink/ })).toBeChecked()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'mission-workshop')
+  await expect(page.getByRole('radio', { name: /Mission Workshop/ })).toBeChecked()
+})
+
+test('legacy theme storage migrates to Living Atlas and removes the old key', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('mastery-roadmap-theme', 'mission-workshop'))
+  await page.goto('/')
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'living-atlas')
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mastery-trail-theme-v2'))).toBe('living-atlas')
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mastery-roadmap-theme'))).toBeNull()
+})
+
+test('switching themes preserves an unsaved onboarding destination without another API request', async ({ page, apiMocks }) => {
+  await page.goto('/onboarding')
+  const destination = page.getByRole('textbox', { name: 'Your learning destination' })
+  await destination.fill('A private unsaved destination')
+  const requestCount = apiMocks.requests.length
+
+  await page.getByRole('button', { name: 'Open theme switcher' }).click()
+  await page.getByRole('combobox', { name: 'Theme' }).selectOption('curiosity-engine')
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'curiosity-engine')
+  await expect(page.getByRole('textbox', { name: 'Your learning destination' })).toHaveValue('A private unsaved destination')
+  expect(apiMocks.requests).toHaveLength(requestCount)
 })
