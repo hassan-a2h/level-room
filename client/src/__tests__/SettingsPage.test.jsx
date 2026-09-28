@@ -233,6 +233,27 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByText(/OPENAI_API_KEY/i)).toBeInTheDocument())
   })
 
+  it('retries a failed settings save without reloading settings or losing the selected values', async () => {
+    fetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'POST') return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: 'Provider unavailable.' }) })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ provider: null, model: null, apiKeySet: false, envStatus: MOCK_ENV_STATUS, providers: MOCK_PROVIDERS }) })
+    })
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
+    await screen.findByLabelText(/provider/i)
+    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
+    fireEvent.change(screen.getByLabelText(/model/i), { target: { value: 'gpt-4o' } })
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }))
+
+    const retry = await screen.findByRole('button', { name: /retry/i })
+    fireEvent.click(retry)
+
+    await waitFor(() => expect(fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2))
+    expect(fetch.mock.calls.filter(([, options]) => !options?.method || options.method === 'GET')).toHaveLength(1)
+    expect(screen.getByLabelText(/provider/i)).toHaveValue('openai')
+    expect(screen.getByLabelText(/model/i)).toHaveValue('gpt-4o')
+  })
+
   it('shows warning banner when no api key is configured', async () => {
     fetch.mockImplementation(mockFetch({ provider: 'openai', model: 'gpt-4o', apiKeySet: false, envStatus: [
       { provider: 'openai', configured: false, envVar: 'OPENAI_API_KEY' },

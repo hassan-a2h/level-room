@@ -2,7 +2,7 @@ import { BuildEvidenceFields, BuildResult, BuildStageIndicator } from '../../../
 import styles from './BuildView.module.css'
 
 export default function BuildView({ model, actions, slots }) {
-  const active = model.evaluation ? 'Result' : model.busy.submitting ? 'Evaluating' : model.taskSpec ? 'Evidence' : 'Brief'
+  const active = model.evaluation ? 'Result' : model.busy.submitting ? 'Evaluating' : model.phase === 'review' ? 'Review' : model.taskSpec ? 'Evidence' : 'Brief'
   return <section data-theme-view="BuildView" data-view-model="connected" className={styles.root}>
     <header className={styles.heading}><div><p className={styles.kicker}>PRACTICE INTO THE WORLD</p><h2>Build</h2></div><span>{model.taskSpec ? 'Field project' : model.artifactType || 'Artifact'}</span></header>
     <BuildStageIndicator active={active} busy={model.busy.submitting} className={styles.stages} />

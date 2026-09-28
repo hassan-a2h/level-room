@@ -8,6 +8,7 @@ import {
 } from '../theme/core/viewContracts.js'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { THEMES } from '../theme/index.js'
+import { createSessionBlockActions } from '../theme/core/sessionActionAdapters.js'
 import AtlasSession from '../theme/packs/living-atlas/views/SessionView.jsx'
 import CuriositySession from '../theme/packs/curiosity-engine/views/SessionView.jsx'
 import WorkshopSession from '../theme/packs/mission-workshop/views/SessionView.jsx'
@@ -37,6 +38,18 @@ describe('theme view composition contracts', () => {
       Build: ['genericArtifactInput'],
       Settings: ['codexConnection'],
     })
+  })
+
+  it('adapts Session block actions by documented block ID and payload signatures', () => {
+    const blocks = [{ id: 'read-1' }, { id: 'quiz-2' }]
+    const mutate = vi.fn()
+    const actions = createSessionBlockActions(blocks, mutate)
+    actions.completeBlock('read-1', { action: 'continue' })
+    actions.submitBlock('quiz-2', 'answer')
+    expect(mutate).toHaveBeenNthCalledWith(1, blocks[0], 'complete', { action: 'continue' })
+    expect(mutate).toHaveBeenNthCalledWith(2, blocks[1], 'submit', { response: 'answer' })
+    expect(THEME_VIEW_ACTIONS.Session).not.toContain('retryLoad')
+    expect(THEME_VIEW_ACTIONS.Session).not.toContain('sendTutorMessage')
   })
 
   it('requires complete model, action, and slot contracts before rendering a themed view', () => {
@@ -77,6 +90,25 @@ describe('theme view composition contracts', () => {
     }
   })
 
+  it('lets every Build view review complete evidence before submitting', () => {
+    for (const View of [AtlasBuild, CuriosityBuild, WorkshopBuild]) {
+      const reviewSubmission = vi.fn()
+      const actions = Object.fromEntries(THEME_VIEW_ACTIONS.Build.map((action) => [action, vi.fn()]))
+      actions.reviewSubmission = reviewSubmission
+      const { unmount } = render(h(View, { model: { ...modelFor('Build'), taskSpec: { title: 'Trace a request', scenario: 'Follow one request.', goal: 'Record its path.', constraints: [], deliverables: [], success_criteria: [], safety_notes: ['Use local data only.'] }, evidence: { setup: 'Local', actions: 'Followed', result: 'Recorded', reflection: 'Clear' } }, actions, slots: { genericArtifactInput: null } }))
+      fireEvent.click(screen.getByRole('button', { name: /review submission/i }))
+      expect(reviewSubmission).toHaveBeenCalledOnce()
+      unmount()
+      const review = render(h(View, { model: { ...modelFor('Build'), phase: 'review', taskSpec: { title: 'Trace a request', scenario: 'Follow one request.', goal: 'Record its path.', constraints: [], deliverables: [], success_criteria: [], safety_notes: ['Use local data only.'] }, evidence: { setup: 'Local', actions: 'Followed', result: 'Recorded', reflection: 'Clear' } }, actions, slots: { genericArtifactInput: null } }))
+      expect(screen.getAllByRole('listitem').find((item) => item.textContent === 'Review')).toHaveAttribute('aria-current', 'step')
+      expect(screen.getByRole('heading', { name: 'Review your submission' })).toBeInTheDocument()
+      expect(screen.getByText('Followed')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /edit evidence/i }))
+      expect(actions.setPhase).toHaveBeenCalledWith('evidence')
+      review.unmount()
+    }
+  })
+
   it('renders Settings category navigation and delegates category changes in every pack', () => {
     for (const View of [AtlasSettings, CuriositySettings, WorkshopSettings]) {
       const selectCategory = vi.fn()
@@ -88,6 +120,21 @@ describe('theme view composition contracts', () => {
       fireEvent.click(screen.getByRole('button', { name: 'AI connection' }))
       expect(selectCategory).toHaveBeenCalledWith('ai')
       unmount()
+    }
+  })
+
+  it('only offers Settings retry when the adapter has a safe retry operation', () => {
+    for (const View of [AtlasSettings, CuriositySettings, WorkshopSettings]) {
+      const retry = vi.fn()
+      const actions = Object.fromEntries(THEME_VIEW_ACTIONS.Settings.map((action) => [action, vi.fn()]))
+      actions.retry = retry
+      const { unmount } = render(h(View, { model: { ...modelFor('Settings'), themes: THEMES, category: 'appearance', error: 'Save failed.', retryAvailable: false }, actions, slots: { codexConnection: null } }))
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
+      unmount()
+      const result = render(h(View, { model: { ...modelFor('Settings'), themes: THEMES, category: 'appearance', error: 'Save failed.', retryAvailable: true }, actions, slots: { codexConnection: null } }))
+      fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+      expect(retry).toHaveBeenCalledOnce()
+      result.unmount()
     }
   })
 })

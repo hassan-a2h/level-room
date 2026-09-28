@@ -109,5 +109,5 @@ export function SettingsCategoryContent({ model, actions, slots }) {
     privacy: <PrivacySettings model={model} actions={actions} />,
     restore: <RestoreSettings model={model} actions={actions} />,
   }
-  return <>{model.success && <div className="ui-alert ui-alert-success" role="alert">{typeof model.success === 'string' ? model.success : 'Settings saved successfully.'}</div>}{model.error && <div className="ui-alert ui-alert-danger" role="alert"><span>{model.error}</span><button type="button" className="ui-button ui-button-quiet ml-3" onClick={actions.retry}>Retry</button></div>}{sections[model.category] || sections.appearance}</>
+  return <>{model.success && <div className="ui-alert ui-alert-success" role="alert">{typeof model.success === 'string' ? model.success : 'Settings saved successfully.'}</div>}{model.error && <div className="ui-alert ui-alert-danger" role="alert"><span>{model.error}</span>{model.retryAvailable && <button type="button" className="ui-button ui-button-quiet ml-3" onClick={actions.retry}>Retry</button>}</div>}{sections[model.category] || sections.appearance}</>
 }

@@ -48,11 +48,22 @@ export function BuildResult({ model, actions }) {
 export function BuildEvidenceFields({ model, actions, slots }) {
   const busy = Boolean(model.busy.submitting)
   const complete = model.taskSpec ? ['setup', 'actions', 'result', 'reflection'].every((field) => model.evidence[field]?.trim()) : Boolean(model.content.trim())
+  if (model.phase === 'review') return <>
+    <BuildBrief taskSpec={model.taskSpec} actions={actions} model={model} />
+    <section className="build-submission-review ui-panel p-4" aria-labelledby="build-submission-review-title">
+      <h3 id="build-submission-review-title" className="text-base font-semibold ui-text">Review your submission</h3>
+      {model.taskSpec
+        ? <dl className="mt-3 grid gap-3 sm:grid-cols-2">{[['setup', 'Setup'], ['actions', 'Actions taken'], ['result', 'Observed result'], ['reflection', 'Reflection']].map(([field, label]) => <div key={field}><dt className="text-xs font-medium ui-text-muted">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm ui-text-secondary">{model.evidence[field]}</dd></div>)}</dl>
+        : <pre className="mt-3 whitespace-pre-wrap break-words text-sm ui-text-secondary">{model.content}</pre>}
+    </section>
+    {model.error && <div className="ui-alert ui-alert-danger mb-4" role="alert">{model.error}</div>}
+    <div className="mt-5 flex flex-wrap justify-center gap-3"><button type="button" onClick={() => actions.setPhase('evidence')} disabled={busy} className="ui-button ui-button-secondary">Edit evidence</button><button type="button" onClick={actions.submit} disabled={busy || !complete} className="ui-button ui-button-primary min-h-10 px-6 py-2.5 text-sm">{busy ? 'Evaluating…' : 'Submit Build'}</button><button type="button" onClick={actions.returnToTrail} disabled={busy} className="ui-button ui-button-quiet">Cancel</button></div>
+  </>
   return <>
     <BuildBrief taskSpec={model.taskSpec} actions={actions} model={model} />
     <BuildRubric model={model} actions={actions} />
     {model.error && <div className="ui-alert ui-alert-danger mb-4" role="alert">{model.error}</div>}
     {model.taskSpec ? <div className="build-evidence-fields space-y-3">{[['setup', 'Setup'], ['actions', 'Actions taken'], ['result', 'Observed result'], ['reflection', 'Reflection']].map(([field, label]) => <label key={field} className="block ui-field-label">{label}<textarea aria-label={label} value={model.evidence[field]} onChange={(event) => actions.setEvidence(field, event.target.value)} rows={3} disabled={busy} className="ui-field mt-1 w-full resize-none disabled:cursor-not-allowed" /></label>)}</div> : slots.genericArtifactInput}
-    <div className="mt-5 flex flex-wrap justify-center gap-3"><button type="button" onClick={actions.submit} disabled={busy || !complete} className="ui-button ui-button-primary min-h-10 px-6 py-2.5 text-sm">{busy ? 'Evaluating…' : 'Submit Build'}</button><button type="button" onClick={actions.returnToTrail} disabled={busy} className="ui-button ui-button-secondary min-h-10 px-5 py-2.5 text-sm">Cancel</button></div>
+    <div className="mt-5 flex flex-wrap justify-center gap-3"><button type="button" onClick={actions.reviewSubmission} disabled={busy || !complete} className="ui-button ui-button-secondary min-h-10 px-5 py-2.5 text-sm">Review submission</button><button type="button" onClick={actions.submit} disabled={busy || !complete} className="ui-button ui-button-primary min-h-10 px-6 py-2.5 text-sm">{busy ? 'Evaluating…' : 'Submit Build'}</button><button type="button" onClick={actions.returnToTrail} disabled={busy} className="ui-button ui-button-quiet min-h-10 px-4 py-2.5 text-sm">Cancel</button></div>
   </>
 }

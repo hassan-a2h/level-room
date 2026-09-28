@@ -7,6 +7,7 @@ import SessionComplete from './SessionComplete.jsx'
 import TutorSidecar from './TutorSidecar.jsx'
 import { isFinalBlock, useSessionController } from '../../features/session/controller.js'
 import { useThemeView } from '../../theme/ThemeProvider.jsx'
+import { createSessionBlockActions } from '../../theme/core/sessionActionAdapters.js'
 
 function SessionThemeSurface({ model, actions, slots }) {
   const View = useThemeView('SessionView')
@@ -24,6 +25,7 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
   const viewedBlock = model.viewedBlock
   const viewedEntry = model.viewedEntry || {}
   const reviewBlock = model.reviewMode ? viewedBlock : null
+  const blockActions = useMemo(() => createSessionBlockActions(blocks, mutate), [blocks, mutate])
 
   useEffect(() => {
     if (currentBlockId && !reviewBlockId && activeHeading.current) activeHeading.current.focus()
@@ -33,18 +35,14 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
     setBlockDraft: (blockId, value) => setBlockDraft(blockId, 'value', value),
     setOrdering: (blockId, orderedIds) => setBlockDraft(blockId, 'value', orderedIds),
     revealWorkedStep: (blockId, count) => setBlockDraft(blockId, 'value', count),
-    completeBlock: (block, payload) => mutate(block, 'complete', payload),
-    submitBlock: (block, response) => mutate(block, 'submit', { response }),
+    ...blockActions,
     reviewBlock: (blockId) => setReviewBlockId(blockId),
     returnToCurrentBlock: () => setReviewBlockId(null),
     openTutor: () => updateTutor({ expanded: true }),
     closeTutor: () => updateTutor({ expanded: false }),
     setTutorDraft: (draft) => updateTutor({ draft }),
-    sendTutorMessage: () => undefined,
-    retryTutor: () => undefined,
     returnToTrail: () => navigate('/'),
-    retryLoad: () => undefined,
-  }), [mutate, navigate, setBlockDraft, setReviewBlockId, updateTutor])
+  }), [blockActions, navigate, setBlockDraft, setReviewBlockId, updateTutor])
 
   if (!activityDocument || !activityState) return <main className="session-page"><div className="session-error-panel" role="alert">Session state is unavailable. <Link to="/">Return to your Trail</Link></div></main>
 
@@ -77,8 +75,8 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
         persistedBlockState={viewedEntry}
         busy={busy}
         readOnly={Boolean(reviewBlock)}
-        onComplete={(payload) => actions.completeBlock(viewedBlock, payload)}
-        onSubmit={(response) => actions.submitBlock(viewedBlock, response)}
+        onComplete={(payload) => actions.completeBlock(viewedBlock.id, payload)}
+        onSubmit={(response) => actions.submitBlock(viewedBlock.id, response)}
         draft={draftsByBlockId[viewedBlock.id]?.value}
         onDraftChange={(value) => actions.setBlockDraft(viewedBlock.id, value)}
       />

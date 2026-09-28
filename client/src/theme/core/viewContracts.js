@@ -3,8 +3,7 @@ import { validateViewModelFixture } from './packContract.js'
 export const THEME_VIEW_ACTIONS = Object.freeze({
   Session: Object.freeze([
     'setBlockDraft', 'setOrdering', 'revealWorkedStep', 'completeBlock', 'submitBlock', 'reviewBlock',
-    'returnToCurrentBlock', 'openTutor', 'closeTutor', 'setTutorDraft', 'sendTutorMessage', 'retryTutor',
-    'returnToTrail', 'retryLoad',
+    'returnToCurrentBlock', 'openTutor', 'closeTutor', 'setTutorDraft', 'returnToTrail',
   ]),
   Build: Object.freeze([
     'begin', 'setPhase', 'setEvidence', 'setContent', 'selectFile', 'nextEvidence', 'previousEvidence',
