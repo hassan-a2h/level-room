@@ -1,36 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { getSettings, saveSettings, exportData, importData } from '../api.js'
+import { useEffect, useRef } from 'react'
+import { useTheme } from '../theme/ThemeProvider.jsx'
+import { useSettingsController } from '../features/settings/controller.js'
 import { SkeletonSettings } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
 import ThemeSwitcher from '../components/ThemeSwitcher.jsx'
 import CodexConnection from '../components/CodexConnection.jsx'
 
-function safeSettingsError(error, fallback) {
-  const message = typeof error?.message === 'string' ? error.message.trim() : ''
-  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
-    return fallback
-  }
-  return message
-}
-
 function SettingsPage() {
-  const [provider, setProvider] = useState('')
-  const [model, setModel] = useState('')
-  const [reasoningEffort, setReasoningEffort] = useState('none')
-  const [providers, setProviders] = useState([])
-  const [apiKeySet, setApiKeySet] = useState(false)
-  const [ready, setReady] = useState(false)
-  const [envStatus, setEnvStatus] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(false)
-
-  // Import / Export state
-  const [exporting, setExporting] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const [importProgress, setImportProgress] = useState(0)
-  const [pendingBackup, setPendingBackup] = useState(undefined)
+  const { theme } = useTheme()
+  const controller = useSettingsController({ themeId: theme.id })
+  const { model: viewModel, apiKeySet } = controller
+  const {
+    provider, model, reasoningEffort, providers, ready, environmentStatuses: envStatus,
+    phase, saving, error, success, exportState, importState, pendingBackup,
+  } = viewModel
+  const exporting = exportState.exporting
+  const importing = importState.importing
+  const importProgress = importState.progress
+  const loading = phase === 'loading'
   const fileInputRef = useRef(null)
   const cancelImportRef = useRef(null)
   const replaceImportRef = useRef(null)
@@ -38,7 +25,7 @@ function SettingsPage() {
   const hadPendingImport = useRef(false)
 
   useEffect(() => {
-    if (pendingBackup !== undefined) {
+    if (pendingBackup !== null) {
       cancelImportRef.current?.focus()
       hadPendingImport.current = true
     } else if (hadPendingImport.current && !importing) {
@@ -47,84 +34,14 @@ function SettingsPage() {
     }
   }, [pendingBackup, importing])
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await getSettings()
-        const p = data.provider || ''
-        setProvider(p)
-        const catalog = data.providers || []
-        setProviders(catalog)
-        const definition = catalog.find((entry) => entry.id === p)
-        setModel(data.model || definition?.defaultModel || definition?.models?.[0]?.id || '')
-        setReasoningEffort(data.reasoningEffort || 'none')
-        setApiKeySet(data.apiKeySet || false)
-        setReady(Boolean(data.ready))
-        setEnvStatus(data.envStatus || [])
-      } catch (err) {
-        setError('Failed to load settings.')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
-
-  function handleProviderChange(e) {
-    const p = e.target.value
-    setProvider(p)
-    const definition = providers.find((entry) => entry.id === p)
-    const selectedModel = definition?.models?.find((entry) => entry.id === definition.defaultModel) || definition?.models?.[0]
-    setModel(selectedModel?.id || '')
-    setReasoningEffort(selectedModel?.reasoningEfforts?.[0] || 'none')
-    setReady(definition?.authType === 'api_key' && Boolean(envStatus.find((entry) => entry.provider === p)?.configured))
-    setError(null)
-    setSuccess(false)
-  }
-
-  function handleModelChange(e) {
-    const nextModel = e.target.value
-    setModel(nextModel)
-    const selectedModel = currentModels.find((entry) => entry.id === nextModel)
-    setReasoningEffort(selectedModel?.reasoningEfforts?.[0] || 'none')
-    setError(null)
-    setSuccess(false)
-  }
-
   async function handleSubmit(e) {
     e.preventDefault()
-    setError(null)
-    setSuccess(false)
-
-    if (!provider) {
-      setError('Please select a provider.')
-      return
-    }
-    if (!model) {
-      setError('Please select a model.')
-      return
-    }
-
-    setSaving(true)
-    try {
-      const result = await saveSettings({ provider, model, reasoningEffort })
-      setApiKeySet(result.apiKeySet || false)
-      setReady(Boolean(result.ready))
-      setEnvStatus(result.envStatus || [])
-      setSuccess(true)
-    } catch (err) {
-      setError(safeSettingsError(err, 'Could not save AI connection. Confirm provider setup and try again.'))
-    } finally {
-      setSaving(false)
-    }
+    await controller.save()
   }
 
   async function handleExport() {
-    setError(null)
-    setSuccess(false)
-    setExporting(true)
-    try {
-      const data = await exportData()
+    const data = await controller.exportBackup()
+    if (data) {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -134,11 +51,6 @@ function SettingsPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      setSuccess(true)
-    } catch (err) {
-      setError(safeSettingsError(err, 'Could not export your learning data. Try again.'))
-    } finally {
-      setExporting(false)
     }
   }
 
@@ -151,53 +63,15 @@ function SettingsPage() {
   async function handleFileChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
-
-    try {
-      const text = await file.text()
-      let backup
-      try {
-        backup = JSON.parse(text)
-      } catch {
-        throw new Error('Invalid backup file: not valid JSON.')
-      }
-      setError(null)
-      setSuccess(false)
-      setPendingBackup(backup)
-    } catch (err) {
-      setError(err.message || 'Could not read that backup file. Check the file and try again.')
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
+    await controller.readImportFile(file)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function handleConfirmImport() {
-    if (pendingBackup === undefined) return
-    setError(null)
-    setSuccess(false)
-    setImporting(true)
-    setImportProgress(10)
-    const backup = pendingBackup
-    setPendingBackup(undefined)
-    try {
-      setImportProgress(50)
-      const result = await importData(backup)
-      setImportProgress(100)
-      setSuccess(`Import complete. Restored ${Object.entries(result.counts || {})
-        .map(([k, v]) => `${v} ${k}`)
-        .join(', ')}.`)
-    } catch (err) {
-      setError(safeSettingsError(err, 'Could not restore that backup. Check the file and try again.'))
-    } finally {
-      setImporting(false)
-      setImportProgress(0)
-    }
+    await controller.confirmImport()
   }
 
-  const onCodexConnectionChange = useCallback((connected) => {
-    if (provider === 'openai-codex') setReady(connected)
-  }, [provider])
+  const onCodexConnectionChange = controller.onCodexConnectionChange
 
   if (loading) {
     return <SkeletonSettings />
@@ -248,8 +122,8 @@ function SettingsPage() {
               </label>
               <select
                 id="provider"
-                value={provider}
-                onChange={handleProviderChange}
+                value={provider || ''}
+                onChange={(event) => controller.changeProvider(event.target.value)}
                 className="ui-field w-full"
               >
                 <option value="">Select a provider</option>
@@ -263,8 +137,8 @@ function SettingsPage() {
               </label>
               <select
                 id="model"
-                value={model}
-                onChange={handleModelChange}
+                value={model || ''}
+                onChange={(event) => controller.changeModel(event.target.value)}
                 disabled={!provider}
                 className="ui-field w-full"
               >
@@ -280,7 +154,7 @@ function SettingsPage() {
             {currentReasoningEfforts.length > 0 && (
               <div>
                 <label htmlFor="reasoning-effort" className="ui-field-label">Reasoning level</label>
-                <select id="reasoning-effort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value)} className="ui-field w-full">
+                <select id="reasoning-effort" value={reasoningEffort || 'none'} onChange={(event) => controller.changeReasoningEffort(event.target.value)} className="ui-field w-full">
                   {currentReasoningEfforts.map((effort) => (
                     <option key={effort} value={effort}>{effort}</option>
                   ))}
@@ -395,7 +269,7 @@ function SettingsPage() {
         </section>
       </main>
     </div>
-    {pendingBackup !== undefined && (
+    {pendingBackup !== null && (
       <div className="ui-dialog-backdrop">
         <div
           role="dialog"
@@ -405,7 +279,7 @@ function SettingsPage() {
           className="ui-panel ui-dialog"
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
-              setPendingBackup(undefined)
+              controller.cancelImport()
               return
             }
             if (event.key === 'Tab') {
@@ -426,7 +300,7 @@ function SettingsPage() {
             Restoring this backup will replace your current learning data. You can cancel now and nothing will be changed.
           </p>
           <div className="flex flex-wrap justify-end gap-3">
-            <button ref={cancelImportRef} type="button" className="ui-button ui-button-secondary" onClick={() => setPendingBackup(undefined)}>
+            <button ref={cancelImportRef} type="button" className="ui-button ui-button-secondary" onClick={controller.cancelImport}>
               Cancel restore
             </button>
             <button ref={replaceImportRef} type="button" className="ui-button ui-button-primary" onClick={handleConfirmImport}>
