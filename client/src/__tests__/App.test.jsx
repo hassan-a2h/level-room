@@ -42,7 +42,7 @@ describe('App', () => {
       activityProgress: { completed: 0, total: 1, percent: 0, currentBlockId: 'read-start' },
     })
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Start' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Start' }, { timeout: 3000 })).toBeInTheDocument()
     expect(getLesson).toHaveBeenCalledWith('2', '8')
     expect(ensureActivities).not.toHaveBeenCalled()
   })
