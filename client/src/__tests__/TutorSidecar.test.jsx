@@ -50,6 +50,17 @@ describe('TutorSidecar', () => {
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2))
   })
 
+  it('hides database details when the guide API fails', async () => {
+    sendChatMessage.mockRejectedValueOnce(new Error('SQLITE_ERROR: private tutor_messages detail'))
+    render(<TutorSidecar {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /ask your guide/i }))
+    fireEvent.change(screen.getByRole('textbox', { name: /message your guide/i }), { target: { value: 'Can you explain this?' } })
+    fireEvent.click(screen.getByRole('button', { name: /send/i }))
+
+    expect(await within(screen.getByRole('dialog')).findByText('Your guide is temporarily unavailable. Please retry.')).toBeInTheDocument()
+    expect(screen.queryByText(/sqlite|tutor_messages/i)).not.toBeInTheDocument()
+  })
+
   it('closes with Escape and restores trigger focus', async () => {
     render(<TutorSidecar {...props} />)
     const trigger = screen.getByRole('button', { name: /ask your guide/i })

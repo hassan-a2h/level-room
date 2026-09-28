@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendChatMessage } from '../../api.js'
 import MarkdownContent from '../MarkdownContent.jsx'
+import { toPublicError } from '../../lib/publicError.js'
 
 const MAX_MESSAGE_LENGTH = 2000
 const SUGGESTIONS = ['Give me a hint', 'Show another example', 'Why was this wrong?']
@@ -104,7 +105,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
       changeDraft('')
       setStreamingText('')
     } catch (requestError) {
-      setError(requestError?.message || 'Your guide is temporarily unavailable. Please retry.')
+      setError(toPublicError(requestError, 'Your guide is temporarily unavailable. Please retry.').message)
       setStreamingText('')
     } finally {
       setBusy(false)

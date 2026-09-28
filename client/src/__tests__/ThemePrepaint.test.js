@@ -62,4 +62,32 @@ describe('ThemePrepaint', () => {
     expect(result.theme.id).toBe('living-atlas')
     expect(result.message).toMatch(/session/i)
   })
+
+  it('writes Living Atlas to the versioned key when the legacy key is present and removes it', () => {
+    const root = createRoot()
+    const values = new Map([['mastery-roadmap-theme', 'palette-purple']])
+    const storage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    }
+
+    expect(prepaintTheme({ root, storage }).theme.id).toBe('living-atlas')
+    expect(values.get(THEME_STORAGE_KEY)).toBe('living-atlas')
+    expect(values.has('mastery-roadmap-theme')).toBe(false)
+  })
+
+  it('removes the legacy key when the new key already contains a valid selection', () => {
+    const root = createRoot()
+    const values = new Map([[THEME_STORAGE_KEY, 'mission-workshop'], ['mastery-roadmap-theme', 'palette-purple']])
+    const storage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    }
+
+    expect(prepaintTheme({ root, storage }).theme.id).toBe('mission-workshop')
+    expect(values.get(THEME_STORAGE_KEY)).toBe('mission-workshop')
+    expect(values.has('mastery-roadmap-theme')).toBe(false)
+  })
 })

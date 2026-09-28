@@ -12,6 +12,7 @@ import {
 } from '../api.js'
 import { useThemeView } from '../theme/ThemeProvider.jsx'
 import { buildCheckpointViewModel } from '../features/checkpoint/controller.js'
+import { toPublicError } from '../lib/publicError.js'
 
 const SAVE_DEBOUNCE_MS = 500
 
@@ -79,7 +80,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
           setReady(false)
           setLessonsRemaining(loadError.lessonsRemaining || 0)
         } else if (loadError.code !== 'CHECKPOINT_NOT_FOUND' && loadError.status !== 404) {
-          setError(loadError.message || 'We couldn’t load your checkpoint.')
+          setError(toPublicError(loadError, 'We couldn’t load your checkpoint.').message)
         }
       })
       .finally(() => { if (active) setLoading(false) })
@@ -101,7 +102,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
       const data = await action()
       acceptAttempt(data, partial)
     } catch (actionError) {
-      setError(actionError.message || 'We couldn’t prepare this checkpoint. Please try again.')
+      setError(toPublicError(actionError, 'We couldn’t prepare this checkpoint. Please try again.').message)
     } finally {
       setLoading(false)
     }
@@ -166,7 +167,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
           setFocusQuestionId(questions[missingIndex].id)
         }
       }
-      setError(submitError.message || 'Your checkpoint couldn’t be submitted. Your answers are still here; try again when you’re ready.')
+      setError(toPublicError(submitError, 'Your checkpoint couldn’t be submitted. Your answers are still here; try again when you’re ready.').message)
     } finally {
       setLoading(false)
     }

@@ -3,6 +3,7 @@ import { compatibilityTokens, tokenName } from '../tokens.js'
 import { THEMES } from '../index.js'
 
 export const THEME_STORAGE_KEY = 'mastery-trail-theme-v2'
+const LEGACY_THEME_STORAGE_KEY = 'mastery-roadmap-theme'
 
 export function applyThemeTokens(root, theme) {
   root.dataset.theme = theme.id
@@ -24,7 +25,15 @@ export function prepaintTheme({ root, storage, packs, storageKey = THEME_STORAGE
   let message = ''
   try {
     const source = storage ?? globalThis.localStorage
-    const storedId = source.getItem(storageKey)
+    let storedId = source.getItem(storageKey)
+    if (storageKey === THEME_STORAGE_KEY) {
+      const legacyValue = source.getItem(LEGACY_THEME_STORAGE_KEY)
+      if (storedId === null && legacyValue !== null) {
+        storedId = DEFAULT_THEME_ID
+        source.setItem(storageKey, DEFAULT_THEME_ID)
+      }
+      if (legacyValue !== null) source.removeItem(LEGACY_THEME_STORAGE_KEY)
+    }
     theme = available.find((candidate) => candidate.id === storedId) ?? fallback
     if (theme && storedId === theme.id) message = 'Saved in this browser'
     if (storedId && !available.some((candidate) => candidate.id === storedId)) {

@@ -131,6 +131,14 @@ describe('Chapter checkpoint experience', () => {
     expect(screen.getByRole('button', { name: /review answers/i })).toBeInTheDocument()
   })
 
+  it('never shows database details when checkpoint loading fails', async () => {
+    getExam.mockRejectedValueOnce(Object.assign(new Error('SQLITE_ERROR: no such table: checkpoint_answers'), { status: 500 }))
+    renderPanel()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('We couldn’t load your checkpoint.')
+    expect(screen.queryByText(/sqlite|checkpoint_answers/i)).not.toBeInTheDocument()
+  })
+
   it('takes the learner to the first unanswered question and focuses its answer control', async () => {
     getExam.mockResolvedValue(pendingAttempt({ questions: [choiceQuestion, writtenQuestion] }))
     renderPanel()

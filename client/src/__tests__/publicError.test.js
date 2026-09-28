@@ -3,9 +3,19 @@ import { toPublicError } from '../lib/publicError.js'
 
 describe('toPublicError', () => {
   it('keeps a short learner-safe message and retry hint', () => {
+    const error = { kind: 'offline', message: 'Connection lost. Try again.', retryable: true }
+    expect(toPublicError(error, 'Try again.')).toBe(error)
     expect(toPublicError({ message: 'Connection lost. Try again.', retryable: true }, 'Try again.')).toEqual({
       kind: 'offline',
       message: 'Connection lost. Try again.',
+      retryable: true,
+    })
+  })
+
+  it('uses the supplied fallback for database errors even when they carry a server status', () => {
+    expect(toPublicError({ status: 500, message: 'SQLITE_ERROR: no such table: users' }, 'Could not load your Trail.')).toEqual({
+      kind: 'server',
+      message: 'Could not load your Trail.',
       retryable: true,
     })
   })
@@ -36,6 +46,14 @@ describe('toPublicError', () => {
     expect(toPublicError({ status: 503, code: 'DATABASE_UNAVAILABLE' }, 'Try again.')).toEqual({
       kind: 'server',
       message: 'Try again.',
+      retryable: true,
+    })
+  })
+
+  it('maps provider outages to a safe, retryable provider message', () => {
+    expect(toPublicError({ message: 'The provider is busy.' }, 'Could not prepare this Track.')).toEqual({
+      kind: 'provider-unavailable',
+      message: 'The provider is busy. Please try again shortly.',
       retryable: true,
     })
   })

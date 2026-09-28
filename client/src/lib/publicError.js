@@ -22,6 +22,27 @@ export function toPublicError(error, fallbackMessage = FALLBACK_MESSAGE) {
   const code = typeof error?.code === 'string' ? error.code.toLowerCase() : ''
   const networkFailure = error instanceof TypeError || /network|failed to fetch|connection|offline/i.test(error?.message || '')
 
+  const publicKinds = new Set(['offline', 'expired', 'validation', 'access', 'server', 'provider-unavailable', 'unknown'])
+  if (
+    error && typeof error === 'object' &&
+    Object.keys(error).length === 3 &&
+    publicKinds.has(error.kind) &&
+    typeof error.retryable === 'boolean' &&
+    typeof error.message === 'string' &&
+    safeMessage(error, '') === error.message
+  ) return error
+
+  const providerConnectionLost = /provider.{0,24}connection.{0,12}(?:lost|failed)/i.test(error?.message || '')
+  const providerUnavailable = providerConnectionLost || /provider.{0,24}(?:busy|unavailable|timeout|timed out)|(?:busy|unavailable|timeout|timed out).{0,24}provider/i.test(error?.message || '') ||
+    (status !== null && status >= 500 && /provider|model|llm/.test(code))
+  if (providerUnavailable) {
+    return {
+      kind: 'provider-unavailable',
+      message: providerConnectionLost ? 'The provider connection was lost. Please try again.' : 'The provider is busy. Please try again shortly.',
+      retryable: true,
+    }
+  }
+
   let kind = 'unknown'
   if (status === 404 || code.includes('expired')) kind = 'expired'
   else if (networkFailure) kind = 'offline'
