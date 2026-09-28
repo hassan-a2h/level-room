@@ -43,7 +43,7 @@ describe('useReviewController', () => {
   })
 
   it('maps expired session 404 responses to the expired model', async () => {
-    const submitReview = vi.fn().mockRejectedValue(Object.assign(new Error('Not found'), { status: 404, code: 'SESSION_NOT_FOUND' }))
+    const submitReview = vi.fn().mockRejectedValue(Object.assign(new Error('Review session not found or expired.'), { status: 404 }))
     const { result } = renderHook(() => useReviewController({
       sessionId: 'expired', questions: [{ id: 'q1' }], submitReviewFn: submitReview,
     }))

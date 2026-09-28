@@ -642,7 +642,7 @@ export async function submitReview(sessionId, answers, localDate) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(body.error || `HTTP ${res.status}`)
+    throw Object.assign(new Error(body.error || `HTTP ${res.status}`), body, { status: res.status })
   }
   return body
 }
