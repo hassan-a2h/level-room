@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cancelReview, getLocalDate, getReviewCount, getReviews, startReviewSession, submitReview } from '../../api.js'
 import { toPublicError } from '../../lib/publicError.js'
 
-const ANSWER_ERROR = 'Answer every question before requesting feedback.'
+const ANSWER_ERROR = 'Answer every question before reviewing your answers.'
 
 export function buildReviewViewModel(state = {}) {
   const questions = Array.isArray(state.questions) ? state.questions : []
@@ -21,8 +21,8 @@ export function buildReviewViewModel(state = {}) {
     answers: state.answers || {},
     feedbackByQuestionId,
     feedbackIndex: Number.isInteger(state.feedbackIndex) ? state.feedbackIndex : 0,
-    currentFeedback: currentQuestion ? feedbackByQuestionId[currentQuestion.id] || null : null,
     result: state.phase === 'complete' ? state.result || null : null,
+    currentFeedback: currentQuestion ? feedbackByQuestionId[currentQuestion.id] || null : null,
     ui: state.ui || {},
     busy: { submitting: false, ...(state.busy || {}) },
     error: state.error || null,
@@ -74,8 +74,28 @@ export function useReviewController({
     if (phase === 'answers') setCurrentIndex((index) => Math.max(0, index - 1))
   }, [phase])
 
+  const reviewAnswers = useCallback(() => {
+    if (phase !== 'answers') return
+    if (validQuestions.some((question) => !String(answers[question.id] || '').trim())) {
+      setError({ kind: 'validation', message: ANSWER_ERROR, retryable: false })
+      return
+    }
+    setError(null)
+    setPhase('answer-review')
+  }, [answers, phase, validQuestions])
+
+  const editAnswer = useCallback((index) => {
+    if (phase !== 'answer-review') return
+    setCurrentIndex(Math.max(0, Math.min(validQuestions.length - 1, index)))
+    setPhase('answers')
+  }, [phase, validQuestions.length])
+
+  const backToAnswers = useCallback(() => {
+    if (phase === 'answer-review') setPhase('answers')
+  }, [phase])
+
   const submitAnswers = useCallback(async () => {
-    if (phase !== 'answers' || submittingRef.current) return
+    if (phase !== 'answer-review' || submittingRef.current) return
     const completeAnswers = Object.fromEntries(validQuestions.map((question) => [question.id, String(answers[question.id] || '').trim()]))
     if (validQuestions.some((question) => !completeAnswers[question.id])) {
       setError({ kind: 'validation', message: ANSWER_ERROR, retryable: false })
@@ -144,9 +164,23 @@ export function useReviewController({
     result,
     busy,
     error,
+    feedbackByQuestionId,
   }), [answers, busy, currentIndex, error, feedbackByQuestionId, feedbackIndex, phase, remainingCount, result, sessionId, totalQuestions, validQuestions])
 
-  return { model, setAnswer, nextQuestion, previousQuestion, submitAnswers, nextFeedback, cancel }
+  const actions = useMemo(() => ({
+    answer: setAnswer,
+    nextQuestion,
+    previousQuestion,
+    reviewAnswers,
+    editAnswer,
+    backToAnswers,
+    submit: submitAnswers,
+    nextFeedback,
+    returnToQueue: () => {},
+    returnToTrail: () => {},
+  }), [backToAnswers, editAnswer, nextFeedback, nextQuestion, previousQuestion, reviewAnswers, setAnswer, submitAnswers])
+
+  return { model: { ...model, actions }, setAnswer, nextQuestion, previousQuestion, reviewAnswers, editAnswer, backToAnswers, submitAnswers, nextFeedback, cancel }
 }
 
 export function useReviewQueueController({

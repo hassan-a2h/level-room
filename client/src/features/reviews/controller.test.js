@@ -27,6 +27,9 @@ describe('useReviewController', () => {
     expect(submitReview).not.toHaveBeenCalled()
     expect(result.current.model.answers).toEqual({ q1: ' First answer ', q2: 'Second answer' })
 
+    act(() => result.current.reviewAnswers())
+    expect(result.current.model.phase).toBe('answer-review')
+    expect(submitReview).not.toHaveBeenCalled()
     await act(async () => { await result.current.submitAnswers() })
     expect(submitReview).toHaveBeenCalledOnce()
     expect(submitReview).toHaveBeenCalledWith('session-1', { q1: 'First answer', q2: 'Second answer' }, '2026-09-28')
@@ -45,6 +48,7 @@ describe('useReviewController', () => {
       sessionId: 'expired', questions: [{ id: 'q1' }], submitReviewFn: submitReview,
     }))
     act(() => result.current.setAnswer('q1', 'answer'))
+    act(() => result.current.reviewAnswers())
 
     await act(async () => { await result.current.submitAnswers() })
 
@@ -58,10 +62,13 @@ describe('useReviewController', () => {
     const { result } = renderHook(() => useReviewController({ sessionId: 's', questions, submitReviewFn: submitReview }))
 
     act(() => result.current.setAnswer('q1', 'answer'))
+    act(() => result.current.reviewAnswers())
+    expect(result.current.model.phase).toBe('answers')
     await act(async () => { await result.current.submitAnswers() })
     expect(submitReview).not.toHaveBeenCalled()
 
     act(() => result.current.setAnswer('q2', 'answer'))
+    act(() => result.current.reviewAnswers())
     act(() => { result.current.submitAnswers(); result.current.submitAnswers() })
     expect(submitReview).toHaveBeenCalledOnce()
     await act(async () => { resolveSubmit({ feedback: [] }) })

@@ -36,6 +36,17 @@ const scenarios = {
     reviewCount: { totalDue: 0, dueToday: 0, overdue: 0 },
     reviews: { due: [] },
   },
+  checkpoint: {
+    topics: { topics: [{ id: 1, title: 'SQL foundations', status: 'active', progress: 100, totalLessons: 1, passedLessons: 1 }] },
+    dashboard: {
+      topic: { id: 1, title: 'SQL foundations', status: 'active', progress: 100, totalLessons: 1, passedLessons: 1 },
+      modules: [{ id: 42, title: 'Joins', skill_outcomes: [{ id: 'join-core', title: 'Choose the right join', role: 'core' }], lessons: [{ id: 7, title: 'Join tables', state: 'passed', outcomes: [{ id: 'join-core', title: 'Choose the right join' }] }] }],
+      nextAction: { kind: 'checkpoint', moduleId: 42, title: 'Chapter checkpoint' },
+      reviewSummary: { totalDue: 0, dueToday: 0, overdue: 0 }, weeklyRhythm: { activeDays: 0, days: [] }, focusAreas: [], mistakes: [],
+    },
+    reviewCount: { totalDue: 0, dueToday: 0, overdue: 0 },
+    reviews: { due: [] },
+  },
   settings: {
     topics: { topics: [] },
     reviewCount: { totalDue: 0, dueToday: 0, overdue: 0 },
@@ -80,6 +91,14 @@ async function installRouteMocks(context) {
     }
 
     const state = scenarios[scenarioName]
+
+    if (scenarioName === 'checkpoint' && path === '/api/topics/1/modules/42/exam') {
+      if (method === 'GET') return jsonResponse(route, { error: 'No checkpoint is in progress.', code: 'CHECKPOINT_NOT_FOUND' }, 404)
+      if (method === 'POST') return jsonResponse(route, {
+        id: 99, type: 'full', moduleTitle: 'Joins', answers: {},
+        questions: [{ id: 'join-q1', text: 'Which join keeps every left row?', type: 'choice', options: [{ id: 'left', label: 'LEFT JOIN' }, { id: 'inner', label: 'INNER JOIN' }] }],
+      })
+    }
 
     if (method === 'GET' && path === '/api/topics') return jsonResponse(route, state.topics)
     if (method === 'GET' && path === '/api/topics/default') {
