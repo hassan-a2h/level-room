@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getSettings, saveSettings, exportData, importData } from '../api.js'
 import { SkeletonSettings } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
-import ThemePicker from '../components/ThemePicker.jsx'
+import ThemeSwitcher from '../components/ThemeSwitcher.jsx'
 import CodexConnection from '../components/CodexConnection.jsx'
 
 function safeSettingsError(error, fallback) {
@@ -218,7 +218,7 @@ function SettingsPage() {
 
         <section id="appearance" className="settings-section settings-appearance ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
           <h2 id="appearance-heading" className="text-xl font-semibold ui-text mb-4">Appearance</h2>
-          <ThemePicker />
+          <ThemeSwitcher variant="cards" />
         </section>
 
         {success && (

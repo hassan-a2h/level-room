@@ -53,7 +53,7 @@ describe('SettingsPage', () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: [] }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument())
-    expect(screen.getAllByRole('radio')).toHaveLength(16)
+    expect(screen.getAllByRole('radio')).toHaveLength(3)
     for (const section of ['Learning preferences', 'AI connection', 'Data and privacy', 'Danger zone']) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
     }

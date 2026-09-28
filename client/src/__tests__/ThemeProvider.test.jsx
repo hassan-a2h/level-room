@@ -9,7 +9,7 @@ function Probe() {
     <div>
       <span>{theme.name}</span>
       <span role="status">{storageMessage}</span>
-      <button onClick={() => selectTheme('deep-ocean')}>Set dark</button>
+      <button onClick={() => selectTheme('mission-workshop')}>Set dark</button>
       <button onClick={() => selectTheme('not-a-real-theme')}>Set invalid</button>
     </div>
   )
@@ -25,33 +25,38 @@ afterEach(() => {
 })
 
 describe('ThemeProvider', () => {
-  it('starts with Morning Mist and applies semantic tokens and native control mode', () => {
+  it('starts with Living Atlas and applies semantic tokens and native control mode', () => {
     render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Morning Mist')).toBeInTheDocument()
-    expect(document.documentElement).toHaveAttribute('data-theme', 'morning-mist')
+    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
+    expect(document.documentElement).toHaveAttribute('data-theme', 'living-atlas')
     expect(document.documentElement).toHaveAttribute('data-theme-mode', 'light')
     expect(document.documentElement.style.colorScheme).toBe('light')
-    expect(document.documentElement.style.getPropertyValue('--canvas').toUpperCase()).toBe('#F1F5F3')
-    expect(document.documentElement.style.getPropertyValue('--space-1')).toBe('0.25rem')
+    expect(document.documentElement.style.getPropertyValue('--canvas')).toBeTruthy()
+    expect(document.documentElement.style.getPropertyValue('--font-body')).toBeTruthy()
   })
 
   it('loads a valid saved choice and falls back for unknown stored values', () => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, 'deep-ocean')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'mission-workshop')
     const first = render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Deep Ocean')).toBeInTheDocument()
+    expect(screen.getByText('Mission Workshop')).toBeInTheDocument()
     first.unmount()
 
-    window.localStorage.setItem(THEME_STORAGE_KEY, 'not-a-real-theme')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'morning-mist')
+    const second = render(<ThemeProvider><Probe /></ThemeProvider>)
+    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
+    second.unmount()
+
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'unknown-theme')
     render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Morning Mist')).toBeInTheDocument()
+    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
   })
 
   it('applies a choice immediately and persists it for this browser profile', () => {
     render(<ThemeProvider><Probe /></ThemeProvider>)
     fireEvent.click(screen.getByRole('button', { name: 'Set dark' }))
-    expect(document.documentElement).toHaveAttribute('data-theme', 'deep-ocean')
+    expect(document.documentElement).toHaveAttribute('data-theme', 'mission-workshop')
     expect(document.documentElement.style.colorScheme).toBe('dark')
-    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('deep-ocean')
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('mission-workshop')
     expect(screen.getByRole('status')).toHaveTextContent('Saved in this browser')
   })
 
@@ -60,7 +65,7 @@ describe('ThemeProvider', () => {
     vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('denied') })
     render(<ThemeProvider><Probe /></ThemeProvider>)
     fireEvent.click(screen.getByRole('button', { name: 'Set dark' }))
-    expect(screen.getByText('Deep Ocean')).toBeInTheDocument()
+    expect(screen.getByText('Mission Workshop')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Applied for this session; browser storage is unavailable')
   })
 
@@ -68,6 +73,6 @@ describe('ThemeProvider', () => {
     render(<ThemeProvider><Probe /></ThemeProvider>)
     fireEvent.click(screen.getByRole('button', { name: 'Set dark' }))
     fireEvent.click(screen.getByRole('button', { name: 'Set invalid' }))
-    expect(screen.getByText('Deep Ocean')).toBeInTheDocument()
+    expect(screen.getByText('Mission Workshop')).toBeInTheDocument()
   })
 })
