@@ -1,17 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getReviews, getReviewCount, startReviewSession } from '../api.js'
+import { useReviewQueueController } from '../features/reviews/controller.js'
 import AppHeader from '../components/AppHeader.jsx'
 import Button from '../components/ui/Button.jsx'
 import StatusBadge from '../components/ui/StatusBadge.jsx'
-
-function safeReviewError(error, fallback) {
-  const message = typeof error?.message === 'string' ? error.message.trim() : ''
-  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
-    return fallback
-  }
-  return message
-}
 
 function EmptyQueue({ onReturn }) {
   return (
@@ -37,83 +28,52 @@ function ReviewLoadError({ onRetry }) {
 }
 
 export default function ReviewQueue() {
-  const [reviews, setReviews] = useState(null)
-  const [counts, setCounts] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [startingSession, setStartingSession] = useState(false)
+  const { model, loadData, startSession } = useReviewQueueController()
   const navigate = useNavigate()
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const [reviewsData, countData] = await Promise.all([
-        getReviews(),
-        getReviewCount(),
-      ])
-      setReviews(reviewsData)
-      setCounts(countData)
-    } catch (err) {
-      setError(safeReviewError(err, 'Could not load retrieval practice. Check your connection and try again.'))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadData()
-  }, [loadData])
-
   const handleStartReview = async () => {
-    setStartingSession(true)
-    setError('')
-    try {
-      const session = await startReviewSession()
-      navigate(`/review/${session.sessionId}`, {
-        state: {
-          sessionId: session.sessionId,
-          questions: session.questions,
-          totalQuestions: session.totalQuestions,
-          remainingCount: session.remainingCount,
-        },
-      })
-    } catch (err) {
-      setError(safeReviewError(err, 'Could not start retrieval practice. Try again.'))
-      setStartingSession(false)
-    }
+    const session = await startSession()
+    if (!session) return
+    navigate(`/review/${session.sessionId}`, {
+      state: {
+        sessionId: session.sessionId,
+        questions: session.questions,
+        totalQuestions: session.totalQuestions,
+        remainingCount: session.remainingCount,
+      },
+    })
   }
 
-  const dueItems = reviews?.due || []
-  const totalDue = counts?.totalDue || 0
+  const { dueItems, counts, busy, error } = model
+  const totalDue = counts.totalDue || 0
 
   return (
     <div className="ui-page min-h-screen">
-      <AppHeader dueCount={loading ? undefined : totalDue} />
+      <AppHeader dueCount={busy.loading ? undefined : totalDue} />
       <main className="ui-container max-w-5xl space-y-6 px-4 py-6 sm:py-8">
         <h1 className="text-3xl font-bold ui-text">Retrieval practice</h1>
-        {loading && (
+        {busy.loading && (
           <p className="ui-text-secondary" role="status" aria-live="polite">Loading review queue…</p>
         )}
         {error && (
           <div className="ui-alert ui-alert-danger" role="alert">
-            {error}
+            {error.message}
           </div>
         )}
 
-        {!loading && reviews === null && error && <ReviewLoadError onRetry={loadData} />}
+        {!busy.loading && dueItems.length === 0 && error && <ReviewLoadError onRetry={loadData} />}
 
-        {!loading && reviews !== null && dueItems.length === 0 && <EmptyQueue onReturn={() => navigate('/')} />}
+        {!busy.loading && dueItems.length === 0 && !error && <EmptyQueue onReturn={() => navigate('/')} />}
 
-        {!loading && dueItems.length > 0 && (
+        {!busy.loading && dueItems.length > 0 && (
           <>
           <section className="ui-surface ui-surface-flat flex flex-wrap items-center justify-between gap-4 p-4" aria-label="Review summary">
             <p className="flex flex-wrap items-center gap-2 text-sm ui-text-secondary">
               <strong className="ui-text">{totalDue} retrieval item{totalDue !== 1 ? 's' : ''} due</strong>
               {counts?.overdue > 0 && <StatusBadge status="danger">{counts.overdue} overdue</StatusBadge>}
             </p>
-            <Button onClick={handleStartReview} disabled={startingSession}>
-              {startingSession ? 'Starting…' : 'Start retrieval practice'}
+            <Button onClick={handleStartReview} disabled={busy.starting}>
+              {busy.starting ? 'Starting…' : 'Start retrieval practice'}
             </Button>
           </section>
           <div className="space-y-3" aria-label="Reviews due" role="list">

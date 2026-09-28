@@ -1,20 +1,11 @@
-import { useState, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { submitReview, cancelReview, getLocalDate } from '../api.js'
+import { useReviewController } from '../features/reviews/controller.js'
 import AppHeader from './AppHeader.jsx'
 import Button from './ui/Button.jsx'
 import ProgressBar from './ui/ProgressBar.jsx'
 import StatusBadge from './ui/StatusBadge.jsx'
 
-function safeReviewError(error) {
-  const message = typeof error?.message === 'string' ? error.message.trim() : ''
-  if (!message || /sqlite|\bsql\b|database|foreign key|constraint|\btable\b|\bcolumn\b|stack trace|exception/i.test(message)) {
-    return 'Could not save this answer. Your response is still here. Try again.'
-  }
-  return message
-}
-
-function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit, disabled }) {
+function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit, onPrevious, showPrevious, actionLabel, disabled }) {
   return (
     <section className="ui-panel p-5 sm:p-7" aria-labelledby="review-question-title">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
@@ -36,12 +27,15 @@ function QuestionCard({ question, index, total, answer, onAnswerChange, onSubmit
         className="ui-field w-full resize-y"
         disabled={disabled}
       />
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-between">
+        {showPrevious
+          ? <Button variant="secondary" onClick={onPrevious} disabled={disabled}>Previous</Button>
+          : <span />}
         <Button
           onClick={onSubmit}
           disabled={disabled || !answer.trim()}
         >
-          {disabled ? 'Submitting...' : 'Submit Answer'}
+          {disabled ? 'Submitting...' : actionLabel}
         </Button>
       </div>
     </section>
@@ -117,99 +111,37 @@ export default function ReviewSession() {
   const navigate = useNavigate()
   const location = useLocation()
   const { sessionId, questions = [], totalQuestions = 0, remainingCount = 0 } = location.state || {}
+  const controller = useReviewController({ sessionId, questions, totalQuestions, remainingCount })
+  const { model } = controller
 
-  const [answers, setAnswers] = useState({})
-  const [submitted, setSubmitted] = useState({})
-  const [feedbackMap, setFeedbackMap] = useState({})
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [result, setResult] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
-
-  const handleAnswerChange = useCallback((value) => {
-    const q = questions[currentIndex]
-    if (!q) return
-    setAnswers((prev) => ({ ...prev, [q.id]: value }))
-  }, [currentIndex, questions])
-
-  const handleSubmitAnswer = useCallback(async () => {
-    const q = questions[currentIndex]
-    if (!q || !answers[q.id]?.trim()) return
-
-    setSubmitting(true)
-    setError('')
-
-    try {
-      const allAnswers = { ...answers }
-      const res = await submitReview(sessionId, allAnswers, getLocalDate())
-
-      // Map feedback by question id
-      const fbMap = {}
-      for (const fb of res.feedback || []) {
-        fbMap[fb.questionId] = fb
-      }
-      setFeedbackMap(fbMap)
-      setSubmitted((prev) => ({ ...prev, [q.id]: true }))
-
-      // If all questions answered, show summary
-      const answeredIds = Object.keys(allAnswers)
-      const allAnswered = questions.every((question) => answeredIds.includes(question.id) && allAnswers[question.id].trim())
-      if (allAnswered) {
-        setResult(res)
-      }
-    } catch (err) {
-      setError(safeReviewError(err))
-    } finally {
-      setSubmitting(false)
-    }
-  }, [answers, currentIndex, questions, sessionId])
-
-  const handleNext = useCallback(() => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex((i) => i + 1)
-    }
-  }, [currentIndex, questions.length])
-
-  const handleCancel = useCallback(async () => {
-    try {
-      await cancelReview(sessionId)
-    } catch {}
-    navigate('/reviews')
-  }, [sessionId, navigate])
-
-  const handleBack = useCallback(() => {
-    navigate('/')
-  }, [navigate])
-
-  if (!sessionId || !questions || questions.length === 0) {
+  if (model.phase === 'expired') {
     return (
       <div className="ui-page min-h-screen">
         <AppHeader variant="focus" title="Retrieval practice" returnTo="/reviews" returnLabel="Review Queue" />
         <main className="ui-container max-w-3xl px-4 py-10">
           <section className="ui-panel p-6 text-center" aria-labelledby="missing-review-title">
-            <h2 id="missing-review-title" className="mb-2 text-xl font-semibold ui-text">No active review session</h2>
-            <p className="mb-5 ui-text-secondary">Start a session from your review queue to continue.</p>
-            <Button variant="secondary" onClick={() => navigate('/reviews')}>Back to Review Queue</Button>
+            <h2 id="missing-review-title" className="mb-2 text-xl font-semibold ui-text">Review session unavailable</h2>
+            <p className="mb-5 ui-text-secondary">{model.error?.message || 'This review session is no longer available.'}</p>
+            <Button variant="secondary" onClick={() => navigate('/reviews')}>Return to Review Queue</Button>
           </section>
         </main>
       </div>
     )
   }
 
-  if (result) {
+  if (model.phase === 'complete' && model.result) {
     return (
       <div className="ui-page min-h-screen">
         <AppHeader variant="focus" title="Review results" returnTo="/" returnLabel="Dashboard" />
         <main className="ui-container max-w-3xl px-4 py-6 sm:py-8">
-          <SummaryCard result={result} onBack={handleBack} />
+          <SummaryCard result={model.result} onBack={() => navigate('/')} />
         </main>
       </div>
     )
   }
 
-  const currentQuestion = questions[currentIndex]
-  const isSubmitted = submitted[currentQuestion?.id]
-  const currentFeedback = feedbackMap[currentQuestion?.id]
+  const currentQuestion = model.currentQuestion
+  const isCollecting = model.phase === 'answers'
 
   return (
     <div className="ui-page min-h-screen">
@@ -217,35 +149,38 @@ export default function ReviewSession() {
         variant="focus"
         title={currentQuestion?.lessonTitle || 'Review session'}
         returnLabel="Review Queue"
-        onReturn={handleCancel}
-        detail={`Question ${currentIndex + 1} of ${questions.length}`}
+        onReturn={async () => { await controller.cancel(); navigate('/reviews') }}
+        detail={`Question ${model.currentIndex + 1} of ${questions.length}`}
       />
       <main className="ui-container max-w-3xl px-4 py-6 sm:py-8">
         <section className="ui-surface ui-surface-flat mb-5 p-4" aria-label="Review progress">
-          <ProgressBar value={currentIndex + 1} max={questions.length} label="Review question progress" />
+          <ProgressBar value={isCollecting ? model.currentIndex + 1 : model.feedbackIndex + 1} max={questions.length} label="Review question progress" />
           {remainingCount > 0 && (
             <p className="mt-2 text-sm ui-text-muted">
               {remainingCount} more retrieval item{remainingCount !== 1 ? 's' : ''} queued for later
             </p>
           )}
         </section>
-        {error && (
+        {model.error && (
           <div className="ui-alert ui-alert-danger mb-4" role="alert">
-            {error}
+            {model.error.message}
           </div>
         )}
 
-        {isSubmitted && currentFeedback ? (
-          <FeedbackCard feedback={currentFeedback} onNext={handleNext} />
+        {!isCollecting ? (
+          <FeedbackCard feedback={model.currentFeedback} onNext={controller.nextFeedback} />
         ) : (
           <QuestionCard
             question={currentQuestion}
-            index={currentIndex}
+            index={model.currentIndex}
             total={questions.length}
-            answer={answers[currentQuestion?.id] || ''}
-            onAnswerChange={handleAnswerChange}
-            onSubmit={handleSubmitAnswer}
-            disabled={submitting}
+            answer={model.answers[currentQuestion?.id] || ''}
+            onAnswerChange={(value) => controller.setAnswer(currentQuestion?.id, value)}
+            onPrevious={controller.previousQuestion}
+            showPrevious={model.currentIndex > 0}
+            onSubmit={model.currentIndex === questions.length - 1 ? controller.submitAnswers : controller.nextQuestion}
+            actionLabel={model.currentIndex === questions.length - 1 ? 'Submit all answers' : 'Next question'}
+            disabled={model.busy.submitting}
           />
         )}
       </main>
