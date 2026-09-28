@@ -1,7 +1,3 @@
 export default function BuildView({ model, children }) {
-  return (
-    <main data-theme-view="BuildView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Build</h1>}
-    </main>
-  )
+  return <div className="learning-surface learning-surface--curiosity" data-theme-view="BuildView" data-view-model={model ? 'connected' : 'placeholder'}>{children}</div>
 }

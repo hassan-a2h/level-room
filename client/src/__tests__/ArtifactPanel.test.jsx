@@ -32,7 +32,8 @@ describe('ArtifactPanel', () => {
     })
     expect(screen.getByRole('textbox', { name: /Build submission/i })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Paste your code/i)).toBeInTheDocument()
-    expect(screen.getByText(/Evaluation Rubric/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Review rubric'))
+    expect(screen.getByRole('region', { name: /Evaluation Rubric/i })).toBeInTheDocument()
   })
 
   it('shows artifact type badge', async () => {
