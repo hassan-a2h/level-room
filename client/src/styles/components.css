@@ -423,7 +423,26 @@
 }
 .session-guide-error { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.7rem; color: var(--ui-warning-text); font-size: 0.82rem; }
 .session-guide-error button { border: 0; color: var(--ui-link); background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
-.session-guide-trigger, .session-mobile-action, .session-guide-sheet-backdrop { display: none; }
+.session-player-layout { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.session-guide-trigger { position: fixed; z-index: 18; right: 1.25rem; bottom: 1.25rem; display: inline-flex; min-height: 2.75rem; align-items: center; border: 1px solid var(--ui-border); border-radius: 999px; padding: 0.5rem 1rem; color: var(--ui-action-text); background: var(--ui-action); box-shadow: 0 6px 20px color-mix(in srgb, var(--ui-shadow-dark) 30%, transparent); font: inherit; font-weight: 650; cursor: pointer; }
+.session-mobile-action { display: none; }
+.session-guide-sheet-backdrop { position: fixed; z-index: 50; inset: 0; display: flex; justify-content: end; background: color-mix(in srgb, var(--ui-text) 28%, transparent); }
+.session-guide-sheet { display: grid; width: min(30rem, 100%); height: 100dvh; grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; border-left: 1px solid var(--ui-border); padding: 1.25rem; background: var(--ui-surface); box-shadow: -8px 0 32px color-mix(in srgb, var(--ui-shadow-dark) 25%, transparent); }
+.learning-surface { min-height: 100vh; }
+.learning-surface--curiosity .session-activity-card, .learning-surface--curiosity .build-workspace { border-radius: 1rem; box-shadow: 0 8px 24px color-mix(in srgb, var(--ui-shadow-dark) 13%, transparent); }
+.learning-surface--workshop .session-activity-card, .learning-surface--workshop .build-workspace { border-radius: 0.4rem; box-shadow: 5px 5px 0 color-mix(in srgb, var(--ui-border) 24%, transparent); }
+.learning-surface--atlas .session-step-markers li.is-complete, .learning-surface--atlas .build-stage-list li.is-complete { outline: 2px solid color-mix(in srgb, var(--ui-success-border) 35%, transparent); outline-offset: 2px; }
+.build-panel-shell { width: min(100% - 2rem, 58rem); margin: 1.25rem auto; }
+.build-stage-list { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0 0 1rem; padding: 0; list-style: none; }
+.build-stage-list li { border: 1px solid var(--ui-border); border-radius: 999px; padding: 0.35rem 0.7rem; color: var(--ui-text-muted); background: var(--ui-surface); font-size: 0.75rem; }
+.build-stage-list li[aria-current="step"] { border-color: var(--ui-focus); color: var(--ui-link); background: var(--ui-progress-bg); font-weight: 700; }
+.build-workspace { border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg, 1.25rem); padding: clamp(1rem, 3vw, 1.75rem); background: var(--ui-surface); }
+.build-review-disclosure { margin-bottom: 1rem; }
+.build-review-disclosure summary { color: var(--ui-link); cursor: pointer; font-weight: 700; }
+.build-review-disclosure[open] summary { margin-bottom: 0.75rem; }
+.build-safety-note { border-left: 3px solid var(--ui-warning-border); padding: 0.65rem 0.85rem; color: var(--ui-warning-text); background: var(--ui-warning-bg); }
+.learning-object-stage { position: relative; }
+.learning-object-stage__decoration { position: absolute; inset: 0 0 auto auto; pointer-events: none; user-select: none; }
 
 @media (max-width: 700px) {
   .app-shell { padding-bottom: calc(4.25rem + env(safe-area-inset-bottom)); }

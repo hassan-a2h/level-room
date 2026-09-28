@@ -5,9 +5,9 @@ import ReflectionBlock from './ReflectionBlock.jsx'
 import ShortAnswerBlock from './ShortAnswerBlock.jsx'
 import WorkedExampleBlock from './WorkedExampleBlock.jsx'
 
-export default function ActivityRenderer({ block, persistedBlockState = {}, busy = false, error = '', onComplete, onSubmit, readOnly = false }) {
+export default function ActivityRenderer({ block, persistedBlockState = {}, busy = false, error = '', onComplete, onSubmit, readOnly = false, draft, onDraftChange }) {
   if (!block || typeof block.type !== 'string') return <div className="session-unknown-block" role="alert">This activity cannot be opened. Return to your Trail and try again.</div>
-  const props = { block, persistedBlockState, busy, onComplete, onSubmit, readOnly }
+  const props = { block, persistedBlockState, busy, onComplete, onSubmit, readOnly, draft, onDraftChange }
   switch (block.type) {
     case 'read': return <ReadBlock {...props} />
     case 'worked_example': return <WorkedExampleBlock {...props} />

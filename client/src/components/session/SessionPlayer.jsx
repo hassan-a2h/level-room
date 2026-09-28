@@ -1,101 +1,41 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { completeActivityBlock, getLesson, getLocalDate, submitActivityBlock } from '../../api.js'
 import AppHeader from '../AppHeader.jsx'
 import ArtifactPanel from '../ArtifactPanel.jsx'
 import ActivityRenderer from './ActivityRenderer.jsx'
 import SessionComplete from './SessionComplete.jsx'
 import TutorSidecar from './TutorSidecar.jsx'
+import { isConnectionError, isFinalBlock, useSessionController } from '../../features/session/controller.js'
+import { useThemeView } from '../../theme/ThemeProvider.jsx'
 
-function finalBlock(block, entry) {
-  return ['read', 'worked_example', 'reflection'].includes(block.type)
-    ? entry?.status === 'completed'
-    : entry?.status === 'passed'
-}
-
-function completedCount(document, state) {
-  return document.blocks.filter((block) => block.required && finalBlock(block, state?.blocks?.[block.id])).length
-}
-
-function isConnectionError(error) {
-  return error instanceof TypeError || /failed to fetch|network|connection/i.test(error?.message || '')
+function SessionThemeShell({ model, children }) {
+  const View = useThemeView('SessionView')
+  return <Suspense fallback={<div className="session-loading-card" role="status">Preparing your Session…</div>}><View model={model}>{children}</View></Suspense>
 }
 
 export default function SessionPlayer({ topicId, lessonId, session, progress, messages = [], activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired = false }) {
-  const [activityState, setActivityState] = useState(initialState)
-  const [activityProgress, setActivityProgress] = useState(initialProgress)
-  const [busy, setBusy] = useState(false)
-  const [mutationError, setMutationError] = useState(null)
-  const [reviewBlockId, setReviewBlockId] = useState(null)
-  const [sessionComplete, setSessionComplete] = useState(progress?.state === 'passed')
-  const mutationLock = useRef(false)
+  const controller = useSessionController({ topicId, lessonId, session, progress, messages, activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired })
+  const { model: viewModel, activityState, activityProgress, busy, error: mutationError, reviewBlockId, setReviewBlockId, currentBlockId, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild } = controller
   const activeHeading = useRef(null)
-  const currentBlockId = activityProgress?.currentBlockId ?? activityState?.currentBlockId ?? null
-  const blocks = activityDocument?.blocks || []
+  const blocks = viewModel.blocks
   const currentIndex = blocks.findIndex((block) => block.id === currentBlockId)
-  const currentBlock = blocks[currentIndex] || null
-  const reviewBlock = blocks.find((block) => block.id === reviewBlockId)
-  const viewedBlock = reviewBlock || currentBlock
-  const viewedEntry = viewedBlock ? activityState?.blocks?.[viewedBlock.id] || {} : {}
-  const done = sessionComplete || progress?.state === 'passed' || (!currentBlockId && completedCount(activityDocument, activityState) === (activityProgress?.total ?? blocks.filter((block) => block.required).length) && !artifactRequired)
-  const percent = activityProgress?.percent ?? Math.floor(completedCount(activityDocument, activityState) / Math.max(1, blocks.filter((block) => block.required).length) * 100)
-  const textualProgress = `${activityProgress?.completed ?? completedCount(activityDocument, activityState)} of ${activityProgress?.total ?? blocks.filter((block) => block.required).length}`
+  const currentBlock = viewModel.currentBlock
+  const viewedBlock = viewModel.viewedBlock
+  const viewedEntry = viewModel.viewedEntry || {}
   const outcomeNames = useMemo(() => new Map((session?.outcomes || []).map((outcome) => [outcome.id, outcome.title])), [session?.outcomes])
+  const reviewBlock = viewModel.reviewMode ? viewedBlock : null
 
-  useEffect(() => { setActivityState(initialState); setActivityProgress(initialProgress) }, [initialState, initialProgress])
   useEffect(() => {
     if (currentBlockId && !reviewBlockId && activeHeading.current) activeHeading.current.focus()
   }, [currentBlockId, reviewBlockId])
 
-  const applyResult = useCallback((result) => {
-    if (result?.activityState) setActivityState(result.activityState)
-    if (result?.activityProgress) setActivityProgress(result.activityProgress)
-    if (result?.session?.completed || result?.completion?.completed) setSessionComplete(true)
-  }, [])
-
-  const mutate = useCallback(async (block, kind, payload = {}) => {
-    if (!block || mutationLock.current || reviewBlockId || done) return
-    mutationLock.current = true
-    setBusy(true)
-    setMutationError(null)
-    try {
-      const request = { ...payload, localDate: getLocalDate() }
-      const result = kind === 'complete'
-        ? await completeActivityBlock(topicId, lessonId, block.id, request)
-        : await submitActivityBlock(topicId, lessonId, block.id, request)
-      applyResult(result)
-      setReviewBlockId(null)
-    } catch (error) {
-      if (error?.latestState) {
-        setActivityState(error.latestState)
-        const restoredCompleted = completedCount(activityDocument, error.latestState)
-        setActivityProgress({ completed: restoredCompleted, total: blocks.filter((item) => item.required).length, percent: Math.floor(restoredCompleted / Math.max(1, blocks.filter((item) => item.required).length) * 100), currentBlockId: error.latestState.currentBlockId })
-      }
-      setMutationError(error)
-    } finally {
-      mutationLock.current = false
-      setBusy(false)
-    }
-  }, [activityDocument, applyResult, blocks, done, lessonId, reviewBlockId, topicId])
-
-  const refreshAfterBuild = useCallback(async () => {
-    try {
-      const latest = await getLesson(topicId, lessonId)
-      setActivityState(latest.activityState)
-      setActivityProgress(latest.activityProgress)
-      if (latest.progress?.state === 'passed') setSessionComplete(true)
-    } catch (error) {
-      setMutationError(error)
-    }
-  }, [lessonId, topicId])
-
   if (!activityDocument || !activityState) return <main className="session-page"><AppHeader variant="focus" title={session?.title || 'Session'} detail={session?.module_title} progress={textualProgress} returnTo="/" returnLabel="Trail" /><div className="session-error-panel" role="alert">Session state is unavailable. <Link to="/">Return to your Trail</Link></div></main>
 
-  if (done) return <main className="session-page"><AppHeader variant="focus" title={session?.title || 'Session'} detail={session?.module_title} progress={textualProgress} returnTo="/" returnLabel="Trail" /><SessionComplete session={session} activityDocument={activityDocument} activityState={activityState} /></main>
+  if (done) return <SessionThemeShell model={viewModel}><main className="session-page"><AppHeader variant="focus" title={session?.title || 'Session'} detail={session?.module_title} progress={textualProgress} returnTo="/" returnLabel="Trail" /><SessionComplete session={session} activityDocument={activityDocument} activityState={activityState} /></main></SessionThemeShell>
 
-  const allBlocksDone = !currentBlockId && completedCount(activityDocument, activityState) >= (activityProgress?.total ?? blocks.filter((block) => block.required).length)
+  const allBlocksDoneForView = allBlocksDone
   return (
-    <main className="session-page">
+    <SessionThemeShell model={viewModel}><main className="session-page">
       <AppHeader variant="focus" title={session?.title || 'Session'} detail={session?.module_title} progress={textualProgress} returnTo="/" returnLabel="Trail" />
       <div className="session-player-layout">
         <section className="session-player-main" aria-label="Session activity">
@@ -105,7 +45,7 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
             {blocks.map((block, index) => {
               const entry = activityState.blocks?.[block.id]
               const isCurrent = block.id === currentBlockId
-              const isComplete = finalBlock(block, entry)
+              const isComplete = isFinalBlock(block, entry)
               const isFuture = block.required && (currentIndex >= 0 ? index > currentIndex : !isComplete)
               return <li key={block.id} className={`${isCurrent ? 'is-current' : ''} ${isComplete ? 'is-complete' : ''} ${isFuture ? 'is-locked' : ''}`}>
                 {isComplete && index < currentIndex
@@ -132,15 +72,17 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
               readOnly={Boolean(reviewBlock)}
               onComplete={(payload) => mutate(viewedBlock, 'complete', payload)}
               onSubmit={(response) => mutate(viewedBlock, 'submit', { response })}
+              draft={draftsByBlockId[viewedBlock.id]?.value}
+              onDraftChange={(value) => setBlockDraft(viewedBlock.id, 'value', value)}
             />
           </article>}
 
-          {allBlocksDone && artifactRequired && <section className="session-build-handoff" aria-labelledby="build-title"><h2 id="build-title">One practical Build remains</h2><p>Apply what you practiced, then this Session will be complete.</p><ArtifactPanel topicId={topicId} lessonId={lessonId} lesson={session} onBack={() => {}} onPassed={refreshAfterBuild} /></section>}
-          {!currentBlock && !allBlocksDone && <p role="alert">No active Session step is available. Return to your Trail and reload this Session.</p>}
+          {allBlocksDoneForView && artifactRequired && <section className="session-build-handoff" aria-labelledby="build-title"><h2 id="build-title">One practical Build remains</h2><p>Apply what you practiced, then this Session will be complete.</p><ArtifactPanel topicId={topicId} lessonId={lessonId} lesson={session} onBack={() => {}} onPassed={refreshAfterBuild} /></section>}
+          {!currentBlock && !allBlocksDoneForView && <p role="alert">No active Session step is available. Return to your Trail and reload this Session.</p>}
         </section>
-        <TutorSidecar topicId={topicId} lessonId={lessonId} activityBlockId={currentBlockId} messages={messages} />
+        <TutorSidecar topicId={topicId} lessonId={lessonId} activityBlockId={currentBlockId} messages={messages} draft={tutor.draft} open={tutor.expanded} onDraftChange={(draft) => updateTutor({ draft })} onOpenChange={(expanded) => updateTutor({ expanded })} />
       </div>
       <div className="session-mobile-action"><span>{textualProgress}</span>{currentBlockId && <span>{outcomeNames.get(currentBlock?.outcomeIds?.[0]) || 'Keep going'}</span>}</div>
-    </main>
+    </main></SessionThemeShell>
   )
 }

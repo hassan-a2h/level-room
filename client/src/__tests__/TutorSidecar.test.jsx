@@ -14,9 +14,9 @@ const props = { topicId: '2', lessonId: '8', activityBlockId: 'choose-join', mes
 describe('TutorSidecar', () => {
   beforeEach(() => { vi.clearAllMocks(); window.sessionStorage.clear(); window.localStorage.clear() })
 
-  it('uses Ask your guide, stays sticky on desktop, and is closed by default on mobile', () => {
+  it('keeps the guide closed by default and opens it as a sheet on request', () => {
     render(<TutorSidecar {...props} />)
-    expect(screen.getByRole('complementary', { name: /ask your guide/i })).toHaveClass('session-tutor-sticky')
+    expect(screen.getByRole('button', { name: /ask your guide/i })).toHaveClass('session-guide-trigger')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /ask your guide/i }))
     expect(screen.getByRole('dialog', { name: /ask your guide/i })).toBeInTheDocument()
@@ -50,16 +50,13 @@ describe('TutorSidecar', () => {
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2))
   })
 
-  it('keeps collapse preference in sessionStorage, closes with Escape, and restores trigger focus', async () => {
+  it('closes with Escape and restores trigger focus', async () => {
     render(<TutorSidecar {...props} />)
     const trigger = screen.getByRole('button', { name: /ask your guide/i })
-    fireEvent.click(screen.getByRole('button', { name: /collapse guide/i }))
-    expect(window.sessionStorage.getItem('mastery-roadmap-guide-collapsed')).toBe('1')
     fireEvent.click(trigger)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /close guide/i }))
     await waitFor(() => expect(trigger).toHaveFocus())
-    expect(window.localStorage.getItem('mastery-roadmap-guide-collapsed')).toBeNull()
     fireEvent.click(trigger)
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

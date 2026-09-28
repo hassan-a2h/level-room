@@ -3,12 +3,7 @@ import { sendChatMessage } from '../../api.js'
 import MarkdownContent from '../MarkdownContent.jsx'
 
 const MAX_MESSAGE_LENGTH = 2000
-const COLLAPSED_KEY = 'mastery-roadmap-guide-collapsed'
 const SUGGESTIONS = ['Give me a hint', 'Show another example', 'Why was this wrong?']
-
-function storedCollapsed() {
-  try { return window.sessionStorage.getItem(COLLAPSED_KEY) === '1' } catch { return false }
-}
 
 async function readTutorStream(response, onText) {
   if (!response?.body?.getReader) throw new Error('The guide response stream is unavailable. Please retry.')
@@ -60,36 +55,41 @@ function GuideMessages({ messages, streamingText, busy }) {
   </div>
 }
 
-export default function TutorSidecar({ topicId, lessonId, activityBlockId, messages: initialMessages = [] }) {
+export default function TutorSidecar({ topicId, lessonId, activityBlockId, messages: initialMessages = [], draft: controlledDraft, open: controlledOpen, onDraftChange, onOpenChange }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState(initialMessages)
   const [streamingText, setStreamingText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(storedCollapsed)
   const trigger = useRef(null)
+  const currentDraft = controlledDraft ?? draft
+  const isOpen = controlledOpen ?? open
+
+  const changeDraft = (value) => {
+    if (controlledDraft === undefined) setDraft(value)
+    onDraftChange?.(value)
+  }
+  const changeOpen = (value) => {
+    if (controlledOpen === undefined) setOpen(value)
+    onOpenChange?.(value)
+  }
 
   const closeSheet = useCallback(() => {
-    setOpen(false)
+    changeOpen(false)
     requestAnimationFrame(() => trigger.current?.focus())
-  }, [])
+  }, [controlledOpen, onOpenChange])
 
   useEffect(() => {
-    if (!open) return undefined
+    if (!isOpen) return undefined
     function onKeyDown(event) {
       if (event.key === 'Escape') closeSheet()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, closeSheet])
+  }, [isOpen, closeSheet])
 
-  const setCollapsedPreference = useCallback((next) => {
-    setCollapsed(next)
-    try { window.sessionStorage.setItem(COLLAPSED_KEY, next ? '1' : '0') } catch { /* The preference is session-only and optional. */ }
-  }, [])
-
-  const send = useCallback(async (message = draft) => {
+  const send = useCallback(async (message = currentDraft) => {
     const content = message.trim()
     if (!content || content.length > MAX_MESSAGE_LENGTH || busy) return
     setBusy(true)
@@ -99,7 +99,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
       const response = await sendChatMessage(topicId, lessonId, content, activityBlockId)
       const text = await readTutorStream(response, setStreamingText)
       setMessages((current) => [...current, { id: `user-${Date.now()}`, role: 'user', content }, { id: `guide-${Date.now()}`, role: 'assistant', content: text }])
-      setDraft('')
+      changeDraft('')
       setStreamingText('')
     } catch (requestError) {
       setError(requestError?.message || 'Your guide is temporarily unavailable. Please retry.')
@@ -107,31 +107,27 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
     } finally {
       setBusy(false)
     }
-  }, [activityBlockId, busy, draft, lessonId, topicId])
+  }, [activityBlockId, busy, currentDraft, lessonId, topicId])
 
   const content = (variant) => <>
     <GuideMessages messages={messages} streamingText={streamingText} busy={busy} />
     {error && <div className="session-guide-error" role="alert"><span>{error}</span><button type="button" onClick={() => send()}>Retry</button></div>}
     <div className="session-guide-suggestions" aria-label="Suggested prompts">
-      {SUGGESTIONS.map((suggestion) => <button key={suggestion} type="button" disabled={busy} onClick={() => setDraft(suggestion)}>{suggestion}</button>)}
+      {SUGGESTIONS.map((suggestion) => <button key={suggestion} type="button" disabled={busy} onClick={() => changeDraft(suggestion)}>{suggestion}</button>)}
     </div>
     <form className="session-guide-composer" onSubmit={(event) => { event.preventDefault(); send() }}>
       <label className="sr-only" htmlFor={`guide-message-${variant}`}>Message your guide</label>
-      <textarea id={`guide-message-${variant}`} value={draft} maxLength={MAX_MESSAGE_LENGTH} rows={3} placeholder="Ask about this step…" disabled={busy} onChange={(event) => setDraft(event.target.value.slice(0, MAX_MESSAGE_LENGTH))} />
-      <div className="session-guide-compose-footer"><span>{draft.length} / {MAX_MESSAGE_LENGTH}</span><button type="submit" className="ui-button ui-button-primary" disabled={busy || !draft.trim()}>{busy ? 'Sending…' : 'Send'}</button></div>
+      <textarea id={`guide-message-${variant}`} value={currentDraft} maxLength={MAX_MESSAGE_LENGTH} rows={3} placeholder="Ask about this step…" disabled={busy} onChange={(event) => changeDraft(event.target.value.slice(0, MAX_MESSAGE_LENGTH))} />
+      <div className="session-guide-compose-footer"><span>{currentDraft.length} / {MAX_MESSAGE_LENGTH}</span><button type="submit" className="ui-button ui-button-primary" disabled={busy || !currentDraft.trim()}>{busy ? 'Sending…' : 'Send'}</button></div>
     </form>
   </>
 
   return <>
-    <aside className="session-tutor-sticky" aria-label="Ask your guide" hidden={open}>
-      <div className="session-tutor-heading"><div><p className="session-eyebrow">Need a nudge?</p><h2>Ask your guide</h2></div><button type="button" aria-label={collapsed ? 'Expand guide' : 'Collapse guide'} onClick={() => setCollapsedPreference(!collapsed)}>{collapsed ? '+' : '−'}</button></div>
-      {!collapsed && content('desktop')}
-    </aside>
-    <button ref={trigger} type="button" className="session-guide-trigger" aria-haspopup="dialog" onClick={() => setOpen(true)}>Ask your guide</button>
-    {open && <div className="session-guide-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSheet() }}>
+    <button ref={trigger} type="button" className="session-guide-trigger" aria-haspopup="dialog" onClick={() => changeOpen(true)}>Ask your guide</button>
+    {isOpen && <div className="session-guide-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSheet() }}>
       <section className="session-guide-sheet" role="dialog" aria-modal="true" aria-label="Ask your guide">
         <div className="session-tutor-heading"><div><p className="session-eyebrow">Need a nudge?</p><h2>Ask your guide</h2></div><button type="button" aria-label="Close guide" onClick={closeSheet}>Close</button></div>
-        {content('mobile')}
+        {content('sheet')}
       </section>
     </div>}
   </>

@@ -1,19 +1,20 @@
 import { useState } from 'react'
 import ActivityFeedback from './ActivityFeedback.jsx'
 
-export default function OrderingBlock({ block, persistedBlockState = {}, busy = false, onSubmit, readOnly = false }) {
-  const [order, setOrder] = useState(() => {
-    const response = persistedBlockState.response
-    return Array.isArray(response) && response.length === block.items.length ? response : block.items.map((item) => item.id)
-  })
+export default function OrderingBlock({ block, persistedBlockState = {}, busy = false, onSubmit, readOnly = false, draft, onDraftChange }) {
+  const saved = persistedBlockState.response
+  const initialOrder = Array.isArray(saved) && saved.length === block.items.length ? saved : block.items.map((item) => item.id)
+  const [localOrder, setLocalOrder] = useState(initialOrder)
+  const order = Array.isArray(draft) && draft.length === block.items.length ? draft : localOrder
+  const updateOrder = (next) => { setLocalOrder(next); onDraftChange?.(next) }
   const disabled = busy || readOnly || persistedBlockState.status === 'passed'
-  const move = (index, offset) => setOrder((current) => {
+  const move = (index, offset) => {
     const target = index + offset
-    if (target < 0 || target >= current.length) return current
-    const next = [...current]
+    if (target < 0 || target >= order.length) return
+    const next = [...order]
     ;[next[index], next[target]] = [next[target], next[index]]
-    return next
-  })
+    updateOrder(next)
+  }
   const itemById = new Map(block.items.map((item) => [item.id, item]))
   return (
     <div className="session-block-body">

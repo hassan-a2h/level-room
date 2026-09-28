@@ -41,6 +41,16 @@ describe('Session activity blocks', () => {
     expect(common.onSubmit).toHaveBeenCalledWith('left')
   })
 
+  it('supports controlled choices for session theme adapters', () => {
+    const onDraftChange = vi.fn()
+    const block = { ...base, type: 'choice', prompt: 'Pick one', options: [{ id: 'one', label: 'One' }, { id: 'two', label: 'Two' }] }
+    const view = render(<ActivityRenderer {...common} block={block} draft="" onDraftChange={onDraftChange} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'Two' }))
+    expect(onDraftChange).toHaveBeenCalledWith('two')
+    view.rerender(<ActivityRenderer {...common} block={block} draft="two" onDraftChange={onDraftChange} />)
+    expect(screen.getByRole('radio', { name: 'Two' })).toBeChecked()
+  })
+
   it('supports keyboard ordering with Move up and Move down and preserves failed order', () => {
     const onSubmit = vi.fn()
     render(<ActivityRenderer {...common} onSubmit={onSubmit} persistedBlockState={{ status: 'needs_retry', response: ['condition', 'left'] }} block={{ ...base, type: 'ordering', prompt: 'Build the join in order', items: [{ id: 'left', label: 'Choose the left table' }, { id: 'condition', label: 'Add the condition' }] }} />)

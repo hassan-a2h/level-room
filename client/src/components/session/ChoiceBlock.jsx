@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import ActivityFeedback from './ActivityFeedback.jsx'
 
-export default function ChoiceBlock({ block, persistedBlockState = {}, busy = false, onSubmit, readOnly = false }) {
-  const [selected, setSelected] = useState(persistedBlockState.response || '')
+export default function ChoiceBlock({ block, persistedBlockState = {}, busy = false, onSubmit, readOnly = false, draft, onDraftChange }) {
+  const [localSelected, setLocalSelected] = useState(persistedBlockState.response || '')
+  const selected = draft ?? localSelected
+  const change = (value) => { setLocalSelected(value); onDraftChange?.(value) }
   const disabled = busy || readOnly || persistedBlockState.status === 'passed'
   return (
     <div className="session-block-body">
@@ -10,7 +12,7 @@ export default function ChoiceBlock({ block, persistedBlockState = {}, busy = fa
       <fieldset className="session-choice-list" role="radiogroup" aria-labelledby={`prompt-${block.id}`}>
         {block.options.map((option) => (
           <label className={`session-choice-option${selected === option.id ? ' is-selected' : ''}`} key={option.id}>
-            <input type="radio" name={`choice-${block.id}`} value={option.id} checked={selected === option.id} disabled={disabled} onChange={() => setSelected(option.id)} />
+            <input type="radio" name={`choice-${block.id}`} value={option.id} checked={selected === option.id} disabled={disabled} onChange={() => change(option.id)} />
             <span>{option.label}</span>
           </label>
         ))}
