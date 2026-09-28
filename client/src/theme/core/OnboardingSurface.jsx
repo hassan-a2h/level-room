@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { Check } from 'lucide-react'
 
 const stages = ['Destination', 'Starting point', 'Learning rhythm', 'Track preview']
 
@@ -64,7 +65,7 @@ export default function OnboardingSurface({ model, variant, className }) {
   return <main data-theme-view="OnboardingView" data-view-model={model ? 'connected' : 'placeholder'} className={className} data-pack-style={variant}>
     <nav className="mb-8" aria-label="Learning path setup">
       <p className="ui-text-muted mb-3 text-xs font-semibold uppercase tracking-wide">Step {stageIndex + 1} of 4</p>
-      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4">{stages.map((label, index) => <li key={label} aria-label={label} aria-current={stageIndex === index ? 'step' : undefined} className={`rounded-lg border p-2 text-sm ${stageIndex === index ? 'font-semibold ui-text' : 'ui-text-muted'}`}><span aria-hidden="true" className="mr-2">{index < stageIndex ? '✓' : index + 1}</span>{label}</li>)}</ol>
+      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4">{stages.map((label, index) => <li key={label} aria-label={label} aria-current={stageIndex === index ? 'step' : undefined} className={`rounded-lg border p-2 text-sm ${stageIndex === index ? 'font-semibold ui-text' : 'ui-text-muted'}`}><span aria-hidden="true" className="mr-2">{index < stageIndex ? <Check /> : index + 1}</span>{label}</li>)}</ol>
     </nav>
     {!model.providerReady && <p className="ui-alert ui-alert-warning mb-5" role="alert">Connect an AI provider in Settings before creating a Track.<button type="button" className="ui-text-link ml-2 underline" onClick={model.actions?.openSettings}>Open Settings</button></p>}
     {model.error && (model.stage !== 'preview' || model.substep === 'generating') && <p className="ui-alert ui-alert-danger mb-5" role="alert">{model.error}</p>}

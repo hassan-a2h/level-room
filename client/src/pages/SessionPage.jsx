@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ensureActivities, getLesson } from '../api.js'
 import AppHeader from '../components/AppHeader.jsx'
@@ -45,9 +46,9 @@ export default function SessionPage() {
     } finally {
       setLoading(false)
     }
-  }, [topicId, lessonId, generation])
+  }, [topicId, lessonId])
 
-  useEffect(() => { loadSession() }, [loadSession])
+  useEffect(() => { loadSession() }, [loadSession, generation])
 
   if (loading) {
     return <main className="session-page session-page-loading" aria-busy="true"><AppHeader variant="focus" title="Loading Session" returnTo="/" returnLabel="Trail" /><div className="session-loading-card" role="status">Preparing your Session…</div></main>
@@ -59,7 +60,7 @@ export default function SessionPage() {
       <main className="session-page">
         <AppHeader variant="focus" title="Session unavailable" returnTo="/" returnLabel="Trail" />
         <section className="session-error-panel" role="alert">
-          <span className="session-error-icon" aria-hidden="true">↻</span>
+          <RefreshCw className="session-error-icon" aria-hidden="true" />
           <h2>{invalidDocument ? 'Saved Session activity needs attention' : 'Let’s get you back to learning'}</h2>
           <p>{errorMessage(error)}</p>
           <div className="session-page-actions">

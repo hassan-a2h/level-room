@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Check, RefreshCw } from 'lucide-react'
 import ActivityFeedback from './ActivityFeedback.jsx'
 
 export default function ShortAnswerBlock({ block, persistedBlockState = {}, busy = false, onSubmit, readOnly = false, draft, onDraftChange }) {
@@ -14,7 +15,7 @@ export default function ShortAnswerBlock({ block, persistedBlockState = {}, busy
       <textarea id={`answer-${block.id}`} className="ui-field session-short-answer" value={response} maxLength={block.maxChars} rows={5} disabled={disabled} onChange={(event) => change(event.target.value)} />
       <p className="session-character-count" aria-live="polite">{response.length} / {block.maxChars} characters · at least {block.minChars}</p>
       <ActivityFeedback>{persistedBlockState.feedback}</ActivityFeedback>
-      {criteria.length > 0 && <ul className="session-criteria-feedback" aria-label="Response feedback">{criteria.map((criterion) => <li key={criterion.id}><span aria-hidden="true">{criterion.passed ? '✓' : '↻'}</span>{criterion.feedback}</li>)}</ul>}
+      {criteria.length > 0 && <ul className="session-criteria-feedback" aria-label="Response feedback">{criteria.map((criterion) => <li key={criterion.id}><span aria-hidden="true">{criterion.passed ? <Check /> : <RefreshCw />}</span>{criterion.feedback}</li>)}</ul>}
       {persistedBlockState.nextStep && <p className="session-next-step"><strong>Next step:</strong> {persistedBlockState.nextStep}</p>}
       {persistedBlockState.status === 'passed' || readOnly
         ? <p className="session-complete-label" role="status">Response saved</p>

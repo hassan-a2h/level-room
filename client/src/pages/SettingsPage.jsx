@@ -11,6 +11,7 @@ function SettingsPage() {
   const { theme, selectTheme } = useTheme()
   const SettingsView = useThemeView('SettingsView')
   const controller = useSettingsController({ themeId: theme.id })
+  const cancelImport = controller.cancelImport
   const { model: viewModel, apiKeySet } = controller
   const {
     provider, model, reasoningEffort, providers, ready, environmentStatuses: envStatus,
@@ -23,6 +24,7 @@ function SettingsPage() {
   const fileInputRef = useRef(null)
   const cancelImportRef = useRef(null)
   const replaceImportRef = useRef(null)
+  const importDialogRef = useRef(null)
   const importButtonRef = useRef(null)
   const hadPendingImport = useRef(false)
   const categories = [
@@ -39,6 +41,29 @@ function SettingsPage() {
       hadPendingImport.current = false
     }
   }, [pendingBackup, importing])
+
+  useEffect(() => {
+    if (pendingBackup === undefined) return undefined
+    const handleKeyDown = (event) => {
+      if (!importDialogRef.current?.contains(document.activeElement)) return
+      if (event.key === 'Escape') {
+        cancelImport()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const first = cancelImportRef.current
+      const last = replaceImportRef.current
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [cancelImport, pendingBackup])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -286,28 +311,13 @@ function SettingsPage() {
     {pendingBackup !== null && (
       <div className="ui-dialog-backdrop">
         <div
+          ref={importDialogRef}
           role="dialog"
+          tabIndex={-1}
           aria-modal="true"
           aria-labelledby="restore-title"
           aria-describedby="restore-description"
           className="ui-panel ui-dialog"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              controller.cancelImport()
-              return
-            }
-            if (event.key === 'Tab') {
-              const first = cancelImportRef.current
-              const last = replaceImportRef.current
-              if (event.shiftKey && document.activeElement === first) {
-                event.preventDefault()
-                last?.focus()
-              } else if (!event.shiftKey && document.activeElement === last) {
-                event.preventDefault()
-                first?.focus()
-              }
-            }
-          }}
         >
           <h2 id="restore-title" className="text-xl font-semibold ui-text">Replace learning data?</h2>
           <p id="restore-description" className="ui-text-secondary mt-2 mb-5">

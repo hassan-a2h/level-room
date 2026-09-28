@@ -1,4 +1,5 @@
 import StatusBadge from '../ui/StatusBadge.jsx'
+import { Check, RefreshCw } from 'lucide-react'
 import { Suspense } from 'react'
 import { useThemeView } from '../../theme/ThemeProvider.jsx'
 
@@ -73,8 +74,8 @@ function EvaluationResult({ evaluation, onRevise, artifactContent, taskEvidence 
     <div className="build-evaluation max-w-3xl mx-auto px-4 py-6">
       <section className={`ui-alert ${isPass ? 'ui-alert-success' : 'ui-alert-warning'} mb-6`} aria-live="polite">
         <div className="flex items-center gap-3 mb-2">
-          <div className="text-3xl ui-text">
-            {taskEvidence ? (isPass ? '✓' : '↻') : (isPass ? '✅' : '❌')}
+          <div className="text-3xl ui-text" aria-hidden="true">
+            {isPass ? <Check /> : <RefreshCw />}
           </div>
           <div>
             <h2 className="text-lg font-bold ui-text">

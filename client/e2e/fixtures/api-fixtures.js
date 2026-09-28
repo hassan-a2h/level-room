@@ -8,6 +8,7 @@ const test = base.extend({
   },
   page: async ({ page }, use) => {
     const consoleErrors = []
+    const resource404s = []
     await page.addInitScript(() => {
       const addMotionOverride = () => {
         const root = document.documentElement
@@ -34,10 +35,25 @@ const test = base.extend({
       }
     })
     page.on('console', (message) => {
-      if (message.type() === 'error') consoleErrors.push(message.text())
+      if (message.type() === 'error') {
+        const location = message.location()
+        const expectedMissingExam = message.text().includes('404')
+          && /^http:\/\/localhost:3200\/api\/topics\/\d+\/modules\/\d+\/exam$/.test(location.url)
+        if (!expectedMissingExam) consoleErrors.push(`${message.text()} (${location.url}:${location.lineNumber})`)
+      }
     })
-    page.on('pageerror', (error) => consoleErrors.push(error.message))
+    page.on('pageerror', (error) => consoleErrors.push(`${error.message}\n${error.stack || ''}`))
+    page.on('response', (response) => {
+      const url = response.url()
+      if (response.status() === 404) {
+        const request = response.request()
+        const expectedMissingExam = request.method() === 'GET'
+          && /^http:\/\/localhost:3200\/api\/topics\/\d+\/modules\/\d+\/exam$/.test(url)
+        if (!expectedMissingExam) resource404s.push(`${response.status()} ${request.method()} ${url}`)
+      }
+    })
     await use(page)
+    expect(resource404s, 'browser resource 404 responses').toEqual([])
     expect(consoleErrors, 'browser console and uncaught page errors').toEqual([])
   },
 })

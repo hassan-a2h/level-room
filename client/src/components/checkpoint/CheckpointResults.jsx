@@ -1,9 +1,11 @@
+import { ArrowRight, ArrowUpRight, Check, Sparkles } from 'lucide-react'
+
 function OutcomeScore({ outcome, evidence }) {
   const score = evidence?.score
   const failed = !Number.isFinite(score) || score < 60
   return (
     <li className={`checkpoint-result-outcome${failed ? ' is-needs-practice' : ' is-solid'}`}>
-      <span className="checkpoint-outcome-dot" aria-hidden="true">{failed ? '↗' : '✓'}</span>
+      <span className="checkpoint-outcome-dot" aria-hidden="true">{failed ? <ArrowUpRight /> : <Check />}</span>
       <span className="checkpoint-result-outcome-copy"><strong>{outcome.title}</strong><small>{outcome.role === 'core' ? 'Core skill' : 'Supporting idea'}{failed ? ' · worth another look' : ' · looking solid'}</small></span>
       <span className="checkpoint-score-pill">{Number.isFinite(score) ? `${score}%` : 'Not yet'}</span>
     </li>
@@ -17,7 +19,7 @@ export default function CheckpointResults({ evaluation, outcomes = [], moduleLes
 
   return (
     <section className={`checkpoint-results${passed ? ' is-passed' : ' is-review'}`} aria-labelledby="checkpoint-result-title" aria-live="polite">
-      {passed && <span className="checkpoint-celebration-mark" aria-hidden="true">✦</span>}
+      {passed && <Sparkles className="checkpoint-celebration-mark" aria-hidden="true" />}
       <div className="checkpoint-result-eyebrow">{passed ? 'A lovely bit of progress' : 'Every gap is a next step'}</div>
       <h2 id="checkpoint-result-title">{passed ? 'Chapter checkpoint cleared' : 'You’re close — let’s strengthen a few ideas'}</h2>
       <p className="checkpoint-result-lede">
@@ -73,7 +75,7 @@ export default function CheckpointResults({ evaluation, outcomes = [], moduleLes
       {error && <div className="ui-alert ui-alert-danger" role="alert">{error}</div>}
       <div className="checkpoint-result-actions">
         {passed ? (
-          <button className="ui-button ui-button-primary" type="button" onClick={onBack}>Continue your Trail <span aria-hidden="true">→</span></button>
+          <button className="ui-button ui-button-primary" type="button" onClick={onBack}>Continue your Trail <ArrowRight aria-hidden="true" /></button>
         ) : (
           <>
             {missedOutcomes.length > 0 && <button className="ui-button ui-button-primary" type="button" onClick={onPartialRetest} disabled={loading}>{loading ? 'Preparing practice…' : 'Practice missed outcomes'}</button>}

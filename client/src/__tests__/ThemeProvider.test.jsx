@@ -41,7 +41,7 @@ describe('ThemeProvider', () => {
     expect(screen.getByText('Mission Workshop')).toBeInTheDocument()
     first.unmount()
 
-    window.localStorage.setItem(THEME_STORAGE_KEY, 'morning-mist')
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'retired-theme')
     const second = render(<ThemeProvider><Probe /></ThemeProvider>)
     expect(screen.getByText('Living Atlas')).toBeInTheDocument()
     second.unmount()

@@ -24,7 +24,7 @@ export default function FocusAreas({ areas = [], onOpenSession }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-3 rounded-lg px-3 py-3 text-sm ui-text-secondary" style={{ backgroundColor: 'var(--ui-surface-alt)' }}>
+        <p className="mt-3 rounded-lg px-3 py-3 text-sm ui-text-secondary ui-surface-alt">
           No open focus areas right now. Keep following your Trail.
         </p>
       )}

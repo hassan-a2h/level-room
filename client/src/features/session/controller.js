@@ -15,6 +15,7 @@ export function isConnectionError(error) {
 }
 
 export function createSessionState(values = {}) {
+  const { draftsByBlockId = {}, tutor = {}, busy = {}, ...overrides } = values
   return {
     session: null,
     progress: null,
@@ -23,16 +24,13 @@ export function createSessionState(values = {}) {
     activityDocument: null,
     activityState: null,
     activityProgress: null,
-    draftsByBlockId: {},
     reviewBlockId: null,
-    tutor: { draft: '', expanded: false, messages: [] },
-    busy: { loading: false, mutating: false, refreshingBuild: false },
     error: null,
     artifactRequired: false,
-    ...values,
-    draftsByBlockId: values.draftsByBlockId || {},
-    tutor: { draft: '', expanded: false, messages: [], ...(values.tutor || {}) },
-    busy: { loading: false, mutating: false, refreshingBuild: false, ...(values.busy || {}) },
+    ...overrides,
+    draftsByBlockId,
+    tutor: { draft: '', expanded: false, messages: [], ...tutor },
+    busy: { loading: false, mutating: false, refreshingBuild: false, ...busy },
   }
 }
 
@@ -73,7 +71,7 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
   const [draftsByBlockId, setDraftsByBlockId] = useState({})
   const [tutor, setTutor] = useState({ draft: '', expanded: false, messages })
   const mutationLock = useRef(false)
-  const blocks = activityDocument?.blocks || []
+  const blocks = useMemo(() => activityDocument?.blocks || [], [activityDocument?.blocks])
   const currentBlockId = activityProgress?.currentBlockId ?? activityState?.currentBlockId ?? null
   const currentBlock = blocks.find((block) => block.id === currentBlockId) || null
   const done = sessionComplete || progress?.state === 'passed' || (!currentBlockId && completedCount(activityDocument, activityState) === (activityProgress?.total ?? blocks.filter((block) => block.required).length) && !artifactRequired)

@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import ThemeSwitcher from '../ThemeSwitcher.jsx'
@@ -95,7 +96,7 @@ export function AppShellHeader({ dueCount }) {
               aria-controls="trail-switcher-menu"
               onClick={() => setOpenPopover((open) => open === 'trail' ? null : 'trail')}
             >
-              <span aria-hidden="true">⌄</span>
+              <ChevronDown aria-hidden="true" />
             </button>
             <div
               id="trail-switcher-menu"

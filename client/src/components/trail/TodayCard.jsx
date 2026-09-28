@@ -53,7 +53,7 @@ export default function TodayCard({ nextAction, reviewSummary, onStartCheckpoint
           )}
           {action.currentActivity && <p className="mt-3 text-sm ui-text-secondary">Next up: {action.currentActivity}</p>}
           {Number.isInteger(action.estimatedMinutes) && action.estimatedMinutes > 0 && (
-            <p className="mt-3 inline-flex rounded-full px-3 py-1 text-sm ui-text-secondary" style={{ backgroundColor: 'var(--ui-surface-alt)' }}>
+            <p className="mt-3 inline-flex rounded-full px-3 py-1 text-sm ui-text-secondary ui-surface-alt">
               About {action.estimatedMinutes} min
             </p>
           )}

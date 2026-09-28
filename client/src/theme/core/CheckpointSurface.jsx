@@ -1,6 +1,7 @@
 import CheckpointIntro from '../../components/checkpoint/CheckpointIntro.jsx'
 import CheckpointQuestion from '../../components/checkpoint/CheckpointQuestion.jsx'
 import CheckpointResults from '../../components/checkpoint/CheckpointResults.jsx'
+import { ArrowRight, Check } from 'lucide-react'
 import styles from './learningReviewSurface.module.css'
 
 export default function CheckpointSurface({ model, className, variant }) {
@@ -19,13 +20,13 @@ export default function CheckpointSurface({ model, className, variant }) {
       {model.error?.message && <div className="ui-alert ui-alert-danger checkpoint-inline-error" role="alert">{model.error.message}</div>}
       <nav className="checkpoint-question-nav" aria-label="Checkpoint questions">{model.questions.map((question, index) => {
         const answered = Boolean(model.answers[question.id]?.trim())
-        return <button key={question.id} type="button" className={`checkpoint-question-nav-item${index === model.currentIndex ? ' is-current' : ''}${answered ? ' is-answered' : ''}`} aria-label={`Question ${index + 1}${index === model.currentIndex ? ', current' : ''}${answered ? ', answered' : ', unanswered'}`} aria-current={index === model.currentIndex ? 'step' : undefined} onClick={() => actions.selectQuestion(index)}>{answered ? '✓' : index + 1}</button>
+        return <button key={question.id} type="button" className={`checkpoint-question-nav-item${index === model.currentIndex ? ' is-current' : ''}${answered ? ' is-answered' : ''}`} aria-label={`Question ${index + 1}${index === model.currentIndex ? ', current' : ''}${answered ? ', answered' : ', unanswered'}`} aria-current={index === model.currentIndex ? 'step' : undefined} onClick={() => actions.selectQuestion(index)}>{answered ? <Check aria-hidden="true" /> : index + 1}</button>
       })}</nav>
       {model.currentQuestion && <CheckpointQuestion question={model.currentQuestion} answer={model.answers[model.currentQuestion.id] || ''} index={model.currentIndex} total={model.questions.length} onAnswerChange={actions.answer} answerRef={model.answerRef} disabled={busy.loading} />}
       <footer className="checkpoint-player-actions"><button className="ui-button ui-button-secondary" type="button" onClick={actions.previous} disabled={model.currentIndex === 0 || busy.loading}>← Previous</button>
         {model.currentIndex < model.questions.length - 1
-          ? <button className="ui-button ui-button-primary" type="button" onClick={actions.next} disabled={busy.loading}>Next question →</button>
-          : <button className="ui-button ui-button-primary" type="button" onClick={actions.review} disabled={busy.loading}>Review answers →</button>}
+          ? <button className="ui-button ui-button-primary" type="button" onClick={actions.next} disabled={busy.loading}>Next question <ArrowRight aria-hidden="true" /></button>
+          : <button className="ui-button ui-button-primary" type="button" onClick={actions.review} disabled={busy.loading}>Review answers <ArrowRight aria-hidden="true" /></button>}
       </footer>
     </section>}
     {model.phase === 'answer-review' && <section className="checkpoint-answer-review" aria-labelledby="checkpoint-answer-review-title">

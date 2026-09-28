@@ -8,7 +8,7 @@ function errorStatus(error) {
 
 function safeMessage(error, fallbackMessage) {
   const value = typeof error?.message === 'string' ? error.message.trim() : ''
-  if (!value || value.length > 240 || /[\r\n\u0000-\u0008]/.test(value) || INTERNAL_DETAIL.test(value)) {
+  if (!value || value.length > 240 || [...value].some((character) => character.charCodeAt(0) <= 0x08 || character === '\r' || character === '\n') || INTERNAL_DETAIL.test(value)) {
     return fallbackMessage
   }
   return value

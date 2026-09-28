@@ -4,7 +4,6 @@ html {
 }
 
 body {
-  min-width: 320px;
   overflow-x: clip;
   margin: 0;
   background: var(--canvas);

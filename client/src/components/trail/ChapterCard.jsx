@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Check } from 'lucide-react'
 
 function sessionLabel(session, isLocked) {
   if (isLocked) return 'Locked'
@@ -41,13 +42,13 @@ export default function ChapterCard({
     <li className={`relative list-none border-l-2 pl-4 sm:pl-6 ${isCurrent ? 'border-[var(--ui-focus)]' : 'ui-divider'}`}>
       <article aria-label={`Chapter ${chapterNumber}: ${chapter.title}`} className={`ui-surface ${isCurrent ? 'ui-surface-raised' : 'ui-surface-flat'} p-4 sm:p-5`}>
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold" aria-hidden="true" style={{ color: isCurrent ? 'var(--ui-action-text)' : 'var(--ui-text-secondary)', backgroundColor: isCurrent ? 'var(--ui-action)' : 'var(--ui-surface-alt)' }}>
-            {completed ? '✓' : chapterNumber}
+          <span className={`ui-chapter-marker mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold${isCurrent ? ' is-current' : ''}`} aria-hidden="true">
+            {completed ? <Check /> : chapterNumber}
           </span>
           <div className="min-w-0 flex-1">
             {isFuture ? (
-              <div className="flex min-h-11 items-center justify-between gap-3">
-                <h3 className="text-base font-semibold ui-text">{chapter.title}</h3>
+              <div className="chapter-card-future-heading flex min-h-11 items-center justify-between gap-3">
+                <h3 className="min-w-0 text-base font-semibold ui-text">{chapter.title}</h3>
                 <span className="ui-status ui-status-neutral">Coming up</span>
               </div>
             ) : (
@@ -92,7 +93,7 @@ export default function ChapterCard({
                     <h4 className="text-xs font-semibold uppercase tracking-wide ui-text-muted">What you’ll learn</h4>
                     <ul className="mt-2 flex flex-wrap gap-2" aria-label={`Outcomes for ${chapter.title}`}>
                       {outcomes.map((outcome) => (
-                        <li key={outcome.id || outcome.title} className="rounded-full px-3 py-1 text-xs ui-text-secondary" style={{ backgroundColor: 'var(--ui-surface-alt)' }}>
+                        <li key={outcome.id || outcome.title} className="rounded-full px-3 py-1 text-xs ui-text-secondary ui-surface-alt">
                           {outcome.title}{outcome.role === 'breadth' ? ' · Explore' : ''}
                         </li>
                       ))}

@@ -38,7 +38,7 @@ export function useReviewController({
   cancelReviewFn = cancelReview,
   getLocalDateFn = getLocalDate,
 } = {}) {
-  const validQuestions = Array.isArray(questions) ? questions : []
+  const validQuestions = useMemo(() => (Array.isArray(questions) ? questions : []), [questions])
   const initialPhase = sessionId && validQuestions.length ? 'answers' : 'expired'
   const [phase, setPhase] = useState(initialPhase)
   const [answers, setAnswers] = useState({})
@@ -160,7 +160,6 @@ export function useReviewController({
     answers,
     currentIndex,
     feedbackIndex,
-    feedbackByQuestionId,
     result,
     busy,
     error,

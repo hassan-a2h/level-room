@@ -33,11 +33,7 @@ export default function WeeklyRhythm({ rhythm }) {
             <li key={day.date} className="text-center">
               <span className="block text-[0.7rem] ui-text-muted" aria-hidden="true">{day.label}</span>
               <span
-                className="mx-auto mt-2 block h-3 w-3 rounded-full border"
-                style={{
-                  backgroundColor: day.active ? 'var(--ui-action)' : 'var(--ui-surface-alt)',
-                  borderColor: day.active ? 'var(--ui-action)' : 'var(--ui-border)',
-                }}
+                className={`trail-rhythm-dot mx-auto mt-2 block h-3 w-3 rounded-full border${day.active ? ' is-active' : ''}`}
                 aria-hidden="true"
               />
               <span className="sr-only">{fullName}: {activity}</span>

@@ -56,7 +56,7 @@ describe('ThemePrepaint', () => {
 
   it('falls back for stale IDs and storage denial, while reporting session-only use', () => {
     const staleRoot = createRoot()
-    expect(prepaintTheme({ root: staleRoot, storage: { getItem: () => 'morning-mist' } }).theme.id).toBe('living-atlas')
+    expect(prepaintTheme({ root: staleRoot, storage: { getItem: () => 'retired-theme' } }).theme.id).toBe('living-atlas')
     const deniedRoot = createRoot()
     const result = prepaintTheme({ root: deniedRoot, packs: THEMES, storage: { getItem() { throw new Error('denied') } } })
     expect(result.theme.id).toBe('living-atlas')

@@ -3,6 +3,7 @@ import { toPublicError } from '../../lib/publicError.js'
 const STAGES = Object.freeze(['destination', 'starting_point', 'learning_rhythm', 'preview'])
 
 export function createOnboardingState(values = {}) {
+  const { generation = {}, busy = {}, ...overrides } = values
   return {
     stage: 'destination',
     destination: '',
@@ -10,17 +11,15 @@ export function createOnboardingState(values = {}) {
     placementAnswers: {},
     selectedTime: null,
     selectedPace: 'steady',
-    generation: { mode: 'auto', status: 'idle', progress: null, eventId: null, canResume: true },
     curriculum: null,
     expandedSessionsById: {},
     adjustmentDraft: '',
     adjustmentOpen: false,
     error: null,
     providerReady: true,
-    busy: { submitting: false, loadingQuestions: false, placement: false, generating: false, recovering: false },
-    ...values,
-    generation: { mode: 'auto', status: 'idle', progress: null, eventId: null, canResume: true, ...(values.generation || {}) },
-    busy: { submitting: false, loadingQuestions: false, placement: false, generating: false, recovering: false, ...(values.busy || {}) },
+    ...overrides,
+    generation: { mode: 'auto', status: 'idle', progress: null, eventId: null, canResume: true, ...generation },
+    busy: { submitting: false, loadingQuestions: false, placement: false, generating: false, recovering: false, ...busy },
   }
 }
 

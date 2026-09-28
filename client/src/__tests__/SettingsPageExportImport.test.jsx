@@ -10,7 +10,6 @@ global.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
 global.URL.revokeObjectURL = vi.fn()
 
 // Custom File class with working text() for jsdom
-const _fileContents = new WeakMap()
 class MockFile {
   constructor(parts, name, options = {}) {
     this.name = name

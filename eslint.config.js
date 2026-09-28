@@ -27,4 +27,35 @@ export default [
       'react/prop-types': 'off',
     },
   },
+  {
+    // useThemeView returns a lazy component cached by theme and view name; its
+    // identity is stable even though the hook selects it from theme context.
+    files: [
+      'client/src/__tests__/useThemeView.test.jsx',
+      'client/src/components/ReviewSession.jsx',
+      'client/src/components/build/BuildExperience.jsx',
+      'client/src/components/session/SessionPlayer.jsx',
+      'client/src/pages/ContinuationFlow.jsx',
+      'client/src/pages/OnboardingFlow.jsx',
+      'client/src/pages/ReviewQueue.jsx',
+      'client/src/pages/SettingsPage.jsx',
+      'client/src/pages/SupportPage.jsx',
+    ],
+    rules: { 'react-hooks/static-components': 'off' },
+  },
+  {
+    // These effects intentionally synchronize with browser/network state or
+    // start asynchronous route loading; the immediate state marks that work.
+    files: [
+      'client/src/components/OfflineIndicator.jsx',
+      'client/src/components/trail/ChapterCard.jsx',
+      'client/src/features/reviews/controller.js',
+      'client/src/features/session/controller.js',
+      'client/src/pages/CheckpointPage.jsx',
+      'client/src/pages/ContinuationFlow.jsx',
+      'client/src/pages/OnboardingFlow.jsx',
+      'client/src/pages/SessionPage.jsx',
+    ],
+    rules: { 'react-hooks/set-state-in-effect': 'off' },
+  },
 ]

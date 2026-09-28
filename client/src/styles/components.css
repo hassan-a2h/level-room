@@ -188,6 +188,10 @@
 .ui-step-list li.is-current { color: var(--ui-text); font-weight: 700; }
 .ui-step-list li.is-complete { color: var(--ui-success-text); }
 .ui-step-marker { display: inline-grid; width: 1.85rem; height: 1.85rem; flex: none; place-items: center; border: 1px solid var(--ui-border); border-radius: 50%; color: var(--ui-text-secondary); background: var(--ui-surface); font-size: 0.8rem; font-weight: 700; }
+.ui-chapter-marker { color: var(--ui-text-secondary); background: var(--ui-surface-alt); }
+.ui-chapter-marker.is-current { color: var(--ui-action-text); background: var(--ui-action); }
+.ui-success-badge { color: var(--ui-success-text); background: var(--ui-success-bg); }
+.session-step-marker-empty { display: inline-block; width: 0.25rem; height: 0.25rem; border-radius: 50%; background: currentColor; }
 .ui-step-list li.is-current .ui-step-marker { border-color: var(--ui-action); color: var(--ui-action-text); background: var(--ui-action); }
 .ui-step-list li.is-complete .ui-step-marker { border-color: var(--ui-success-border); color: var(--ui-success-text); background: var(--ui-success-bg); }
 .ui-choice { border-color: var(--ui-focus); color: var(--ui-link); background: var(--ui-progress-bg); box-shadow: inset 0 0 0 1px var(--ui-focus); }
@@ -198,6 +202,9 @@
 .ui-surface-raised { background: var(--ui-surface); box-shadow: 5px 5px 14px color-mix(in srgb, var(--ui-shadow-dark) 54%, transparent), -5px -5px 14px color-mix(in srgb, var(--ui-shadow-light) 62%, transparent); }
 .ui-surface-inset { background: var(--ui-surface-inset); box-shadow: inset 2px 2px 5px color-mix(in srgb, var(--ui-shadow-inset) 46%, transparent), inset -2px -2px 5px color-mix(in srgb, var(--ui-shadow-light) 58%, transparent); }
 .ui-surface-flat { background: var(--ui-surface); }
+.ui-surface-alt { background: var(--ui-surface-alt); }
+.trail-rhythm-dot { border-color: var(--ui-border); background: var(--ui-surface-alt); }
+.trail-rhythm-dot.is-active { border-color: var(--ui-action); background: var(--ui-action); }
 .ui-button { display: inline-flex; min-width: 2.75rem; min-height: 2.75rem; align-items: center; justify-content: center; gap: 0.5rem; border: 1px solid transparent; border-radius: var(--ui-radius-sm); padding: 0.625rem 1rem; font: inherit; font-weight: 600; line-height: 1.25; text-decoration: none; cursor: pointer; transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, border-color var(--duration-fast) ease, transform var(--duration-fast) ease; }
 .ui-button-primary { color: var(--ui-action-text); background: var(--ui-action); }
 .ui-button-primary:hover:not(:disabled) { background: var(--ui-action-hover); }
@@ -339,6 +346,7 @@
 .checkpoint-outcome-list, .checkpoint-result-outcomes, .checkpoint-review-list { display: grid; gap: 0.45rem; margin: 0.9rem 0 0; padding: 0; list-style: none; }
 .checkpoint-outcome-list li, .checkpoint-result-outcome { display: flex; min-width: 0; align-items: center; gap: 0.65rem; border-radius: var(--ui-radius-sm); padding: 0.55rem 0.65rem; color: var(--ui-text-secondary); background: var(--ui-surface); font-size: 0.83rem; }
 .checkpoint-outcome-dot { display: grid; width: 1.55rem; height: 1.55rem; flex: none; place-items: center; border-radius: 50%; color: var(--ui-link); background: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface)); font-size: 0.8rem; font-weight: 800; }
+.checkpoint-outcome-dot svg { width: 1rem; height: 1rem; }
 .checkpoint-outcome-dot.is-core { color: var(--ui-link); background: color-mix(in srgb, var(--ui-accent) 20%, var(--ui-surface)); }
 .checkpoint-outcome-role { margin-left: auto; color: var(--ui-text-muted); font-size: 0.68rem; font-weight: 700; text-transform: uppercase; }
 .checkpoint-intro-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.35rem; }
@@ -474,6 +482,11 @@
   .session-order-list li { grid-template-columns: 2rem minmax(0, 1fr); }
   .session-order-controls { grid-column: 2; }
   .session-review-banner { align-items: start; flex-direction: column; }
+}
+
+@media (max-width: 20rem) {
+  .app-shell-topbar { flex-wrap: wrap; gap: var(--space-1); }
+  .app-shell-brand { min-width: 0; overflow-wrap: anywhere; }
 }
 
 @media (prefers-reduced-motion: reduce) {

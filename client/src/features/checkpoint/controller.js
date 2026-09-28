@@ -5,6 +5,7 @@ function hasAnswer(value) {
 }
 
 export function createCheckpointState(values = {}) {
+  const { busy = {}, ...overrides } = values
   return {
     phase: 'intro',
     exam: null,
@@ -16,10 +17,9 @@ export function createCheckpointState(values = {}) {
     isPartialRetest: false,
     ready: true,
     lessonsRemaining: 0,
-    busy: { loading: false, submitting: false, retaking: false, saving: false },
     error: null,
-    ...values,
-    busy: { loading: false, submitting: false, retaking: false, saving: false, ...(values.busy || {}) },
+    ...overrides,
+    busy: { loading: false, submitting: false, retaking: false, saving: false, ...busy },
   }
 }
 

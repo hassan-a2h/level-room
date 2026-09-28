@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { validateViewModelFixture } from '../../theme/core/packContract.js'
 import CuriosityContinuation from '../../theme/packs/curiosity-engine/views/ContinuationView.jsx'
 import WorkshopContinuation from '../../theme/packs/mission-workshop/views/ContinuationView.jsx'

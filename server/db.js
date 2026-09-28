@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { mkdirSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -6,6 +7,8 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'app.db')
+
+if (DB_PATH !== ':memory:') mkdirSync(path.dirname(path.resolve(DB_PATH)), { recursive: true })
 
 let db
 

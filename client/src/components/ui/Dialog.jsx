@@ -12,7 +12,7 @@ export default function Dialog({ open = false, title, onClose, children, classNa
 
   if (!open) return null
   return (
-    <div className="ui-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
+    <div className="ui-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.() }}>
       <section className={`ui-dialog ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title || 'Dialog'}>
         {title && <h2 className="ui-dialog__title">{title}</h2>}
         {children}

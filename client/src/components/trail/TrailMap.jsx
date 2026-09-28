@@ -1,3 +1,4 @@
+import { ArrowUpRight } from 'lucide-react'
 import ChapterCard from './ChapterCard.jsx'
 
 function percent(value) {
@@ -48,7 +49,7 @@ function ParentTrack({ parent, onOpen }) {
 
   return (
     <div className="mb-4 rounded-xl border ui-border p-3 text-sm ui-text-secondary">
-      <span className="mr-2" aria-hidden="true">↗</span>
+      <ArrowUpRight className="mr-2" aria-hidden="true" />
       {onOpen ? (
         <button type="button" className="ui-button ui-button-quiet min-h-0 p-0 text-sm" onClick={() => onOpen(parent.id)}>
           {`Builds on ${parent.title}`}

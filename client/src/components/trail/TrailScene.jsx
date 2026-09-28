@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowUpRight, ChevronDown, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ChapterCard from './ChapterCard.jsx'
 import FocusAreas from './FocusAreas.jsx'
@@ -18,7 +19,7 @@ function ReviewDue({ summary }) {
           <h2 className="font-semibold ui-text">Reviews due</h2>
           {totalDue > 0 ? <p className="mt-1 text-sm ui-text-secondary">{overdue > 0 ? `${overdue} overdue · ` : ''}{dueToday} due today</p> : <p className="mt-1 text-sm ui-text-secondary">You’re clear for now.</p>}
         </div>
-        <span className="rounded-full px-2.5 py-1 text-sm font-semibold ui-text" style={{ backgroundColor: 'var(--ui-surface-alt)' }} aria-label={`${totalDue} items due`}>{totalDue}</span>
+        <span className="rounded-full px-2.5 py-1 text-sm font-semibold ui-text ui-surface-flat" aria-label={`${totalDue} items due`}>{totalDue}</span>
       </div>
       <Link className="ui-button ui-button-secondary mt-3 min-h-10 text-sm" to="/reviews">{totalDue > 0 ? 'Start retrieval practice' : 'Open reviews'}</Link>
     </section>
@@ -39,7 +40,7 @@ function TopicPopover({ model, onSelectTopic, onDeleteTopic }) {
         aria-controls="trail-topic-options"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="trail-topic-current">{model.topic.title || 'Choose Trail'}</span><span aria-hidden="true">⌄</span>
+        <span className="trail-topic-current">{model.topic.title || 'Choose Trail'}</span><ChevronDown aria-hidden="true" />
       </button>
       <div id="trail-topic-options" className="trail-topic-menu" role="group" aria-label="Your Trails" hidden={!open}>
         {model.topics.map((topic) => (
@@ -101,7 +102,7 @@ function Sheet({ title, onClose, children }) {
   }, [onClose])
 
   return (
-    <div className="trail-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <div className="trail-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <section className="trail-sheet ui-surface ui-surface-raised" role="dialog" aria-modal="true" aria-label={title}>
         <div className="trail-sheet-heading">
           <h2 className="text-xl font-semibold ui-text">{title}</h2>
@@ -128,7 +129,7 @@ function SetupState({ topic }) {
 function EmptyState() {
   return (
     <section className="trail-empty ui-surface" aria-label="Start learning">
-      <span className="trail-empty-mark" aria-hidden="true">✦</span>
+      <Sparkles className="trail-empty-mark" aria-hidden="true" />
       <p className="text-xs font-semibold uppercase tracking-[0.14em] ui-text-muted">A fresh page</p>
       <h2 className="mt-2 text-2xl font-semibold ui-text">Your first Trail starts here</h2>
       <p className="mt-3 max-w-md text-sm leading-6 ui-text-secondary">Choose something you want to be able to do. We’ll shape it into a clear path of practice, useful feedback, and real progress.</p>
@@ -190,13 +191,13 @@ export default function TrailScene({ model, variant, onSelectTopic, onDeleteTopi
                 <div className="trail-path-heading">
                   <div className="min-w-0">
                     <p className="trail-eyebrow">{status}</p>
-                    <h2 className="trail-track-title" title={topic.title || 'Your Track'} style={{ overflowWrap: 'anywhere' }}>{topic.title || 'Your Track'}</h2>
+                    <h2 className="trail-track-title break-words" title={topic.title || 'Your Track'}>{topic.title || 'Your Track'}</h2>
                   </div>
                   <div className="trail-progress" role="progressbar" aria-label={`${topic.title || 'Track'} Track progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
                     <span style={{ width: `${progress}%` }} />
                   </div>
                 </div>
-                {topic.parent?.title && <button type="button" className="trail-parent-track" onClick={() => onSelectTopic?.(topic.parent.id)}>↗ Builds on {topic.parent.title}</button>}
+                {topic.parent?.title && <button type="button" className="trail-parent-track" onClick={() => onSelectTopic?.(topic.parent.id)}><ArrowUpRight aria-hidden="true" /> Builds on {topic.parent.title}</button>}
                 {model.chapters.length ? <ChapterList chapters={model.visibleChapters} allChapters={model.chapters} model={model} onStartSession={onStartSession} onStartCheckpoint={onStartCheckpoint} /> : <p className="trail-no-chapters">Your Chapters will appear here once this Track is ready.</p>}
                 {model.chapters.length > model.visibleChapters.length && <p className="trail-window-note">Showing Chapters {visibleStartIndex + 1}–{visibleStartIndex + model.visibleChapters.length} of {model.chapters.length}</p>}
                 <button type="button" className="ui-button ui-button-secondary trail-open-track" onClick={() => setSheet('track')}>View full Track</button>

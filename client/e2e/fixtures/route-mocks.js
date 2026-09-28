@@ -9,6 +9,16 @@ const settings = {
   providers: [],
 }
 
+const stressChapters = Array.from({ length: 20 }, (_, index) => ({
+  id: 100 + index,
+  title: index === 0
+    ? 'A deliberately long chapter title that checks wrapping at the narrowest supported viewport without clipping any words'
+    : `Chapter ${index + 1}: practice and apply the core idea`,
+  status: index === 0 ? 'in_progress' : 'ready',
+  sessions: [],
+  checkpointStatus: 'locked',
+}))
+
 const scenarios = {
   emptyDashboard: {
     topics: { topics: [] },
@@ -22,6 +32,20 @@ const scenarios = {
     dashboard: {
       topic: { id: 1, title: 'React foundations', status: 'active', progress: 0, totalLessons: 0, passedLessons: 0, resumeAvailable: false },
       modules: [],
+      nextAction: { kind: 'unavailable', title: 'Your next practice session is ready.' },
+      reviewSummary: { totalDue: 0, dueToday: 0, overdue: 0 },
+      weeklyRhythm: { activeDays: 0, days: [] },
+      focusAreas: [],
+      mistakes: [],
+    },
+    reviewCount: { totalDue: 0, dueToday: 0, overdue: 0 },
+    reviews: { due: [] },
+  },
+  stressTrail: {
+    topics: { topics: [{ id: 1, title: 'A deliberately long learning Trail title for responsive layout checks', status: 'active', progress: 0, totalLessons: 20, passedLessons: 0, hasChildren: false }] },
+    dashboard: {
+      topic: { id: 1, title: 'A deliberately long learning Trail title for responsive layout checks', status: 'active', progress: 0, totalLessons: 20, passedLessons: 0, resumeAvailable: false },
+      modules: stressChapters,
       nextAction: { kind: 'unavailable', title: 'Your next practice session is ready.' },
       reviewSummary: { totalDue: 0, dueToday: 0, overdue: 0 },
       weeklyRhythm: { activeDays: 0, days: [] },

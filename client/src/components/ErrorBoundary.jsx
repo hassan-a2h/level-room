@@ -12,7 +12,7 @@ class ErrorBoundary extends Component {
     return { hasError: true }
   }
 
-  componentDidCatch(error, errorInfo) {
+  componentDidCatch(error) {
     this.setState({ supportError: toPublicError(error, 'We could not display this learning view. You can reload or return to your Trail.') })
   }
 

@@ -66,19 +66,19 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
   const currentDraft = controlledDraft ?? draft
   const isOpen = controlledOpen ?? open
 
-  const changeDraft = (value) => {
+  const changeDraft = useCallback((value) => {
     if (controlledDraft === undefined) setDraft(value)
     onDraftChange?.(value)
-  }
-  const changeOpen = (value) => {
+  }, [controlledDraft, onDraftChange])
+  const changeOpen = useCallback((value) => {
     if (controlledOpen === undefined) setOpen(value)
     onOpenChange?.(value)
-  }
+  }, [controlledOpen, onOpenChange])
 
   const closeSheet = useCallback(() => {
     changeOpen(false)
     requestAnimationFrame(() => trigger.current?.focus())
-  }, [controlledOpen, onOpenChange])
+  }, [changeOpen])
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -107,7 +107,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
     } finally {
       setBusy(false)
     }
-  }, [activityBlockId, busy, currentDraft, lessonId, topicId])
+  }, [activityBlockId, busy, changeDraft, currentDraft, lessonId, topicId])
 
   const content = (variant) => <>
     <GuideMessages messages={messages} streamingText={streamingText} busy={busy} />
@@ -124,7 +124,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
 
   return <>
     <button ref={trigger} type="button" className="session-guide-trigger" aria-haspopup="dialog" onClick={() => changeOpen(true)}>Ask your guide</button>
-    {isOpen && <div className="session-guide-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSheet() }}>
+    {isOpen && <div className="session-guide-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSheet() }}>
       <section className="session-guide-sheet" role="dialog" aria-modal="true" aria-label="Ask your guide">
         <div className="session-tutor-heading"><div><p className="session-eyebrow">Need a nudge?</p><h2>Ask your guide</h2></div><button type="button" aria-label="Close guide" onClick={closeSheet}>Close</button></div>
         {content('sheet')}

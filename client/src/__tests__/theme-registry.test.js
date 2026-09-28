@@ -9,7 +9,7 @@ describe('production theme registry', () => {
     expect(getTheme('living-atlas').mode).toBe('light')
     expect(getTheme('curiosity-engine').mode).toBe('light')
     expect(getTheme('mission-workshop').mode).toBe('dark')
-    expect(getTheme('morning-mist')).toBeUndefined()
+    expect(getTheme('retired-theme')).toBeUndefined()
   })
 
   it('provides lazy loaders for every view in every pack', async () => {

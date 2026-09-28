@@ -8,7 +8,7 @@ vi.mock('../api.js', () => ({
 }))
 vi.mock('../components/ArtifactPanel.jsx', () => ({ default: () => <div>Build form</div> }))
 
-import { completeActivityBlock, getLesson, submitActivityBlock } from '../api.js'
+import { completeActivityBlock, submitActivityBlock } from '../api.js'
 
 const blocks = [
   { id: 'read-intro', type: 'read', title: 'Start here', content: 'Read the idea.', required: true, estimatedMinutes: 2, outcomeIds: ['joins'] },

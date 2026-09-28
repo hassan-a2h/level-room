@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import ErrorBoundary from '../components/ErrorBoundary.jsx'
 
@@ -52,7 +52,7 @@ describe('ErrorBoundary', () => {
   })
 
   it('offers a safe route back to the Trail', () => {
-    const { container } = render(
+    render(
       <ErrorBoundary>
         <BombComponent shouldThrow={true} />
       </ErrorBoundary>

@@ -75,7 +75,7 @@ export default function OnboardingFlow() {
   const [placementQuestionIndex, setPlacementQuestionIndex] = useState(0)
   const [placementResult, setPlacementResult] = useState(null)
   const [placementLoading, setPlacementLoading] = useState(false)
-  const [placementPhase, setPlacementPhase] = useState('')
+  const [, setPlacementPhase] = useState('')
   const [generating, setGenerating] = useState(false)
   const [curriculum, setCurriculum] = useState(null)
   const [selectedChapterId, setSelectedChapterId] = useState(null)

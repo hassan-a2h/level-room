@@ -6,11 +6,11 @@ export const MAX_BUILD_IMPORT_BYTES = 256 * 1024
 const ALLOWED_EXTENSIONS = new Set(['.txt', '.md', '.json', '.csv'])
 
 export function createBuildState(values = {}) {
+  const { evidence = {}, busy = {}, ...overrides } = values
   return {
     phase: 'brief',
     taskSpec: null,
     artifactType: '',
-    evidence: { setup: '', actions: '', result: '', reflection: '' },
     currentEvidenceStep: 'setup',
     content: '',
     fileName: null,
@@ -18,10 +18,9 @@ export function createBuildState(values = {}) {
     evaluation: null,
     error: null,
     showHints: false,
-    busy: { loading: false, submitting: false },
-    ...values,
-    evidence: { setup: '', actions: '', result: '', reflection: '', ...(values.evidence || {}) },
-    busy: { loading: false, submitting: false, ...(values.busy || {}) },
+    ...overrides,
+    evidence: { setup: '', actions: '', result: '', reflection: '', ...evidence },
+    busy: { loading: false, submitting: false, ...busy },
   }
 }
 
@@ -157,7 +156,7 @@ export function useBuildController({
     } finally {
       setSubmitting(false)
     }
-  }, [content, evidence, evaluation?.passed, getLocalDateFn, lessonId, onPassed, submitArtifactFn, taskSpec, topicId])
+  }, [content, evidence, evaluation, getLocalDateFn, lessonId, onPassed, submitArtifactFn, taskSpec, topicId])
 
   const revise = useCallback(() => {
     setEvaluation(null)

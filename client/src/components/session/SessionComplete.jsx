@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom'
+import { Check } from 'lucide-react'
 
 export default function SessionComplete({ session, activityDocument, activityState }) {
   const outcomes = Array.isArray(session?.outcomes) ? session.outcomes : []
   const takeaway = Object.values(activityState?.blocks || {}).find((entry) => typeof entry?.response === 'string' && entry.response.trim())?.response
   return (
     <section className="session-complete-card" aria-labelledby="session-complete-title" aria-live="polite">
-      <span className="session-complete-mark" aria-hidden="true">✓</span>
+      <span className="session-complete-mark" aria-hidden="true"><Check /></span>
       <p className="session-eyebrow">Session complete</p>
       <h2 id="session-complete-title">Session complete</h2>
       <p>You moved this idea into practice.</p>

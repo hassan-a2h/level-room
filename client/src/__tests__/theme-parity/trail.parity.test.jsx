@@ -191,7 +191,7 @@ describe('Trail theme parity', () => {
     const title = await screen.findByText(topic.title, { selector: '.trail-track-title' })
     expect(title).toHaveClass('trail-track-title')
     expect(title.parentElement).toHaveClass('min-w-0')
-    expect(title).toHaveStyle({ overflowWrap: 'anywhere' })
+    expect(title).toHaveClass('break-words')
     expect(screen.getAllByText(longTitle).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole('button', { name: /start checkpoint/i }))
     expect(screen.getByTestId('current-location')).toHaveTextContent('/topic/1/chapter/10/checkpoint')

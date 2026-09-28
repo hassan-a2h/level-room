@@ -1,3 +1,5 @@
+import { ArrowRight, Circle, Leaf, Sparkles } from 'lucide-react'
+
 export default function CheckpointIntro({
   moduleTitle,
   outcomes = [],
@@ -12,7 +14,7 @@ export default function CheckpointIntro({
   const coreCount = outcomes.filter((outcome) => outcome.role === 'core').length
   return (
     <section className="checkpoint-intro" aria-labelledby="checkpoint-title">
-      <div className="checkpoint-eyebrow"><span aria-hidden="true">✦</span> Chapter checkpoint</div>
+      <div className="checkpoint-eyebrow"><Sparkles aria-hidden="true" /> Chapter checkpoint</div>
       <h2 id="checkpoint-title" className="checkpoint-title">Show what you can do</h2>
       <p className="checkpoint-lede">
         {moduleTitle ? `Bring the ideas from ${moduleTitle} together in one calm, focused review.` : 'Bring the ideas from this Chapter together in one calm, focused review.'}
@@ -27,12 +29,12 @@ export default function CheckpointIntro({
       <div className="checkpoint-outcome-panel">
         <div className="checkpoint-section-heading">
           <div><h3>What you’ll bring together</h3><p>{outcomes.length} learning outcomes from {lessonCount} Sessions</p></div>
-          <span className="checkpoint-spark" aria-hidden="true">✧</span>
+          <Sparkles className="checkpoint-spark" aria-hidden="true" />
         </div>
         <ul className="checkpoint-outcome-list">
           {outcomes.map((outcome) => (
             <li key={outcome.id}>
-              <span className={outcome.role === 'core' ? 'checkpoint-outcome-dot is-core' : 'checkpoint-outcome-dot'} aria-hidden="true">{outcome.role === 'core' ? '✦' : '·'}</span>
+              <span className={outcome.role === 'core' ? 'checkpoint-outcome-dot is-core' : 'checkpoint-outcome-dot'} aria-hidden="true">{outcome.role === 'core' ? <Sparkles /> : <Circle />}</span>
               <span>{outcome.title}</span>
               <span className="checkpoint-outcome-role">{outcome.role === 'core' ? 'Core' : 'Explore'}</span>
             </li>
@@ -43,7 +45,7 @@ export default function CheckpointIntro({
       {error && <div className="ui-alert ui-alert-danger" role="alert">{error}</div>}
       {!ready ? (
         <div className="checkpoint-lock-note" role="status">
-          <span aria-hidden="true">🌱</span>
+          <Leaf aria-hidden="true" />
           <div><strong>Your checkpoint will be here when you’re ready.</strong><p>Finish {lessonsRemaining} more {lessonsRemaining === 1 ? 'Session' : 'Sessions'} first. Your learning comes before the score.</p></div>
           {onContinueLearning && <button className="ui-button ui-button-primary" type="button" onClick={onContinueLearning}>Continue learning</button>}
         </div>
@@ -51,7 +53,7 @@ export default function CheckpointIntro({
         <div className="checkpoint-intro-actions">
           <p>Answers save as you go. You can pause and come back whenever you need.</p>
           <button className="ui-button ui-button-primary checkpoint-start" type="button" onClick={onStart} disabled={loading}>
-            {loading ? 'Making your checkpoint…' : 'Begin checkpoint'} <span aria-hidden="true">→</span>
+            {loading ? 'Making your checkpoint…' : 'Begin checkpoint'} <ArrowRight aria-hidden="true" />
           </button>
         </div>
       )}

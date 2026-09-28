@@ -1,6 +1,7 @@
 import { toPublicError } from '../../lib/publicError.js'
 
 export function createContinuationState(values = {}) {
+  const { busy = {}, ...overrides } = values
   return {
     phase: 'loading',
     parentTrack: {},
@@ -12,10 +13,9 @@ export function createContinuationState(values = {}) {
     selectedChapterId: null,
     adjustmentDraft: '',
     adjustmentOpen: false,
-    busy: { loading: true, generating: false, tweaking: false, confirming: false, saving: false },
     error: null,
-    ...values,
-    busy: { loading: true, generating: false, tweaking: false, confirming: false, saving: false, ...(values.busy || {}) },
+    ...overrides,
+    busy: { loading: true, generating: false, tweaking: false, confirming: false, saving: false, ...busy },
   }
 }
 

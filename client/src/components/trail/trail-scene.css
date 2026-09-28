@@ -26,7 +26,7 @@
 .trail-page-title { margin: .25rem 0 0; font-size: clamp(1.65rem, 4vw, 2.35rem); font-weight: 700; line-height: 1.1; }
 .trail-heading-subtitle { margin: 0 0 .15rem; color: var(--ui-text-muted); font-size: .9rem; }
 .trail-topic-popover { position: relative; z-index: 4; flex: 0 1 auto; min-width: 0; }
-.trail-topic-trigger { max-width: min(20rem, 46vw); min-height: 2.75rem; gap: .75rem; }
+.trail-topic-trigger { box-sizing: border-box; width: min(20rem, 46vw); max-width: 100%; min-height: 2.75rem; gap: .75rem; }
 .trail-topic-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trail-topic-menu { position: absolute; top: calc(100% + .5rem); right: 0; width: min(22rem, calc(100vw - 2rem)); padding: .5rem; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); box-shadow: 0 16px 40px rgb(0 0 0 / 16%); }
 .trail-topic-menu[hidden] { display: none; }
@@ -46,7 +46,7 @@
 .trail-empty { display: flex; min-height: 45vh; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; padding: clamp(1.5rem, 5vw, 3rem); text-align: center; }
 .trail-empty-mark { display: grid; width: 3.5rem; height: 3.5rem; place-items: center; margin-bottom: .75rem; border-radius: 50%; background: var(--accent-soft); font-size: 1.6rem; }
 .trail-layout { align-items: flex-start; }
-.trail-path { flex: 1 1 66%; min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
+.trail-path { box-sizing: border-box; flex: 1 1 66%; min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
 .trail-path-heading { margin-bottom: 1rem; align-items: flex-end; }
 .trail-track-title { overflow-wrap: anywhere; margin: .25rem 0 0; font-size: clamp(1.25rem, 3vw, 1.65rem); font-weight: 700; }
 .trail-progress { width: min(12rem, 30%); height: .5rem; flex: none; overflow: hidden; border-radius: 99px; background: var(--ui-surface-alt); }
@@ -60,11 +60,11 @@
 .trail-window-note { margin: .5rem 0; color: var(--ui-text-muted); font-size: .78rem; text-align: center; }
 .trail-open-track { width: 100%; margin-top: 1rem; }
 .trail-support { display: flex; width: min(30%, 22rem); flex-direction: column; gap: .75rem; }
-.trail-open-progress { width: 100%; min-height: 2.75rem; border: 1px solid var(--ui-border); border-radius: .8rem; }
+.trail-open-progress { box-sizing: border-box; width: 100%; min-height: 2.75rem; border: 1px solid var(--ui-border); border-radius: .8rem; }
 .trail-sheet-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(10 17 19 / 58%); }
-.trail-sheet { display: flex; width: min(100%, 64rem); max-height: min(90vh, 56rem); flex-direction: column; padding: 1rem; }
+.trail-sheet { display: flex; width: min(100%, 64rem); min-width: 0; max-width: 100%; max-height: min(90vh, 56rem); flex-direction: column; overflow-x: hidden; padding: 1rem; box-sizing: border-box; }
 .trail-sheet-heading { position: sticky; top: 0; z-index: 1; flex: none; padding-bottom: .75rem; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
-.trail-sheet-content { overflow: auto; padding: 1rem .15rem .25rem; }
+.trail-sheet-content { width: 100%; min-width: 0; min-height: 0; overflow: auto; padding: 1rem .15rem .25rem; box-sizing: border-box; }
 .trail-progress-sheet { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 1rem; }
 
 @media (max-width: 48rem) {
@@ -72,10 +72,38 @@
   .trail-heading { align-items: flex-start; }
   .trail-heading-copy { display: block; }
   .trail-heading-subtitle { margin-top: .5rem; }
-  .trail-topic-trigger { max-width: 38vw; }
+  .trail-topic-popover { width: 100%; }
+  .trail-topic-trigger { width: auto; max-width: 100%; }
+  .trail-progress-label { white-space: normal; }
+  .trail-next-action > section { box-sizing: border-box; width: 100%; min-width: 0; }
+  .trail-next-action > section > div { min-width: 0; }
+  .trail-next-action > section > div > :last-child { flex: 1 1 100%; min-width: 0; }
+  .trail-next-action .ui-button { max-width: 100%; white-space: normal; }
+  .chapter-card-future-heading { flex-wrap: wrap; justify-content: flex-start; }
+  .chapter-card-future-heading h3 { flex: 1 1 8rem; overflow-wrap: anywhere; }
+  .chapter-card-future-heading .ui-status { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
   .trail-statusline { align-items: flex-start; flex-direction: column; gap: .25rem; }
-  .trail-layout { flex-direction: column; }
-  .trail-path, .trail-support { width: 100%; }
-  .trail-support { display: grid; grid-template-columns: 1fr; }
+  .trail-layout { align-items: stretch; flex-direction: column; }
+  .trail-path, .trail-support { box-sizing: border-box; width: 100%; }
+  .trail-support { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .trail-support > * { box-sizing: border-box; width: 100%; min-width: 0; }
+  .trail-support > section > div { min-width: 0; }
+  .trail-support > section > div > div { min-width: 0; flex: 1; }
+  .trail-support > section > div > span { flex: none; }
+  .trail-support .ui-button { max-width: 100%; white-space: normal; }
   .trail-progress-sheet { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 20rem) {
+  .trail-heading { flex-wrap: wrap; }
+  .trail-sheet-backdrop { padding: .25rem; }
+  .trail-sheet { padding: .5rem; }
+  .trail-sheet-content { padding: .5rem 0; }
+  .trail-chapter-list { padding-left: 0; }
+  .trail-chapter-list > li { padding-left: .25rem; }
+  .trail-chapter-list > li article { padding: .25rem; }
+  .trail-chapter-list > li article * { min-width: 0; overflow-wrap: anywhere; }
+  .trail-chapter-list > li article .ui-button { max-width: 100%; white-space: normal; }
+  .trail-chapter-list .ui-chapter-marker { width: 1.25rem; height: 1.25rem; }
+  .trail-chapter-list > li > article > div { gap: .25rem; }
 }

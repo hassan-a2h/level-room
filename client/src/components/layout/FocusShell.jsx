@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 
 function safeReturnPath(path) {
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\') || /[\u0000-\u001F]/.test(path)) {
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\') || [...path].some((character) => character.charCodeAt(0) <= 0x1f)) {
     return '/'
   }
   return path

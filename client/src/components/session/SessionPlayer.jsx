@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { Check } from 'lucide-react'
 import AppHeader from '../AppHeader.jsx'
 import ArtifactPanel from '../ArtifactPanel.jsx'
 import ActivityRenderer from './ActivityRenderer.jsx'
@@ -15,7 +16,7 @@ function SessionThemeShell({ model, children }) {
 
 export default function SessionPlayer({ topicId, lessonId, session, progress, messages = [], activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired = false }) {
   const controller = useSessionController({ topicId, lessonId, session, progress, messages, activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired })
-  const { model: viewModel, activityState, activityProgress, busy, error: mutationError, reviewBlockId, setReviewBlockId, currentBlockId, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild } = controller
+  const { model: viewModel, activityState, busy, error: mutationError, reviewBlockId, setReviewBlockId, currentBlockId, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild } = controller
   const activeHeading = useRef(null)
   const blocks = viewModel.blocks
   const currentIndex = blocks.findIndex((block) => block.id === currentBlockId)
@@ -49,8 +50,8 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
               const isFuture = block.required && (currentIndex >= 0 ? index > currentIndex : !isComplete)
               return <li key={block.id} className={`${isCurrent ? 'is-current' : ''} ${isComplete ? 'is-complete' : ''} ${isFuture ? 'is-locked' : ''}`}>
                 {isComplete && index < currentIndex
-                  ? <button type="button" aria-label={`Review ${block.title}`} onClick={() => setReviewBlockId(block.id)}><span aria-hidden="true">✓</span><span className="sr-only">{block.title}</span></button>
-                  : <span aria-label={isCurrent ? `Step ${index + 1}, current` : isFuture ? `Step ${index + 1}, locked` : `Step ${index + 1}`}>{isComplete ? '✓' : isCurrent ? index + 1 : '·'}</span>}
+                  ? <button type="button" aria-label={`Review ${block.title}`} onClick={() => setReviewBlockId(block.id)}><Check aria-hidden="true" /><span className="sr-only">{block.title}</span></button>
+                  : <span aria-label={isCurrent ? `Step ${index + 1}, current` : isFuture ? `Step ${index + 1}, locked` : `Step ${index + 1}`}>{isComplete ? <Check aria-hidden="true" /> : isCurrent ? index + 1 : <span className="session-step-marker-empty" aria-hidden="true" />}</span>}
               </li>
             })}
           </ol>
