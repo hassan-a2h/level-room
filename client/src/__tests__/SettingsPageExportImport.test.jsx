@@ -32,6 +32,10 @@ function mockFetch(data, status = 200) {
     })
 }
 
+async function openCategory(name) {
+  fireEvent.click(await screen.findByRole('button', { name }))
+}
+
 describe('SettingsPage privacy and backup controls', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -44,8 +48,10 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
-    await waitFor(() => expect(screen.getByRole('heading', { name: /data and privacy/i })).toBeInTheDocument())
+    await openCategory('Data & privacy')
+    await waitFor(() => expect(screen.getByRole('heading', { name: /data.*privacy/i })).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /export data/i })).toBeInTheDocument()
+    await openCategory('Restore')
     expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument()
   })
 
@@ -76,6 +82,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Data & privacy')
     await waitFor(() => expect(screen.getByRole('button', { name: /export data/i })).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /export data/i }))
@@ -96,6 +103,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Data & privacy')
     await waitFor(() => expect(screen.getByRole('button', { name: /export data/i })).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /export data/i }))
@@ -113,6 +121,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Restore')
     await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
 
     const fileInput = screen.getByLabelText(/import backup file/i)
@@ -132,6 +141,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Restore')
     await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
 
     const fileInput = screen.getByLabelText(/import backup file/i)
@@ -158,6 +168,7 @@ describe('SettingsPage privacy and backup controls', () => {
   it('cancels restore without sending the import request', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await openCategory('Restore')
     await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
     const fileInput = screen.getByLabelText(/import backup file/i)
     const file = new File([JSON.stringify({ topics: [] })], 'backup.json', { type: 'application/json' })
@@ -172,6 +183,7 @@ describe('SettingsPage privacy and backup controls', () => {
   it('keeps keyboard focus inside restore confirmation and returns it after Escape', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await openCategory('Restore')
     await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
     const fileInput = screen.getByLabelText(/import backup file/i)
     const file = new File([JSON.stringify({ topics: [] })], 'backup.json', { type: 'application/json' })
@@ -199,6 +211,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Restore')
     await waitFor(() => expect(screen.getByRole('button', { name: /import data/i })).toBeInTheDocument())
 
     const fileInput = screen.getByLabelText(/import backup file/i)
@@ -226,6 +239,7 @@ describe('SettingsPage privacy and backup controls', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    await openCategory('Data & privacy')
     await waitFor(() => expect(screen.getByRole('button', { name: /export data/i })).toBeInTheDocument())
 
     const exportBtn = screen.getByRole('button', { name: /export data/i })

@@ -42,6 +42,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
     expect(screen.getByRole('option', { name: 'OpenAI API key' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Anthropic API key' })).toBeInTheDocument()
@@ -49,20 +50,29 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('option', { name: 'OpenAI Codex subscription' })).toBeInTheDocument()
   })
 
-  it('organizes appearance, learning, provider, privacy and destructive data controls', async () => {
+  it('shows one settings category at a time and preserves each category', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, apiKeySet: false, envStatus: [] }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument())
     expect(screen.getAllByRole('radio')).toHaveLength(3)
-    for (const section of ['Learning preferences', 'AI connection', 'Data and privacy', 'Danger zone']) {
-      expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
-    }
+    expect(screen.queryByRole('heading', { name: 'Learning preferences' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Learning' }))
+    expect(screen.getByRole('heading', { name: 'Learning preferences' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
+    expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeInTheDocument()
     expect(screen.getByText(/learning data lives in local SQLite/i)).toBeInTheDocument()
     expect(screen.getByText(/theme lives in browser storage/i)).toBeInTheDocument()
     expect(screen.getByText(/bounded learning context/i)).toBeInTheDocument()
     expect(screen.getByText(/credentials are never included in exports/i)).toBeInTheDocument()
-    const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)
-    expect(headings).toEqual(['Appearance', 'Learning preferences', 'AI connection', 'Data and privacy', 'Danger zone'])
+    expect(screen.queryByRole('heading', { name: 'Learning preferences' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    expect(screen.getByRole('heading', { name: 'Restore learning data' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Data & privacy' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'AI connection' }))
+    expect(screen.getByRole('heading', { name: 'AI connection' })).toBeInTheDocument()
+    expect(screen.queryByText(/learning data lives in local SQLite/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Restore learning data' })).not.toBeInTheDocument()
   })
 
   it('shows model selector that updates when provider changes', async () => {
@@ -72,6 +82,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
 
     const providerSelect = screen.getByLabelText(/provider/i)
@@ -85,6 +96,7 @@ describe('SettingsPage', () => {
   it('shows server-supported Codex models and reasoning choices only for Codex', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, envStatus: MOCK_ENV_STATUS }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await screen.findByLabelText(/provider/i)
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai-codex' } })
 
@@ -100,6 +112,7 @@ describe('SettingsPage', () => {
   it('saves the selected Codex reasoning level with the provider settings', async () => {
     fetch.mockImplementation(mockFetch({ provider: null, model: null, envStatus: MOCK_ENV_STATUS }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await screen.findByLabelText(/provider/i)
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai-codex' } })
     fireEvent.change(await screen.findByLabelText(/reasoning level/i), { target: { value: 'xhigh' } })
@@ -118,6 +131,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
     expect(screen.queryByLabelText(/api key/i)).not.toBeInTheDocument()
   })
@@ -129,6 +143,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByText(/environment configuration/i)).toBeInTheDocument())
     expect(screen.getByText('OPENAI_API_KEY')).toBeInTheDocument()
     expect(screen.getByText('ANTHROPIC_API_KEY')).toBeInTheDocument()
@@ -147,6 +162,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
@@ -180,6 +196,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
@@ -205,6 +222,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByLabelText(/provider/i)).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
@@ -226,6 +244,7 @@ describe('SettingsPage', () => {
         <SettingsPage />
       </MemoryRouter>
     )
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await waitFor(() => expect(screen.getByText(/environment configuration/i)).toBeInTheDocument())
     expect(screen.getByText(/No API key is configured/i)).toBeInTheDocument()
   })
@@ -239,6 +258,7 @@ describe('SettingsPage', () => {
         json: () => Promise.resolve({ error: 'SQLITE_ERROR: constraint failed in provider_settings' }),
       }))
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: 'AI connection' }))
     await screen.findByLabelText(/provider/i)
     fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: 'openai' } })
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }))

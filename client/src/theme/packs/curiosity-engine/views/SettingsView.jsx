@@ -1,7 +1,5 @@
-export default function SettingsView({ model, children }) {
-  return (
-    <main data-theme-view="SettingsView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Settings</h1>}
-    </main>
-  )
+import styles from './SettingsView.module.css'
+
+export default function SettingsView({ children }) {
+  return <main data-theme-view="SettingsView" className={styles.root}>{children}</main>
 }

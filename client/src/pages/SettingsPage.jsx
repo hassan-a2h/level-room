@@ -1,18 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { Suspense, useEffect, useRef } from 'react'
 import { useTheme } from '../theme/ThemeProvider.jsx'
 import { useSettingsController } from '../features/settings/controller.js'
 import { SkeletonSettings } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
 import ThemeSwitcher from '../components/ThemeSwitcher.jsx'
 import CodexConnection from '../components/CodexConnection.jsx'
+import { useThemeView } from '../theme/ThemeProvider.jsx'
 
 function SettingsPage() {
-  const { theme } = useTheme()
+  const { theme, selectTheme } = useTheme()
+  const SettingsView = useThemeView('SettingsView')
   const controller = useSettingsController({ themeId: theme.id })
   const { model: viewModel, apiKeySet } = controller
   const {
     provider, model, reasoningEffort, providers, ready, environmentStatuses: envStatus,
-    phase, saving, error, success, exportState, importState, pendingBackup,
+    phase, category, saving, error, success, exportState, importState, pendingBackup,
   } = viewModel
   const exporting = exportState.exporting
   const importing = importState.importing
@@ -23,6 +25,10 @@ function SettingsPage() {
   const replaceImportRef = useRef(null)
   const importButtonRef = useRef(null)
   const hadPendingImport = useRef(false)
+  const categories = [
+    ['appearance', 'Appearance'], ['learning', 'Learning'], ['ai', 'AI connection'],
+    ['privacy', 'Data & privacy'], ['restore', 'Restore'],
+  ]
 
   useEffect(() => {
     if (pendingBackup !== null) {
@@ -74,7 +80,7 @@ function SettingsPage() {
   const onCodexConnectionChange = controller.onCodexConnectionChange
 
   if (loading) {
-    return <SkeletonSettings />
+    return <><AppHeader /><SkeletonSettings /></>
   }
 
   const currentProvider = providers.find((entry) => entry.id === provider)
@@ -86,14 +92,17 @@ function SettingsPage() {
   return (
     <>
     <AppHeader />
+    <Suspense fallback={<SkeletonSettings />}>
+    <SettingsView model={viewModel}>
     <div className="ui-page px-4 py-6 sm:px-6">
-      <main className="ui-container max-w-3xl space-y-6">
+      <div className="ui-container max-w-3xl space-y-6">
         <h1 className="text-3xl font-bold ui-text">Settings</h1>
 
-        <section id="appearance" className="settings-section settings-appearance ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
-          <h2 id="appearance-heading" className="text-xl font-semibold ui-text mb-4">Appearance</h2>
-          <ThemeSwitcher variant="cards" />
-        </section>
+        <nav className="settings-category-nav flex flex-wrap justify-center gap-1.5" aria-label="Settings categories">
+          {categories.map(([id, label]) => (
+            <button key={id} type="button" className="ui-button ui-button-quiet min-h-0 px-3 py-2 text-sm" aria-pressed={category === id} onClick={() => controller.setCategory(id)}>{label}</button>
+          ))}
+        </nav>
 
         {success && (
           <div className="ui-alert ui-alert-success" role="alert">
@@ -107,12 +116,17 @@ function SettingsPage() {
           </div>
         )}
 
-        <section className="settings-section settings-learning-preferences ui-panel p-5 sm:p-6" aria-labelledby="learning-preferences-heading">
+        {category === 'appearance' && <section id="appearance" className="settings-section settings-appearance ui-panel p-5 sm:p-6 scroll-mt-4" aria-labelledby="appearance-heading">
+          <h2 id="appearance-heading" className="text-xl font-semibold ui-text mb-4">Appearance</h2>
+          <ThemeSwitcher variant="cards" themeId={viewModel.themeId} onChange={selectTheme} />
+        </section>}
+
+        {category === 'learning' && <section className="settings-section settings-learning-preferences ui-panel p-5 sm:p-6" aria-labelledby="learning-preferences-heading">
           <h2 id="learning-preferences-heading" className="text-xl font-semibold ui-text mb-3">Learning preferences</h2>
           <p className="text-sm ui-text-secondary">Your chosen weekly rhythm and pace shape each Track when you build it. Review and adjust those choices in the Track preview before adding it to your Trail.</p>
-        </section>
+        </section>}
 
-        <section className="settings-section settings-ai-connection ui-panel p-5 sm:p-6" aria-labelledby="ai-connection-heading">
+        <section hidden={category !== 'ai'} className="settings-section settings-ai-connection ui-panel p-5 sm:p-6" aria-labelledby="ai-connection-heading">
           <h2 id="ai-connection-heading" className="text-xl font-semibold ui-text mb-5">AI connection</h2>
 
           <form onSubmit={handleSubmit} className="space-y-5">
@@ -190,14 +204,6 @@ function SettingsPage() {
               )}
             </div>}
 
-            {provider === 'openai-codex' && (
-              <div className="space-y-3">
-                <CodexConnection onConnectionChange={onCodexConnectionChange} />
-                {ready && <p className="text-sm ui-status ui-status-success" role="status">The selected Codex provider is ready for learning actions.</p>}
-                <p className="text-xs ui-text-muted">Codex subscription sign-in is experimental and depends on an unofficial integration. OpenAI API-key usage is billed separately.</p>
-              </div>
-            )}
-
             <div className="pt-2">
               <button
                 type="submit"
@@ -208,10 +214,18 @@ function SettingsPage() {
               </button>
             </div>
           </form>
+
+          {provider === 'openai-codex' && (
+            <div className="space-y-3 mt-5">
+              <CodexConnection onConnectionChange={onCodexConnectionChange} />
+              {ready && <p className="text-sm ui-status ui-status-success" role="status">The selected Codex provider is ready for learning actions.</p>}
+              <p className="text-xs ui-text-muted">Codex subscription sign-in is experimental and depends on an unofficial integration. OpenAI API-key usage is billed separately.</p>
+            </div>
+          )}
         </section>
 
-        <section className="settings-section settings-data-privacy ui-panel p-5 sm:p-6" aria-labelledby="data-privacy-heading">
-          <h2 id="data-privacy-heading" className="text-xl font-semibold ui-text mb-4">Data and privacy</h2>
+        {category === 'privacy' && <section className="settings-section settings-data-privacy ui-panel p-5 sm:p-6" aria-labelledby="data-privacy-heading">
+          <h2 id="data-privacy-heading" className="text-xl font-semibold ui-text mb-4">Data &amp; privacy</h2>
           <div className="mb-4 space-y-2 text-sm ui-text-secondary">
             <p>Learning data lives in local SQLite on this device.</p>
             <p>Your theme lives in browser storage.</p>
@@ -227,10 +241,10 @@ function SettingsPage() {
           >
             {exporting ? 'Exporting…' : 'Export Data'}
           </button>
-        </section>
+        </section>}
 
-        <section className="settings-section settings-danger-zone ui-panel p-5 sm:p-6" aria-labelledby="danger-zone-heading">
-          <h2 id="danger-zone-heading" className="text-xl font-semibold ui-text mb-4">Danger zone</h2>
+        {category === 'restore' && <section className="settings-section settings-danger-zone ui-panel p-5 sm:p-6" aria-labelledby="danger-zone-heading">
+          <h2 id="danger-zone-heading" className="text-xl font-semibold ui-text mb-4">Restore learning data</h2>
           <p className="text-sm ui-text-secondary mb-4">
             Restoring a backup replaces your current local learning data. Choose a backup only when you intend to replace it; you will confirm before anything changes.
           </p>
@@ -266,8 +280,8 @@ function SettingsPage() {
               <p className="mt-1 text-xs ui-text-muted">{importProgress}% — please wait</p>
             </div>
           )}
-        </section>
-      </main>
+        </section>}
+      </div>
     </div>
     {pendingBackup !== null && (
       <div className="ui-dialog-backdrop">
@@ -310,6 +324,8 @@ function SettingsPage() {
         </div>
       </div>
     )}
+    </SettingsView>
+    </Suspense>
     </>
   )
 }

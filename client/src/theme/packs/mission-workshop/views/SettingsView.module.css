@@ -1,0 +1,4 @@
+.root { position: relative; isolation: isolate; }
+.root :global(.settings-section) { border: 1px solid var(--border-strong); border-radius: .25rem; box-shadow: 4px 4px 0 var(--accent); }
+.root :global(.settings-category-nav) { position: sticky; top: .5rem; z-index: 2; padding: .4rem; border: 1px solid var(--border-strong); border-radius: .25rem; background: var(--panel); }
+.root :global(.settings-category-nav button[aria-pressed="true"]) { color: var(--primary-contrast); background: var(--primary); }

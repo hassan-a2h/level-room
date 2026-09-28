@@ -48,7 +48,7 @@ export function useSettingsController({
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [pendingBackup, setPendingBackup] = useState(null)
-  const [category] = useState('appearance')
+  const [category, setCategory] = useState('appearance')
   const [codexConnection, setCodexConnection] = useState({})
 
   useEffect(() => {
@@ -179,5 +179,5 @@ export function useSettingsController({
     pendingBackup, success, error,
   }), [category, codexConnection, error, environmentStatuses, exporting, importProgress, importing, loading, model, pendingBackup, provider, providers, ready, reasoningEffort, saving, success, themeId, themes])
 
-  return { model: modelView, apiKeySet, changeProvider, changeModel, changeReasoningEffort, save, exportBackup, readImportFile, confirmImport, cancelImport, onCodexConnectionChange }
+  return { model: modelView, apiKeySet, setCategory, changeProvider, changeModel, changeReasoningEffort, save, exportBackup, readImportFile, confirmImport, cancelImport, onCodexConnectionChange }
 }

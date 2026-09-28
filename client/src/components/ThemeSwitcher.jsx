@@ -1,12 +1,16 @@
 import { THEMES } from '../theme/index.js'
+import { getThemeArt } from '../assets/themes/manifest.js'
 import { useTheme } from '../theme/ThemeProvider.jsx'
 
 function ThemeSwatches({ theme }) {
   return (
-    <span className="theme-card-swatches" aria-hidden="true">
-      {[theme.tokens.canvas, theme.tokens.panel, theme.tokens.primary, theme.tokens.secondary].map((color) => (
-        <span key={color} style={{ backgroundColor: color }} />
-      ))}
+    <span className="theme-card-preview">
+      <img src={getThemeArt(theme.id).trail.src} alt={`${theme.name} preview`} loading="lazy" />
+      <span className="theme-card-swatches" aria-hidden="true">
+        {[theme.tokens.canvas, theme.tokens.panel, theme.tokens.primary, theme.tokens.secondary].map((color) => (
+          <span key={color} style={{ backgroundColor: color }} />
+        ))}
+      </span>
     </span>
   )
 }
