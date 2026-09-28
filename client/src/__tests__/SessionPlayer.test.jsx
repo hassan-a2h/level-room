@@ -32,7 +32,7 @@ describe('SessionPlayer', () => {
     expect(screen.queryByText('Read the idea.')).not.toBeInTheDocument()
     expect(screen.getByText('Which join keeps left rows?')).toBeInTheDocument()
     expect(screen.queryByText('Later content is hidden.')).not.toBeInTheDocument()
-    expect(screen.getAllByText('1 of 3').length).toBeGreaterThan(0)
+    expect(screen.getByRole('progressbar', { name: 'Session progress' })).toHaveAttribute('aria-valuetext', '1 of 3')
     expect(screen.getByRole('list', { name: /session steps/i }).querySelectorAll('li')).toHaveLength(3)
   })
 
@@ -49,7 +49,7 @@ describe('SessionPlayer', () => {
     await renderPlayer({ activityState: { ...initialState, currentBlockId: 'read-intro', blocks: { 'read-intro': { status: 'active', attempts: 0 } } }, activityProgress: { completed: 0, total: 3, currentBlockId: 'read-intro' } })
     fireEvent.click(screen.getByRole('button', { name: /continue/i }))
     await waitFor(() => expect(completeActivityBlock).toHaveBeenCalledWith('2', '8', 'read-intro', { action: 'continue', localDate: '2026-09-26' }))
-    expect((await screen.findAllByText('1 of 3')).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('progressbar', { name: 'Session progress' })).toHaveAttribute('aria-valuetext', '1 of 3')
   })
 
   it('preserves selected input after network loss and offers retry', async () => {
@@ -61,7 +61,7 @@ describe('SessionPlayer', () => {
     expect(screen.getByRole('radio', { name: 'LEFT JOIN' })).toBeChecked()
     submitActivityBlock.mockResolvedValueOnce({ correct: true, status: 'passed', feedback: 'You identified the preserved side.', activityState: { currentBlockId: 'read-next', blocks: { 'read-intro': { status: 'completed' }, 'choose-join': { status: 'passed', attempts: 1, response: 'left', feedback: 'You identified the preserved side.' }, 'read-next': { status: 'active' } } }, activityProgress: { completed: 2, total: 3, percent: 66, currentBlockId: 'read-next' } })
     fireEvent.click(screen.getByRole('button', { name: /check answer/i }))
-    expect((await screen.findAllByText('2 of 3')).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('progressbar', { name: 'Session progress' })).toHaveAttribute('aria-valuetext', '2 of 3')
   })
 
   it('allows only one active mutation request', async () => {
@@ -73,7 +73,7 @@ describe('SessionPlayer', () => {
     fireEvent.click(button)
     expect(completeActivityBlock).toHaveBeenCalledTimes(1)
     resolveMutation({ activityState: initialState, activityProgress: props.activityProgress, completion: { completed: false } })
-    await waitFor(() => expect(screen.getAllByText('1 of 3').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getByRole('progressbar', { name: 'Session progress' })).toHaveAttribute('aria-valuetext', '1 of 3'))
   })
 
   it('explains a state conflict and restores the server-provided latest state', async () => {
@@ -82,7 +82,7 @@ describe('SessionPlayer', () => {
     await renderPlayer({ activityState: { ...initialState, currentBlockId: 'read-intro', blocks: { 'read-intro': { status: 'active', attempts: 0 } } }, activityProgress: { completed: 0, total: 3, currentBlockId: 'read-intro' } })
     fireEvent.click(screen.getByRole('button', { name: /continue/i }))
     expect(await screen.findByText(/your saved progress was updated/i)).toBeInTheDocument()
-    expect(screen.getAllByText('2 of 3').length).toBeGreaterThan(0)
+    expect(screen.getByRole('progressbar', { name: 'Session progress' })).toHaveAttribute('aria-valuetext', '2 of 3')
   })
 
   it('shows completion summary and outcome evidence for an already completed Session', async () => {

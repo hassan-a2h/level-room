@@ -67,7 +67,10 @@ describe('Session parity', () => {
     else fireEvent.change(screen.getByRole(action[0], { name: action[1] }), { target: { value: expected } })
     if (block.type === 'worked_example') expect(await screen.findByRole('heading', { name: expected })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Swap theme' }))
-    await waitFor(() => expect(document.querySelector('.learning-surface--workshop')).toBeInTheDocument())
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe('mission-workshop')
+      expect(document.querySelector('main[data-theme-view="SessionView"][data-session-theme-surface]')).toBeInTheDocument()
+    })
     if (block.type === 'ordering') expect(screen.getAllByRole('listitem').filter((item) => item.closest('[aria-label="Items to put in order"]')).map((item) => item.querySelector('.session-order-label').textContent).join('')).toBe(expected)
     else if (block.type === 'worked_example') expect(screen.getByRole('heading', { name: expected })).toBeInTheDocument()
     else expect(screen.getByRole(action[0], { name: action[1] })).toHaveValue(expected)

@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from '../theme/ThemeProvider.jsx'
 import { useSettingsController } from '../features/settings/controller.js'
 import { SkeletonSettings } from '../components/Skeleton.jsx'
@@ -12,6 +12,8 @@ function SettingsContent({ onRetry }) {
   const controller = useSettingsController({ themeId: theme.id })
   const [retryAvailable, setRetryAvailable] = useState(true)
   const retryOperation = useRef(onRetry)
+  const retrySaveRef = useRef(null)
+  const retryExportRef = useRef(null)
   const model = { ...controller.model, apiKeySet: controller.apiKeySet, retryAvailable }
   const { setCategory, changeProvider, changeModel, changeReasoningEffort, save, exportBackup, readImportFile, cancelImport, confirmImport, onCodexConnectionChange } = controller
   const exportSettings = useCallback(async () => {
@@ -31,16 +33,18 @@ function SettingsContent({ onRetry }) {
   const retrySave = useCallback(async () => {
     const result = await save()
     const canRetry = Boolean(model.provider && model.model)
-    retryOperation.current = !result && canRetry ? retrySave : null
+    retryOperation.current = !result && canRetry ? () => retrySaveRef.current?.() : null
     setRetryAvailable(!result && canRetry)
     return result
   }, [model.model, model.provider, save])
+  useEffect(() => { retrySaveRef.current = retrySave }, [retrySave])
   const retryExport = useCallback(async () => {
     const succeeded = await exportSettings()
-    retryOperation.current = succeeded ? null : retryExport
+    retryOperation.current = succeeded ? null : () => retryExportRef.current?.()
     setRetryAvailable(!succeeded)
     return succeeded
   }, [exportSettings])
+  useEffect(() => { retryExportRef.current = retryExport }, [retryExport])
   const retryConfirmImport = useCallback(async () => {
     retryOperation.current = null
     setRetryAvailable(false)

@@ -32,19 +32,26 @@ describe('Build parity', () => {
     fireEvent.click(screen.getByRole('button', { name: /show hints/i }))
     expect(screen.getByText('Start small.')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Review rubric'))
-    expect(screen.getByText('Evaluation Rubric')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Evaluation Rubric' })).toBeInTheDocument()
     for (const label of ['Setup', 'Actions taken', 'Observed result', 'Reflection']) {
       fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: `${label} evidence` } })
     }
     fireEvent.click(screen.getByRole('button', { name: 'Swap theme' }))
-    await waitFor(() => expect(document.querySelector('.learning-surface--atlas')).toBeInTheDocument())
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe('living-atlas')
+      expect(document.querySelector('[data-theme-view="BuildView"][data-view-model="connected"]')).toBeInTheDocument()
+    })
+    await screen.findByRole('textbox', { name: 'Setup' })
     for (const label of ['Setup', 'Actions taken', 'Observed result', 'Reflection']) {
       expect(screen.getByRole('textbox', { name: label })).toHaveValue(`${label} evidence`)
     }
     fireEvent.click(screen.getByRole('button', { name: /submit build/i }))
     await waitFor(() => expect(screen.getByRole('list', { name: 'Build stages' }).querySelector('[aria-current="step"]')).toHaveTextContent('Evaluating'))
     resolveEvaluation({ evaluation: { overallScore: 75, passed: true, scores: {}, feedback: {} } })
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Result' })).toBeInTheDocument())
+    await waitFor(() => {
+      expect(screen.getByRole('list', { name: 'Build stages' }).querySelector('[aria-current="step"]')).toHaveTextContent('Result')
+      expect(screen.getByRole('heading', { name: 'Build complete' })).toBeInTheDocument()
+    })
     expect(screen.getByText('Setup evidence')).toBeInTheDocument()
   })
 })

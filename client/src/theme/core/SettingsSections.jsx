@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ThemeSwitcher from '../../components/ThemeSwitcher.jsx'
 
 const CATEGORIES = [
@@ -26,7 +26,7 @@ function LearningSettings() {
   </section>
 }
 
-function AiSettings({ model, actions, codexConnection }) {
+function AiSettings({ model, actions, codexConnection, hidden = false }) {
   const provider = model.provider || ''
   const selectedProvider = model.providers.find((item) => item.id === provider)
   const currentModels = selectedProvider?.models || []
@@ -34,7 +34,7 @@ function AiSettings({ model, actions, codexConnection }) {
   const reasoningEfforts = currentModel?.reasoningEfforts || []
   const configured = model.environmentStatuses.find((item) => item.provider === provider)?.configured ?? model.apiKeySet
 
-  return <section className="settings-section settings-ai-connection ui-panel p-5 sm:p-6" aria-labelledby="ai-connection-heading">
+  return <section hidden={hidden} className="settings-section settings-ai-connection ui-panel p-5 sm:p-6" aria-labelledby="ai-connection-heading">
     <h2 id="ai-connection-heading" className="text-xl font-semibold ui-text mb-5">AI connection</h2>
     <form onSubmit={(event) => { event.preventDefault(); actions.saveProvider() }} className="space-y-5">
       <div><label htmlFor="provider" className="ui-field-label">LLM Provider</label><select id="provider" value={provider} onChange={(event) => actions.setProvider(event.target.value)} className="ui-field w-full"><option value="">Select a provider</option>{model.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
@@ -102,12 +102,13 @@ function RestoreSettings({ model, actions }) {
 }
 
 export function SettingsCategoryContent({ model, actions, slots }) {
+  const [aiMounted, setAiMounted] = useState(model.category === 'ai')
+  if (model.category === 'ai' && !aiMounted) setAiMounted(true)
   const sections = {
     appearance: <AppearanceSettings model={model} actions={actions} />,
     learning: <LearningSettings />,
-    ai: <AiSettings model={model} actions={actions} codexConnection={slots.codexConnection} />,
     privacy: <PrivacySettings model={model} actions={actions} />,
     restore: <RestoreSettings model={model} actions={actions} />,
   }
-  return <>{model.success && <div className="ui-alert ui-alert-success" role="alert">{typeof model.success === 'string' ? model.success : 'Settings saved successfully.'}</div>}{model.error && <div className="ui-alert ui-alert-danger" role="alert"><span>{model.error}</span>{model.retryAvailable && <button type="button" className="ui-button ui-button-quiet ml-3" onClick={actions.retry}>Retry</button>}</div>}{sections[model.category] || sections.appearance}</>
+  return <>{model.success && <div className="ui-alert ui-alert-success" role="alert">{typeof model.success === 'string' ? model.success : 'Settings saved successfully.'}</div>}{model.error && <div className="ui-alert ui-alert-danger" role="alert"><span>{model.error}</span>{model.retryAvailable && <button type="button" className="ui-button ui-button-quiet ml-3" onClick={actions.retry}>Retry</button>}</div>}<div className="contents">{model.category === 'ai' ? null : sections[model.category] || sections.appearance}</div>{aiMounted && <AiSettings model={model} actions={actions} codexConnection={slots.codexConnection} hidden={model.category !== 'ai'} />}</>
 }
