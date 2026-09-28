@@ -1,7 +1,6 @@
-export default function ContinuationView({ model, children }) {
-  return (
-    <main data-theme-view="ContinuationView" data-view-model={model ? 'connected' : 'placeholder'}>
-      {children || <h1>Continuation</h1>}
-    </main>
-  )
+import ContinuationSurface from '../../../core/ContinuationSurface.jsx'
+import styles from './ContinuationView.module.css'
+
+export default function ContinuationView({ model }) {
+  return <ContinuationSurface model={model} variant="living-atlas" className={styles.root} />
 }

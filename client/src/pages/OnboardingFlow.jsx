@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   createTopic,
@@ -16,14 +16,14 @@ import {
 } from '../api.js'
 import { readCurriculumStream } from '../curriculumStream.js'
 import { normalizeSetupQuestions } from '../setupQuestions.js'
-import CurriculumConfirmation from './CurriculumConfirmation.jsx'
 import { SkeletonOnboarding } from '../components/Skeleton.jsx'
 import AppHeader from '../components/AppHeader.jsx'
+import { useThemeView, SceneSkeleton } from '../theme/ThemeProvider.jsx'
 
-const STEPS = ['Destination', 'Starting point', 'Learning rhythm', 'Track preview']
 const STEP_INDEX = {
   destination: 0,
   starting_point: 1,
+  'placement-choice': 1,
   placement: 1,
   learning_rhythm: 2,
   generating: 3,
@@ -54,6 +54,7 @@ function safeError(error, fallback) {
 }
 
 export default function OnboardingFlow() {
+  const OnboardingView = useThemeView('OnboardingView')
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const recoveryTopicId = searchParams.get('topicId')
@@ -71,15 +72,20 @@ export default function OnboardingFlow() {
   const [placementAssessmentId, setPlacementAssessmentId] = useState(null)
   const [placementQuestions, setPlacementQuestions] = useState([])
   const [placementAnswers, setPlacementAnswers] = useState({})
+  const [placementQuestionIndex, setPlacementQuestionIndex] = useState(0)
   const [placementResult, setPlacementResult] = useState(null)
   const [placementLoading, setPlacementLoading] = useState(false)
   const [placementPhase, setPlacementPhase] = useState('')
   const [generating, setGenerating] = useState(false)
   const [curriculum, setCurriculum] = useState(null)
+  const [selectedChapterId, setSelectedChapterId] = useState(null)
   const [llmConfigured, setLlmConfigured] = useState(true)
   const [generationMode, setGenerationMode] = useState('auto')
   const [recoveryCanResume, setRecoveryCanResume] = useState(true)
   const [generationStatus, setGenerationStatus] = useState(null)
+  const [rhythmSubstep, setRhythmSubstep] = useState('time')
+  const [tweakOpen, setTweakOpen] = useState(false)
+  const [tweakDraft, setTweakDraft] = useState('')
   const generationAbortRef = useRef(null)
 
   useEffect(() => {
@@ -212,10 +218,15 @@ export default function OnboardingFlow() {
     setError('')
   }, [])
 
+  const continueStartingPoint = useCallback(() => {
+    if (selectedLevel) setStep('placement-choice')
+  }, [selectedLevel])
+
   const handleSkipPlacement = useCallback(() => {
     if (!selectedLevel) return
     setVerifiedProfile({ level: selectedLevel, selfReportedLevel: selectedLevel })
     setStep('learning_rhythm')
+    setRhythmSubstep('time')
     setError('')
   }, [selectedLevel])
 
@@ -226,6 +237,7 @@ export default function OnboardingFlow() {
     setPlacementResult(null)
     setPlacementQuestions([])
     setPlacementAnswers({})
+    setPlacementQuestionIndex(0)
     setError('')
     setStep('placement')
     try {
@@ -246,6 +258,16 @@ export default function OnboardingFlow() {
 
   const handlePlacementAnswerChange = useCallback((questionId, value) => {
     setPlacementAnswers((current) => ({ ...current, [questionId]: value }))
+  }, [])
+
+  const handleNextPlacementQuestion = useCallback(() => {
+    const question = placementQuestions[placementQuestionIndex]
+    if (!question || typeof placementAnswers[question.id] !== 'string' || !placementAnswers[question.id].trim()) return
+    setPlacementQuestionIndex((index) => Math.min(index + 1, placementQuestions.length - 1))
+  }, [placementAnswers, placementQuestionIndex, placementQuestions])
+
+  const handlePreviousPlacementQuestion = useCallback(() => {
+    setPlacementQuestionIndex((index) => Math.max(0, index - 1))
   }, [])
 
   const handlePlacementSubmit = useCallback(async () => {
@@ -275,8 +297,13 @@ export default function OnboardingFlow() {
     })
     setAnswers((current) => ({ ...current, level: placementResult.recommendedLevel }))
     setStep('learning_rhythm')
+    setRhythmSubstep('time')
     setError('')
   }, [placementResult, selectedLevel])
+
+  const continueRhythm = useCallback(() => {
+    if (selectedTime) setRhythmSubstep('pace')
+  }, [selectedTime])
 
   const handleProfileSubmit = useCallback(async () => {
     const profile = verifiedProfile || (selectedLevel ? { level: selectedLevel, selfReportedLevel: selectedLevel } : null)
@@ -401,6 +428,8 @@ export default function OnboardingFlow() {
     setError('')
     try {
       setCurriculum(await tweakCurriculum(topicId, request))
+      setTweakDraft('')
+      setTweakOpen(false)
     } catch (err) {
       setError(safeError(err, 'The Track could not be adjusted. Your current preview is still here.'))
     } finally {
@@ -433,253 +462,86 @@ export default function OnboardingFlow() {
   }, [topicId, prepareGenerationWait, waitForGeneration])
 
   const handleBack = useCallback(() => {
-    if (step === 'starting_point' || step === 'placement') setStep('destination')
+    if (step === 'placement-choice') setStep('starting_point')
+    else if (step === 'starting_point' || step === 'placement') setStep('destination')
+    else if (step === 'learning_rhythm' && rhythmSubstep === 'pace') setRhythmSubstep('time')
     else if (step === 'learning_rhythm') setStep('starting_point')
     else if (step === 'preview') setStep('learning_rhythm')
-  }, [step])
-
-  const currentStage = STEP_INDEX[step] ?? 0
+  }, [step, rhythmSubstep])
 
   if (recoveryLoading) return <SkeletonOnboarding />
+
+  const currentStage = STEP_INDEX[step] ?? 0
+  const activePlacementQuestion = placementQuestions[placementQuestionIndex]
+  const placementCanAdvance = Boolean(activePlacementQuestion && typeof placementAnswers[activePlacementQuestion.id] === 'string' && placementAnswers[activePlacementQuestion.id].trim())
+  const stage = ['placement', 'placement-choice'].includes(step) ? 'starting_point' : ['generating', 'preview'].includes(step) ? 'preview' : step
+  const substep = step === 'placement' ? 'placement' : step === 'placement-choice' ? 'placement-choice' : step === 'generating' ? 'generating' : step === 'preview' ? 'preview' : step === 'learning_rhythm' ? rhythmSubstep : null
+  const model = {
+    stage,
+    stageIndex: currentStage,
+    stageCount: 4,
+    substep,
+    destination: topicName,
+    levelOptions,
+    selectedLevel,
+    placement: {
+      questions: placementQuestions,
+      answers: placementAnswers,
+      result: placementResult,
+      loading: placementLoading,
+      questionIndex: placementQuestionIndex,
+      canAdvance: placementCanAdvance,
+    },
+    timeOptions,
+    selectedTime,
+    paceOptions: PACE_OPTIONS,
+    selectedPace: pace,
+    generation: {
+      running: generating,
+      canResume: recoveryCanResume,
+      status: generationStatus,
+      stages: GENERATION_STAGES,
+    },
+    preview: { curriculum, selectedChapterId: selectedChapterId || curriculum?.modules?.[0]?.id || (curriculum ? '0' : null), timeCommitment: selectedTime, pace: PACE_OPTIONS.find((option) => option.value === pace)?.label || 'Steady pace', tweakOpen, tweakDraft },
+    error,
+    busy: { submitting: submitting || generating, placement: placementLoading, questions: questionsLoading },
+    providerReady: llmConfigured,
+    actions: {
+      setDestination: setTopicName,
+      submitDestination: () => handleTopicSubmit({ preventDefault() {} }),
+      chooseLevel: chooseStartingPoint,
+      retryChoices: loadQuestions,
+      continueStartingPoint,
+      takePlacement: startPlacement,
+      skipPlacement: handleSkipPlacement,
+      answerPlacement: handlePlacementAnswerChange,
+      nextPlacementQuestion: handleNextPlacementQuestion,
+      previousPlacementQuestion: handlePreviousPlacementQuestion,
+      submitPlacement: handlePlacementSubmit,
+      acceptPlacement: handlePlacementContinue,
+      chooseTime: (timeCommitment) => setAnswers((current) => ({ ...current, timeCommitment })),
+      continueRhythm,
+      choosePace: setPace,
+      submitRhythm: handleProfileSubmit,
+      resume: recoveryCanResume ? handleResumeGeneration : handleRefreshRecovery,
+      refreshRecovery: handleRefreshRecovery,
+      openSettings: () => navigate('/settings'),
+      confirm: handleConfirm,
+      toggleTweak: () => setTweakOpen((open) => !open),
+      selectChapter: setSelectedChapterId,
+      setTweakDraft,
+      tweak: () => handleTweak(tweakDraft.trim()),
+      regenerate: handleRegenerate,
+      back: handleBack,
+    },
+  }
 
   return (
     <div className="ui-page ui-onboarding-page min-h-screen">
       <AppHeader />
-      <main className="ui-container ui-onboarding-container max-w-4xl mx-auto px-4 py-6 sm:py-8">
-        <nav className="ui-step-navigation mb-8" aria-label="Learning path setup">
-          <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide mb-3">Step {currentStage + 1} of 4</p>
-          <ol className="ui-step-list">
-            {STEPS.map((label, index) => (
-              <li key={label} aria-label={label} aria-current={currentStage === index ? 'step' : undefined} className={currentStage === index ? 'is-current' : index < currentStage ? 'is-complete' : ''}>
-                <span className="ui-step-marker" aria-hidden="true">{index < currentStage ? '✓' : index + 1}</span>
-                <span>{label}</span>
-              </li>
-            ))}
-          </ol>
-        </nav>
-
-        {!llmConfigured && (
-          <div className="ui-alert ui-alert-warning mb-6" role="alert">
-            Connect an AI provider in Settings before creating a Track.
-            <button type="button" onClick={() => navigate('/settings')} className="ui-text-link ml-2 underline font-medium">Open Settings</button>
-          </div>
-        )}
-
-        {error && step !== 'preview' && <div className="ui-alert ui-alert-danger mb-6" role="alert">{error}</div>}
-
-        {step === 'destination' && (
-          <section className="ui-onboarding-step ui-panel mx-auto flex min-h-[45vh] max-w-xl flex-col justify-center p-6 sm:p-8" aria-labelledby="destination-title">
-            <h1 id="destination-title" className="text-3xl font-bold ui-text mb-2">What do you want to be able to do?</h1>
-            <p className="ui-text-secondary mb-8">Choose a destination such as React, Calculus, negotiation, or Japanese. We will shape a finite Track around it.</p>
-            <form onSubmit={handleTopicSubmit}>
-              <label htmlFor="topic-name" className="ui-field-label">Your learning destination</label>
-              <input
-                id="topic-name"
-                type="text"
-                value={topicName}
-                onChange={(event) => setTopicName(event.target.value)}
-                placeholder="For example, React or Japanese"
-                maxLength={100}
-                className="ui-field mt-2 w-full"
-                disabled={submitting}
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? 'destination-error' : undefined}
-                autoFocus
-              />
-              {error && <p id="destination-error" className="ui-text-danger mt-2 text-sm" role="alert">{error}</p>}
-              <button type="submit" disabled={submitting} className="ui-button ui-button-primary mt-5 w-full">
-                {submitting ? 'Saving destination…' : 'Set my destination'}
-              </button>
-            </form>
-          </section>
-        )}
-
-        {step === 'starting_point' && (
-          <section className="ui-onboarding-step mx-auto max-w-2xl" aria-labelledby="starting-point-title">
-            <h1 id="starting-point-title" className="text-2xl font-bold ui-text mb-2">Choose your starting point</h1>
-            <p className="ui-text-secondary mb-6">A quick self-report is enough. You can take the placement check if you would like a second signal.</p>
-            {questionsLoading && <p className="ui-text-muted py-10 text-center" role="status">Loading your starting choices…</p>}
-            {!questionsLoading && questions.length === 0 && (
-              <section className="ui-panel p-5 text-center">
-                <p className="ui-text-secondary mb-4">We could not load your starting choices.</p>
-                <button type="button" onClick={loadQuestions} className="ui-button ui-button-secondary">Retry choices</button>
-              </section>
-            )}
-            {!questionsLoading && levelOptions.length > 0 && (
-              <div className="ui-panel p-5 sm:p-6">
-                <p className="ui-field-label mb-3" id="starting-point-question">What is your starting point?</p>
-                <div className="flex flex-wrap gap-2" role="group" aria-labelledby="starting-point-question">
-                  {levelOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={selectedLevel === option.value}
-                      onClick={() => chooseStartingPoint(option.value)}
-                      className={`ui-choice ${selectedLevel === option.value ? 'is-selected' : ''}`}
-                    >
-                      {option.label}
-                      {selectedLevel === option.value && <span aria-hidden="true" className="ml-2">✓</span>}
-                    </button>
-                  ))}
-                </div>
-                <div className="ui-choice-panel mt-6" aria-label="Placement check choice">
-                  <p className="ui-text-secondary mb-3">Would you like to verify that starting point?</p>
-                  <div className="flex flex-wrap gap-3">
-                    <button type="button" onClick={startPlacement} disabled={!selectedLevel || placementLoading} className="ui-button ui-button-secondary">
-                      Take a placement check
-                    </button>
-                    <button type="button" onClick={handleSkipPlacement} disabled={!selectedLevel} className="ui-button ui-button-primary">
-                      Skip placement check
-                    </button>
-                  </div>
-                </div>
-                <button type="button" onClick={handleBack} className="ui-text-link mt-5 min-h-11 underline">Back to destination</button>
-              </div>
-            )}
-          </section>
-        )}
-
-        {step === 'placement' && (
-          <section className="ui-onboarding-step mx-auto max-w-2xl" aria-labelledby="placement-title">
-            <h1 id="placement-title" className="text-2xl font-bold ui-text mb-2">Optional placement check</h1>
-            <p className="ui-text-secondary mb-6">Your answers help us choose a useful starting depth. This is only a recommendation.</p>
-            {placementResult ? (
-              <section className="ui-panel p-5" role="status" aria-live="polite">
-                <h2 className="text-lg font-bold ui-text mb-2">A good starting point is {placementResult.recommendedLevel}</h2>
-                <p className="ui-text-secondary mb-3">Your self-reported level was {placementResult.requestedLevel || selectedLevel}.</p>
-                {placementResult.gaps?.length > 0 && <ul className="list-disc list-inside text-sm ui-text-secondary mb-3 space-y-1">{placementResult.gaps.map((gap, index) => <li key={index}>{gap}</li>)}</ul>}
-                {placementResult.feedback?.length > 0 && <p className="text-sm ui-text-secondary mb-4">{placementResult.feedback[0]}</p>}
-                {placementResult.questionScores?.length > 0 && (
-                  <ul className="text-sm ui-text-secondary mb-4 space-y-2" aria-label="Question feedback">
-                    {placementResult.questionScores.map((item) => (
-                      <li key={item.questionId}>
-                        <strong>{item.questionId}: {item.score}%</strong>{item.feedback ? ` — ${item.feedback}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" onClick={handlePlacementContinue} className="ui-button ui-button-primary">Continue with {placementResult.recommendedLevel}</button>
-                  <button type="button" onClick={handleSkipPlacement} className="ui-button ui-button-secondary">Keep my self-reported level</button>
-                </div>
-              </section>
-            ) : (
-              <div className="space-y-4">
-                {placementQuestions.map((question, index) => (
-                  <section key={question.id} className="ui-panel p-4">
-                    <p className="font-medium ui-text mb-3">{index + 1}. {question.text}</p>
-                    {question.type === 'multiple_choice' ? (
-                      <div className="flex flex-wrap gap-2" role="group" aria-label={question.text}>
-                        {(question.options || []).map((option) => (
-                          <button key={option.value} type="button" onClick={() => handlePlacementAnswerChange(question.id, option.value)} aria-pressed={placementAnswers[question.id] === option.value} className={`ui-choice ${placementAnswers[question.id] === option.value ? 'is-selected' : ''}`}>
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <textarea aria-label={question.text} value={placementAnswers[question.id] || ''} onChange={(event) => handlePlacementAnswerChange(question.id, event.target.value)} rows={4} maxLength={2000} placeholder="Explain your reasoning in your own words…" className="ui-field w-full resize-y" disabled={placementLoading} />
-                    )}
-                  </section>
-                ))}
-                {placementLoading && <p className="ui-text-muted text-center" role="status">{placementPhase === 'starting' ? 'Preparing your placement check…' : 'Reviewing your answers…'}</p>}
-                {error && <div className="ui-alert ui-alert-danger" role="alert">{error}</div>}
-                {!placementLoading && placementQuestions.length === 0 && error && (
-                  <button type="button" onClick={startPlacement} className="ui-button ui-button-secondary">Retry placement check</button>
-                )}
-                {placementQuestions.length > 0 && (
-                  <button type="button" onClick={handlePlacementSubmit} disabled={placementLoading} className="ui-button ui-button-primary">
-                    {placementLoading ? 'Checking…' : 'Check my starting point'}
-                  </button>
-                )}
-                <button type="button" onClick={handleSkipPlacement} className="ui-text-link ml-4 min-h-11 underline">Skip this check</button>
-              </div>
-            )}
-          </section>
-        )}
-
-        {step === 'learning_rhythm' && (
-          <section className="ui-onboarding-step mx-auto max-w-2xl" aria-labelledby="learning-rhythm-title">
-            <h1 id="learning-rhythm-title" className="text-2xl font-bold ui-text mb-2">Set your learning rhythm</h1>
-            <p className="ui-text-secondary mb-6">Choose a daily study window and a pace that feels sustainable. You can adjust your schedule for future Tracks.</p>
-            <div className="ui-panel p-5 sm:p-6 space-y-6">
-              <fieldset>
-                <legend className="ui-field-label mb-3">Daily study time</legend>
-                <div className="flex flex-wrap gap-2">
-                  {timeOptions.map((option) => (
-                    <button key={option.value} type="button" aria-pressed={selectedTime === option.value} onClick={() => setAnswers((current) => ({ ...current, timeCommitment: option.value }))} className={`ui-choice ${selectedTime === option.value ? 'is-selected' : ''}`}>
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend className="ui-field-label mb-3">Preferred pace</legend>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {PACE_OPTIONS.map((option) => (
-                    <button key={option.value} type="button" aria-pressed={pace === option.value} onClick={() => setPace(option.value)} className={`ui-choice-card text-left ${pace === option.value ? 'is-selected' : ''}`}>
-                      <span className="block font-semibold">{option.label}</span>
-                      <span className="mt-1 block text-sm ui-text-secondary">{option.description}</span>
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-              <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={handleBack} className="ui-button ui-button-secondary">Back</button>
-                <button type="button" onClick={handleProfileSubmit} disabled={submitting || questionsLoading || !selectedTime} className="ui-button ui-button-primary flex-1">
-                  {submitting ? 'Saving rhythm…' : 'Build my Track'}
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {step === 'generating' && (
-          <section className="ui-onboarding-step ui-panel mx-auto flex min-h-[40vh] max-w-2xl flex-col justify-center p-6 sm:p-8" aria-labelledby="track-generation-title">
-            {generating ? (
-              <>
-                <div className="ui-progress-indeterminate mb-5" role="status" aria-label="Preparing your Track" />
-                <h1 id="track-generation-title" className="text-xl font-bold ui-text mb-2">Designing your Track…</h1>
-                <p className="ui-text-secondary mb-5">
-                  We are shaping practice around your destination and available time. You can leave and return while it continues.
-                  {generationStatus?.state === 'retrying' && ` Retrying attempt ${generationStatus.attempt} of ${generationStatus.maxAttempts}.`}
-                </p>
-                <ol className="ui-generation-stages" aria-label="Track design stages">
-                  {GENERATION_STAGES.map((stageLabel) => <li key={stageLabel}>{stageLabel}</li>)}
-                </ol>
-              </>
-            ) : (
-              <>
-                <h1 id="track-generation-title" className="text-xl font-bold ui-text mb-2">Your Track is ready to resume</h1>
-                <p className="ui-text-secondary mb-5">Your setup is saved. Resume preparation or check whether a saved preview is ready.</p>
-                <div className="flex flex-wrap gap-3">
-                  <button type="button" onClick={recoveryCanResume ? handleResumeGeneration : handleRefreshRecovery} disabled={submitting} className="ui-button ui-button-primary">
-                    {recoveryCanResume ? 'Resume Track generation' : 'Check Track status'}
-                  </button>
-                  <button type="button" onClick={handleRefreshRecovery} disabled={submitting} className="ui-button ui-button-secondary">
-                    {submitting ? 'Checking…' : 'Check again'}
-                  </button>
-                </div>
-              </>
-            )}
-          </section>
-        )}
-
-        {step === 'preview' && curriculum && (
-          <CurriculumConfirmation
-            curriculum={curriculum}
-            isTrackSetup
-            topicName={topicName}
-            timeCommitment={selectedTime}
-            pace={PACE_OPTIONS.find((option) => option.value === pace)?.label || 'Steady pace'}
-            onConfirm={handleConfirm}
-            onTweak={handleTweak}
-            onRegenerate={handleRegenerate}
-            onBack={handleBack}
-            submitting={submitting || generating}
-            error={error}
-          />
-        )}
-      </main>
+      <div className="ui-container ui-onboarding-container mx-auto max-w-4xl px-4 py-6 sm:py-8">
+        <Suspense fallback={<SceneSkeleton />}><OnboardingView model={model} /></Suspense>
+      </div>
     </div>
   )
 }

@@ -1,0 +1,4 @@
+.root { position: relative; isolation: isolate; }
+.root::after { position: absolute; z-index: -1; top: 4rem; left: 2%; width: 6rem; height: 12rem; content: ''; border: 1px dashed var(--secondary); border-radius: 50%; transform: rotate(35deg); opacity: .25; pointer-events: none; }
+.root :global(.ui-panel) { border-radius: 2rem 1rem 2rem 1rem; }
+.root :global([aria-expanded="true"]) { border-color: var(--secondary); }

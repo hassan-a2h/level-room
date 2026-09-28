@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import ContinuationFlow from '../pages/ContinuationFlow.jsx'
+import { ThemeProvider } from '../theme/ThemeProvider.jsx'
 
 vi.mock('../api.js', () => ({
   getContinuationReadiness: vi.fn(),
@@ -73,13 +74,13 @@ function DashboardDestination() {
 
 function renderFlow() {
   return render(
-    <MemoryRouter initialEntries={['/topic/1/continue']}>
+    <ThemeProvider><MemoryRouter initialEntries={['/topic/1/continue']}>
       <Routes>
         <Route path="/topic/:topicId/continue" element={<ContinuationFlow />} />
         <Route path="/" element={<DashboardDestination />} />
         <Route path="*" element={<h1>Other destination</h1>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter></ThemeProvider>,
   )
 }
 
@@ -149,6 +150,23 @@ describe('ContinuationFlow', () => {
     expect(screen.getByRole('heading', { name: /release engineering/i })).toBeInTheDocument()
     expect(tweakContinuation).toHaveBeenCalledWith('1', expect.objectContaining({ request: 'Add a rollback simulation.' }))
     expect(tweakContinuation.mock.calls[0][1]).not.toHaveProperty('lane')
+  })
+
+  it('keeps rhythm and an unsent tweak draft when the active theme changes', async () => {
+    renderFlow()
+    await screen.findByRole('heading', { name: /release engineering/i })
+    fireEvent.change(screen.getByLabelText(/learner level/i), { target: { value: 'Advanced' } })
+    fireEvent.change(screen.getByLabelText(/time commitment/i), { target: { value: '1 hour/day' } })
+    fireEvent.click(screen.getByRole('button', { name: /adjust plan/i }))
+    fireEvent.change(screen.getByLabelText(/what would you like to adjust/i), { target: { value: 'Keep the practice focused on rollbacks.' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open theme switcher' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value: 'mission-workshop' } })
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'mission-workshop')
+    expect(screen.getByLabelText(/learner level/i)).toHaveValue('Advanced')
+    expect(screen.getByLabelText(/time commitment/i)).toHaveValue('1 hour/day')
+    expect(screen.getByLabelText(/what would you like to adjust/i)).toHaveValue('Keep the practice focused on rollbacks.')
   })
 
   it('requires regeneration when the learner changes the plan pace', async () => {

@@ -1,0 +1,3 @@
+.root :global(.ui-panel) { border: 1px solid var(--border-strong); border-radius: .25rem; box-shadow: 4px 4px 0 var(--accent); }
+.root :global(article), .root :global(form) { border-style: dashed; border-radius: .25rem; }
+.root :global(button) { letter-spacing: .01em; }

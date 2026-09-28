@@ -1,0 +1,5 @@
+.root { position: relative; }
+.root :global(.ui-panel) { border: 1px solid var(--border-strong); border-radius: .25rem; box-shadow: 4px 4px 0 var(--accent); }
+.root :global(nav li) { border-style: dashed; border-radius: .2rem; }
+.root :global(.ui-choice-card), .root :global(.ui-choice) { border-style: dashed; border-radius: .2rem; }
+.root :global([aria-pressed="true"]) { border-color: var(--accent-sun); box-shadow: inset 0 -3px var(--accent-sun); }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   confirmContinuation,
@@ -9,6 +9,7 @@ import {
 } from '../api.js'
 import { readCurriculumStream } from '../curriculumStream.js'
 import AppHeader from '../components/AppHeader.jsx'
+import { useThemeView, SceneSkeleton } from '../theme/ThemeProvider.jsx'
 
 const LEVELS = ['Beginner', 'Intermediate', 'Advanced']
 const TIME_COMMITMENTS = ['15 min/day', '30 min/day', '1 hour/day', '2+ hours/day']
@@ -234,6 +235,7 @@ function ContinuationPreview({ curriculum, readiness, level, timeCommitment, pro
 }
 
 export default function ContinuationFlow() {
+  const ContinuationView = useThemeView('ContinuationView')
   const { topicId } = useParams()
   const navigate = useNavigate()
   const requestRef = useRef(0)
@@ -248,6 +250,7 @@ export default function ContinuationFlow() {
   const [working, setWorking] = useState(false)
   const [adjusting, setAdjusting] = useState(false)
   const [adjustment, setAdjustment] = useState('')
+  const [selectedChapterId, setSelectedChapterId] = useState(null)
   const [error, setError] = useState('')
 
   const generateDraft = useCallback(async (profile, sequence, keepPreview = false) => {
@@ -261,6 +264,7 @@ export default function ContinuationFlow() {
       if (requestRef.current !== sequence) return
       curriculumRef.current = draft
       setCurriculum(draft)
+      setSelectedChapterId(draft.modules?.[0]?.id ?? '0')
       setDraftProfile(profile)
       setPhase('preview')
     } catch (generationError) {
@@ -322,6 +326,7 @@ export default function ContinuationFlow() {
       if (!result?.curriculum) throw new Error('The revised Track draft was incomplete.')
       curriculumRef.current = result.curriculum
       setCurriculum(result.curriculum)
+      setSelectedChapterId(result.curriculum.modules?.[0]?.id ?? '0')
       setDraftProfile({ level, timeCommitment })
       setAdjustment('')
       setAdjusting(false)
@@ -352,78 +357,39 @@ export default function ContinuationFlow() {
 
   const goToParent = useCallback(() => navigate(`/?topicId=${encodeURIComponent(topicId)}`), [navigate, topicId])
 
+  const profileStale = Boolean(draftProfile && (draftProfile.level !== level || draftProfile.timeCommitment !== timeCommitment))
+  const model = {
+    phase,
+    parentTrack: { readiness, dashboard },
+    readiness: readiness || {},
+    level,
+    timeCommitment,
+    profileStale,
+    preview: curriculum,
+    selectedChapterId,
+    adjustmentDraft: adjustment,
+    adjustmentOpen: adjusting,
+    busy: { working },
+    error,
+    actions: {
+      selectChapter: setSelectedChapterId,
+      setLevel,
+      setTimeCommitment,
+      confirm: handleConfirm,
+      toggleAdjustment: () => { setAdjusting((open) => !open); setError('') },
+      setAdjustmentDraft: setAdjustment,
+      applyAdjustment: handleTweak,
+      refresh: handleGenerate,
+      retry: dashboard ? handleGenerate : loadCompletion,
+      defer: goToParent,
+      review: () => navigate('/reviews'),
+    },
+  }
+
   return (
     <div className="ui-page min-h-screen">
       <AppHeader />
-      <main className="ui-container max-w-5xl space-y-5 px-4 py-6 sm:py-8">
-        {phase === 'loading' && <div className="ui-panel p-10 text-center"><span className="ui-spinner mx-auto" role="status" aria-label="Loading completed Track" /></div>}
-
-        {readiness && <CompletionSummary readiness={readiness} dashboard={dashboard} onReview={() => navigate('/reviews')} />}
-
-        {phase === 'ineligible' && (
-          <section className="ui-panel p-6" aria-labelledby="ineligible-heading">
-            <p className="ui-text-muted text-xs font-semibold uppercase tracking-wide">{readiness?.course?.title || 'Your Track'}</p>
-            <h2 id="ineligible-heading" className="mt-2 text-xl font-bold ui-text">Finish this Track first</h2>
-            <p className="mt-2 ui-text-secondary">{readiness?.reason || 'Complete each Chapter checkpoint to unlock your next Track.'}</p>
-            <button type="button" className="ui-button ui-button-primary mt-5" onClick={goToParent}>Back to my Trail</button>
-          </section>
-        )}
-
-        {phase === 'generating' && <GeneratingState />}
-
-        {phase === 'error' && (
-          <section className="ui-panel p-5 sm:p-7" aria-labelledby="generation-error-heading">
-            <h2 id="generation-error-heading" className="text-xl font-semibold ui-text">Your next Track is still within reach</h2>
-            {error && <div className="ui-alert ui-alert-warning mt-4" role="alert">{error}</div>}
-            <div className="mt-5 flex flex-wrap gap-3">
-              {readiness?.eligible && dashboard && <button type="button" className="ui-button ui-button-primary" onClick={handleGenerate} disabled={working}>{working ? 'Trying again…' : 'Retry generation'}</button>}
-              {readiness?.eligible && !dashboard && <button type="button" className="ui-button ui-button-primary" onClick={loadCompletion} disabled={working}>Retry loading Track</button>}
-              <button type="button" className="ui-button ui-button-secondary" onClick={goToParent}>Back to my Trail</button>
-            </div>
-          </section>
-        )}
-
-        {phase === 'preview' && curriculum && (
-          <>
-            <ContinuationPreview
-              curriculum={curriculum}
-              readiness={readiness}
-              level={level}
-              timeCommitment={timeCommitment}
-              profileStale={Boolean(draftProfile && (draftProfile.level !== level || draftProfile.timeCommitment !== timeCommitment))}
-              onLevelChange={setLevel}
-              onTimeChange={setTimeCommitment}
-              onRefresh={handleGenerate}
-              onTweak={() => { setAdjusting((open) => !open); setError('') }}
-              onConfirm={handleConfirm}
-              onDefer={goToParent}
-              onReview={() => navigate('/reviews')}
-              working={working}
-              error={error}
-            />
-            {adjusting && (
-              <section className="ui-panel p-5" aria-labelledby="adjust-plan-heading">
-                <h2 id="adjust-plan-heading" className="font-semibold ui-text">Adjust this plan</h2>
-                <p className="mt-1 text-sm ui-text-secondary">Tell us what to change. Your current preview stays available if the adjustment fails.</p>
-                <label htmlFor="continuation-adjustment" className="ui-field-label mt-4 block">What would you like to adjust?</label>
-                <textarea
-                  id="continuation-adjustment"
-                  className="ui-field mt-1 min-h-28 w-full"
-                  maxLength={1000}
-                  value={adjustment}
-                  onChange={(event) => setAdjustment(event.target.value)}
-                  disabled={working}
-                />
-                <p className="mt-1 text-xs ui-text-muted">{adjustment.length}/1000 characters</p>
-                <div className="mt-4 flex gap-3">
-                  <button type="button" className="ui-button ui-button-primary" onClick={handleTweak} disabled={working || !adjustment.trim()}>{working ? 'Adjusting…' : 'Apply adjustment'}</button>
-                  <button type="button" className="ui-button ui-button-secondary" onClick={() => setAdjusting(false)} disabled={working}>Keep current plan</button>
-                </div>
-              </section>
-            )}
-          </>
-        )}
-      </main>
+      <div className="ui-container mx-auto max-w-5xl space-y-5 px-4 py-6 sm:py-8"><Suspense fallback={<SceneSkeleton />}><ContinuationView model={model} /></Suspense></div>
     </div>
   )
 }
