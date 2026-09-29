@@ -301,8 +301,9 @@ export function useOnboardingController({ navigate, recoveryTopicId = null }) {
     finally { setSubmitting(false) }
   }, [topicId, tweakDraft])
   const back = useCallback(() => {
-    if (step === 'placement-choice') setStep('starting_point')
-    else if (step === 'starting_point' || step === 'placement') setStep('destination')
+    if (step === 'placement') setStep('placement-choice')
+    else if (step === 'placement-choice') setStep('starting_point')
+    else if (step === 'starting_point') setStep('destination')
     else if (step === 'learning_rhythm' && rhythmSubstep === 'pace') setRhythmSubstep('time')
     else if (step === 'learning_rhythm') setStep('starting_point')
     else if (step === 'preview') setStep('learning_rhythm')

@@ -206,6 +206,42 @@ describe('OnboardingFlow', () => {
     })))
   })
 
+  it('keeps placement preparation visible while the check is loading', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 25, title: 'React' } })
+    getSetupQuestions.mockResolvedValue(setupQuestions({ levels: ['Beginner', 'Intermediate'], times: ['30 min/day'] }))
+    startPlacementAssessment.mockImplementation(() => new Promise(() => {}))
+
+    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your learning destination' }), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set my destination' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Intermediate' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Take a placement check' }))
+
+    expect(await screen.findByRole('status', { name: /preparing placement check/i })).toBeInTheDocument()
+    expect(screen.queryByText('Choose the level that best fits what you know now.')).not.toBeInTheDocument()
+  })
+
+  it('offers a clear retry when placement preparation fails', async () => {
+    createTopic.mockResolvedValue({ topic: { id: 26, title: 'React' } })
+    getSetupQuestions.mockResolvedValue(setupQuestions({ levels: ['Beginner', 'Intermediate'], times: ['30 min/day'] }))
+    startPlacementAssessment.mockRejectedValue(new Error('The placement provider returned an invalid assessment. Please retry.'))
+
+    render(<MemoryRouter><OnboardingFlow /></MemoryRouter>)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Your learning destination' }), { target: { value: 'React' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set my destination' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Intermediate' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Take a placement check' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/placement check could not be prepared/i)
+    expect(screen.getByRole('button', { name: 'Retry placement check' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Skip placement check' })).toBeInTheDocument()
+    expect(screen.queryByText('Choose the level that best fits what you know now.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('button', { name: 'Take a placement check' })).toBeInTheDocument()
+  })
+
   it('retries setup choices and hides raw database errors', async () => {
     createTopic.mockResolvedValue({ topic: { id: 23, title: 'React' } })
     getSetupQuestions.mockRejectedValueOnce(new Error('SQLITE_ERROR: no such table: topics')).mockResolvedValueOnce(setupQuestions())

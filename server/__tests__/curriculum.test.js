@@ -4,7 +4,7 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { streamText } from '../llm/client.js'
+import { generateText, streamText } from '../llm/client.js'
 
 vi.mock('../llm/client.js', () => ({
   streamText: vi.fn(() => {
@@ -282,6 +282,11 @@ describe('Curriculum API', () => {
       expect(start.body.questions.every((question) => question.type === 'objective' && !question.options && !question.correct_answer)).toBe(true)
       expect(start.body.questions.filter((question) => question.difficultyBand === 'target')).toHaveLength(5)
       expect(start.body.questions.filter((question) => question.difficultyBand === 'stretch')).toHaveLength(1)
+
+      const placementPrompt = generateText.mock.calls
+        .find(([params]) => params?.messages?.[0]?.content === 'Generate placement assessment questions.')
+      expect(placementPrompt?.[0]?.system).toMatch(/free-response objective questions/i)
+      expect(placementPrompt?.[0]?.system).not.toMatch(/include at least 2 multiple_choice/i)
 
       const answers = Object.fromEntries(start.body.questions.map((question) => [question.id, 'A technically grounded explanation with a practical trade-off.']))
       const submit = await request(app)

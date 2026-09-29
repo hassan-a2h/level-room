@@ -393,11 +393,11 @@ Target questions must stay within ${level} expectations and must not assume next
 Return strict JSON with this shape:
 {
   "questions": [
-    { "id": "q1", "text": "...", "type": "multiple_choice", "difficulty_band": "target", "options": [{"value":"A","label":"..."},{"value":"B","label":"..."}], "correct_answer": "A" },
+    { "id": "q1", "text": "...", "type": "objective", "difficulty_band": "target", "rubric": "What a strong answer must demonstrate" },
     { "id": "q6", "text": "...", "type": "objective", "difficulty_band": "stretch", "rubric": "What a strong answer must demonstrate" }
   ]
 }
-Include at least 2 multiple_choice and 2 objective questions. Mark exactly five questions difficulty_band target and one difficulty_band stretch. Multiple-choice options must have 2-5 choices and one correct_answer value. Objective questions must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
+Return six free-response objective questions only. Do not include options, correct_answer, or multiple_choice questions. Mark exactly five questions difficulty_band target and one difficulty_band stretch. Every question must have a concrete rubric. Test transferable understanding and practical judgment, not trivia. Do not include markdown.`
     const result = await generateText({
       ...llmRequestOptions(config),
       system,
