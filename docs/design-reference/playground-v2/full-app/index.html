@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="grove">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+ <title>Mastery Trail · Full playground prototype</title><link rel="stylesheet" href="app.css">
+ <script defer src="setup.js"></script><script defer src="learning.js"></script><script defer src="practice.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+ <a class="skip-link" href="#view">Skip to learning</a>
+ <header class="app-header">
+  <a class="brand" href="#/" aria-label="Mastery Trail home"><span class="brand-symbol" data-icon="trail"></span><span>mastery<span class="brand-light">trail</span></span></a>
+  <nav class="main-nav" aria-label="Main navigation"><button type="button" data-go="trail" data-nav="trail"><span data-icon="trail"></span>My trail</button><button type="button" data-go="reviews" data-nav="reviews"><span data-icon="review"></span>Practice<span class="nav-count">3</span></button><button type="button" data-go="session" data-params='{"scenario":"build"}' data-nav="builds"><span data-icon="build"></span>My builds</button></nav>
+  <div class="header-tools"><span class="header-skill"><span data-icon="spark"></span><span id="header-progress">2 skills earned</span></span><label class="theme-control"><span class="sr-only">Color theme</span><span class="theme-swatch" aria-hidden="true"></span><select id="theme-select" aria-label="Color theme"><option value="grove">Playground</option><option value="midnight">Midnight</option><option value="tide">Ocean</option><option value="lilac">Lavender</option><option value="ember">Ember</option></select></label><button class="avatar" type="button" data-go="settings" aria-label="Open settings">C</button></div>
+ </header>
+ <div class="prototype-tools"><a href="../playground-v2.html"><span data-icon="back"></span>V2 reference</a><span>FULL APP · INTERACTIVE PROTOTYPE</span><div class="row"><button type="button" data-go="coverage">Explore all screens <span data-icon="map"></span></button><button type="button" id="reset-demo">Reset sample <span data-icon="review"></span></button></div></div>
+ <main id="view" class="page" tabindex="-1"></main>
+ <footer class="prototype-footer"><span>Sample learning data · <span id="storage-status">saved in this tab</span></span><button type="button" data-go="coverage">Flow coverage <span data-icon="arrow"></span></button></footer>
+ <nav class="mobile-nav" aria-label="Mobile navigation"><button type="button" data-go="trail" data-nav="trail"><span data-icon="trail"></span>Trail</button><button type="button" data-go="reviews" data-nav="reviews"><span data-icon="review"></span>Practice</button><button type="button" data-go="coverage" data-nav="coverage"><span data-icon="map"></span>Explore</button><button type="button" data-go="settings" data-nav="settings"><span data-icon="settings"></span>Settings</button></nav>
+ <dialog id="global-dialog" aria-labelledby="dialog-title"><header class="dialog-header"><h2 id="dialog-title"></h2><button type="button" class="icon-button" id="dialog-close" aria-label="Close dialog"><span data-icon="close"></span></button></header><div id="dialog-body" class="dialog-body"></div></dialog>
+ <div class="toast" id="toast" role="status" aria-live="polite"></div><div id="confetti" aria-hidden="true"></div>
+</body>
+</html>

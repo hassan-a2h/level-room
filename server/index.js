@@ -13,6 +13,7 @@ import examsRouter from './routes/exams.js'
 import reviewsRouter from './routes/reviews.js'
 import streakRouter from './routes/streak.js'
 import dataRouter from './routes/data.js'
+import { dataRevisionMiddleware } from './utils/data-revision.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -25,7 +26,8 @@ const app = express()
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Learning-Data-Revision')
+  res.setHeader('Access-Control-Expose-Headers', 'X-Learning-Data-Revision')
   next()
 })
 
@@ -33,6 +35,7 @@ app.use('/api/settings/codex', express.json({ limit: '16kb' }))
 app.use('/api/data/import', express.json({ limit: '50mb' }))
 app.use('/api/topics/:id/lessons/:lid/artifact', express.json({ limit: '32mb' }))
 app.use(express.json({ limit: '6mb' }))
+app.use(dataRevisionMiddleware)
 
 // Global error handler for malformed JSON and other errors
 app.use((err, _req, res, next) => {

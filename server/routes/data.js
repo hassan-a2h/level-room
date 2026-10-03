@@ -1,6 +1,9 @@
 import { Router } from 'express'
 import db, { all, run, transaction } from '../db.js'
 import { normalizeLane } from '../utils/course-lineage.js'
+import { rotateDataRevision } from '../utils/data-revision.js'
+import { invalidateActivityGenerations } from './activities.js'
+import { invalidateReviewSessions } from './reviews.js'
 
 const router = Router()
 
@@ -22,6 +25,9 @@ const TABLES = [
 const REQUIRED_TABLES = TABLES
 
 const LEGACY_DISCARDED_SETTINGS_FIELDS = new Set(['api_key'])
+const BUILD_EVIDENCE_FIELDS = ['setup', 'actions', 'result', 'reflection']
+const BUILD_EVIDENCE_FIELD_BYTES = 16 * 1024
+const BUILD_EVIDENCE_BYTES = 64 * 1024
 
 const IMPORT_COLUMNS = {
   topics: new Set(['id', 'title', 'slug', 'status', 'level', 'goal', 'time_per_week', 'deadline', 'tone', 'focus', 'mode', 'created_at', 'last_active_at', 'interaction_mode', 'difficulty', 'consecutive_passes', 'consecutive_fails', 'course_kind', 'course_stage', 'course_focus', 'course_summary', 'course_completed_at', 'curriculum_state', 'curriculum_draft', 'curriculum_error']),
@@ -101,6 +107,21 @@ function prepareImportRows(backup) {
         try { envelope = JSON.parse(cleanRow.questions) } catch { return { error: 'Invalid backup: completed checkpoints must contain a sanitized outcome envelope.' } }
         if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || envelope.schemaVersion !== 1 || !Array.isArray(envelope.publicQuestions) || Object.keys(envelope).some((key) => key !== 'schemaVersion' && key !== 'publicQuestions')) {
           return { error: 'Invalid backup: completed checkpoints must contain a sanitized outcome envelope.' }
+        }
+      }
+      if (table === 'artifacts' && typeof cleanRow.content === 'string') {
+        let envelope = null
+        try { envelope = JSON.parse(cleanRow.content) } catch {}
+        if (envelope?.kind === 'build-evidence' || envelope?.version === 1 && envelope?.evidence) {
+          if (envelope.kind !== 'build-evidence' || envelope.version !== 1 || !envelope.evidence || typeof envelope.evidence !== 'object' || Array.isArray(envelope.evidence)) {
+            return { error: 'Invalid backup: Build evidence envelope is malformed.' }
+          }
+          for (const field of BUILD_EVIDENCE_FIELDS) {
+            const value = envelope.evidence[field]
+            if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > BUILD_EVIDENCE_FIELD_BYTES) return { error: 'Invalid backup: Build evidence fields are invalid.' }
+          }
+          const flattened = BUILD_EVIDENCE_FIELDS.map((field) => `${field}:${envelope.evidence[field]}`).join('\n')
+          if (Buffer.byteLength(flattened, 'utf8') > BUILD_EVIDENCE_BYTES) return { error: 'Invalid backup: Build evidence is too large.' }
         }
       }
       if (table === 'progress') Object.assign(cleanRow, normalizeImportedProgress(cleanRow))
@@ -254,11 +275,27 @@ router.post('/import', (req, res) => {
 
         counts[table] = rows.length
       }
+
+      run(
+        `UPDATE curriculum_generation_jobs
+         SET state = 'failed', lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL,
+             error_code = 'DATA_CHANGED', error_message = 'Learning data was restored; generate this Track again.', updated_at = datetime('now')
+         WHERE state IN ('queued', 'running', 'retrying')`,
+      )
+      run(
+        `UPDATE topics
+         SET curriculum_state = 'failed', curriculum_error = 'Learning data was restored; generate this Track again.',
+             curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
+         WHERE curriculum_state = 'generating'`,
+      )
     })
 
     tx()
-
-    return res.json({ success: true, counts })
+    invalidateActivityGenerations()
+    invalidateReviewSessions()
+    const revision = rotateDataRevision()
+    res.setHeader('X-Learning-Data-Revision', revision)
+    return res.json({ success: true, counts, revision })
   } catch (err) {
     console.error('Import error:', err.message)
     return res.status(400).json({ error: 'Invalid backup data. No changes were imported.' })

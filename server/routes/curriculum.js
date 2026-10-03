@@ -13,6 +13,7 @@ import {
   parseCurriculumDraft,
 } from '../utils/curriculum-recovery.js'
 import { createCurriculumGenerationService } from '../utils/curriculum-generation.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 
@@ -377,6 +378,7 @@ router.get('/topics/:id/setup-questions', async (req, res) => {
  * Generate and persist a short placement assessment for Intermediate/Advanced learners.
  */
 router.post('/topics/:id/placement/start', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = Number(req.params.id)
     const level = normalizeLevel(req.body?.level)
@@ -404,6 +406,7 @@ Return six free-response objective questions only. Do not include options, corre
       messages: [{ role: 'user', content: 'Generate placement assessment questions.' }],
     })
     const questions = normalizePlacementQuestions(JSON.parse(result.text || '{}'), level)
+    assertDataRevision(requestRevision)
 
     const assessmentId = transaction(() => {
       run('UPDATE placement_assessments SET status = ? WHERE topic_id = ? AND status = ?', 'expired', topicId, 'pending')
@@ -423,6 +426,7 @@ Return six free-response objective questions only. Do not include options, corre
     if (err instanceof PlacementAssessmentError) {
       return res.status(502).json({ error: 'The placement provider returned an invalid assessment. Please retry.', code: err.code, retryable: err.retryable })
     }
+    if (Number.isInteger(err?.status)) return res.status(err.status).json({ error: err.message, code: err.code, retryable: err.retryable })
     return res.status(500).json({ error: 'Failed to generate placement assessment.' })
   }
 })
@@ -432,6 +436,7 @@ Return six free-response objective questions only. Do not include options, corre
  * Evaluate a persisted placement assessment and return a verified level recommendation.
  */
 router.post('/topics/:id/placement/submit', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = Number(req.params.id)
     const assessmentId = Number(req.body?.assessmentId)
@@ -489,7 +494,9 @@ ${JSON.stringify(answers)}`
       feedback: parsed.feedback,
       gaps: parsed.gaps,
     })
+    assertDataRevision(requestRevision)
     const update = transaction(() => {
+      assertDataRevision(requestRevision)
       run(
         `UPDATE placement_assessments
          SET answers = ?, status = 'completed', score = ?, target_score = ?, stretch_score = ?, recommended_level = ?, feedback = ?, gaps = ?, question_scores = ?, completed_at = CURRENT_TIMESTAMP
@@ -523,6 +530,7 @@ ${JSON.stringify(answers)}`
     if (err instanceof LlmClientError) {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
+    if (Number.isInteger(err?.status)) return res.status(err.status).json({ error: err.message, code: err.code, retryable: err.retryable })
     if (err instanceof PlacementAssessmentError) {
       return res.status(502).json({ error: 'The placement provider returned an invalid evaluation. Please retry.', code: err.code, retryable: err.retryable })
     }
@@ -776,6 +784,7 @@ router.get('/topics/:id/curriculum', (req, res) => {
  * Apply a natural-language tweak to the curriculum.
  */
 router.post('/topics/:id/curriculum/tweak', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = Number(req.params.id)
     const { request: tweakRequest } = req.body
@@ -898,15 +907,20 @@ Rules:
         throw error
       }
 
+      assertDataRevision(requestRevision)
+
       if (existingModules.length === 0) {
-        run(
+        transaction(() => {
+          assertDataRevision(requestRevision)
+          run(
           `UPDATE topics
            SET curriculum_state = 'draft_ready', curriculum_draft = ?, curriculum_error = NULL,
                curriculum_generation_started_at = NULL, curriculum_generation_token = NULL
            WHERE id = ? AND curriculum_state <> 'confirmed'`,
           JSON.stringify(updated),
           topicId,
-        )
+          )
+        })()
       }
 
       return res.json({ ok: true, modules: updated.modules, course: updated.course })

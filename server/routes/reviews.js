@@ -11,18 +11,52 @@ import {
 } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
 import { outcomeTitles } from '../utils/outcome-manifest.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 
 // In-memory session store for review sessions
 const reviewSessions = new Map()
+const completedReviewReceipts = new Map()
+let activeReviewSessionId = null
+const REVIEW_SESSION_TTL_MS = 2 * 60 * 60 * 1000
+const MAX_COMPLETED_REVIEW_RECEIPTS = 100
+
+function pruneCompletedReviewReceipts(now = Date.now()) {
+  for (const [sessionId, receipt] of completedReviewReceipts) {
+    if (receipt.expiresAt <= now) completedReviewReceipts.delete(sessionId)
+  }
+}
+
+function storeCompletedReviewReceipt(sessionId, receipt) {
+  completedReviewReceipts.set(sessionId, receipt)
+  while (completedReviewReceipts.size > MAX_COMPLETED_REVIEW_RECEIPTS) {
+    const oldest = completedReviewReceipts.keys().next().value
+    completedReviewReceipts.delete(oldest)
+  }
+}
 
 const MAX_QUESTIONS_PER_SESSION = 20
 const MIN_QUESTIONS_PER_LESSON = 3
 const MAX_QUESTIONS_PER_LESSON = 6
 
+export function invalidateReviewSessions() {
+  reviewSessions.clear()
+  completedReviewReceipts.clear()
+  activeReviewSessionId = null
+}
+
 function generateSessionId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function publicSession(sessionId, session) {
+  return {
+    sessionId,
+    questions: session.questions.map(({ id, text, type, topicTitle, lessonTitle }) => ({ id, text, type, topicTitle, lessonTitle })),
+    totalQuestions: session.questions.length,
+    remainingCount: session.remainingCount,
+  }
 }
 
 /**
@@ -76,7 +110,7 @@ function buildReviewEvaluationPrompt({ questions, answers }) {
     return `Q: ${q.text}\nA: ${ans}`
   }).join('\n\n')
 
-  return `You are an expert tutor. Evaluate the following spaced-repetition review answers.
+  return `You are an expert tutor. Evaluate the following spaced-repetition review answers. Return exactly one feedback entry for every supplied questionId.
 
 ${qaPairs}
 
@@ -252,8 +286,17 @@ router.get('/reviews/count', (_req, res) => {
  * Start a review session. Returns mixed questions from due items.
  */
 router.post('/reviews/start', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
+    pruneCompletedReviewReceipts()
     const config = requireLlmConfig()
+
+    if (activeReviewSessionId) {
+      const active = reviewSessions.get(activeReviewSessionId)
+      if (active && active.expiresAt > Date.now()) return res.json(publicSession(activeReviewSessionId, active))
+      reviewSessions.delete(activeReviewSessionId)
+      activeReviewSessionId = null
+    }
 
     const items = getDueItems()
     const filtered = items
@@ -293,11 +336,18 @@ router.post('/reviews/start', async (req, res) => {
           numQuestions: actualQuestionsPerItem,
         })
       }
+      assertDataRevision(requestRevision)
 
       // Tag each question with metadata
-      for (const q of questions) {
+      for (const [questionIndex, q] of questions.entries()) {
+        const sourceId = String(q.id)
+        const usedIds = new Set(allQuestions.map((question) => question.id))
+        let publicId = sourceId
+        if (usedIds.has(publicId)) publicId = `${sourceId}-${item.id}-${questionIndex + 1}`
         const tagged = {
           ...q,
+          id: publicId,
+          sourceQuestionId: sourceId,
           _topicId: item.topic_id,
           _lessonId: item.lesson_id,
           _moduleId: item.module_id,
@@ -307,7 +357,7 @@ router.post('/reviews/start', async (req, res) => {
           lessonTitle: item.lesson_title || (item.review_type === 'cumulative' ? 'Module Review' : 'Unknown Lesson'),
         }
         allQuestions.push(tagged)
-        questionToItem.set(q.id, {
+        questionToItem.set(tagged.id, {
           srsId: item.id,
           topicId: item.topic_id,
           lessonId: item.lesson_id,
@@ -330,24 +380,18 @@ router.post('/reviews/start', async (req, res) => {
     // Cap at max
     const cappedQuestions = allQuestions.slice(0, MAX_QUESTIONS_PER_SESSION)
 
-    reviewSessions.set(sessionId, {
+    const session = {
       questions: cappedQuestions,
       questionToItem: Object.fromEntries(questionToItem),
       createdAt: new Date().toISOString(),
-    })
-
-    return res.json({
-      sessionId,
-      questions: cappedQuestions.map((q) => ({
-        id: q.id,
-        text: q.text,
-        type: q.type,
-        topicTitle: q.topicTitle,
-        lessonTitle: q.lessonTitle,
-      })),
-      totalQuestions: cappedQuestions.length,
+      expiresAt: Date.now() + REVIEW_SESSION_TTL_MS,
       remainingCount,
-    })
+    }
+    assertDataRevision(requestRevision)
+    reviewSessions.set(sessionId, session)
+    activeReviewSessionId = sessionId
+
+    return res.json(publicSession(sessionId, session))
   } catch (err) {
     console.error('POST /api/reviews/start error:', err.message)
     if (err instanceof LlmClientError) {
@@ -362,7 +406,9 @@ router.post('/reviews/start', async (req, res) => {
  * Submit review answers, evaluate, and update SRS intervals.
  */
 router.post('/reviews/:sessionId/submit', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
+    pruneCompletedReviewReceipts()
     const sessionId = req.params.sessionId
     const { answers } = req.body
 
@@ -370,15 +416,32 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
       return res.status(400).json({ error: 'Please answer at least one question before submitting.' })
     }
 
+    const receipt = completedReviewReceipts.get(sessionId)
+    if (receipt && receipt.expiresAt > Date.now()) {
+      const received = JSON.stringify(answers)
+      if (received !== receipt.answers) return res.status(409).json({ error: 'This review was already submitted with different answers.', code: 'REVIEW_ALREADY_SUBMITTED' })
+      return res.json(receipt.response)
+    }
+    completedReviewReceipts.delete(sessionId)
     const session = reviewSessions.get(sessionId)
     if (!session) {
       return res.status(404).json({ error: 'Review session not found or expired.' })
     }
+    if (session.expiresAt <= Date.now()) {
+      reviewSessions.delete(sessionId)
+      if (activeReviewSessionId === sessionId) activeReviewSessionId = null
+      return res.status(404).json({ error: 'Review session not found or expired.', code: 'REVIEW_SESSION_EXPIRED' })
+    }
+    if (session.submitting) return res.status(409).json({ error: 'This review is already being submitted. Retry when the first request finishes.', code: 'REVIEW_SUBMIT_IN_PROGRESS', retryable: true })
 
     const config = requireLlmConfig()
 
     // Validate all questions have answers
     const questions = session.questions
+    const unknown = Object.keys(answers).some((id) => !questions.some((question) => question.id === id))
+    if (unknown) return res.status(400).json({ error: 'Answers contain an unknown review question.', code: 'REVIEW_ANSWERS_INVALID' })
+    const overlong = Object.values(answers).some((answer) => typeof answer !== 'string' || answer.length > 2000)
+    if (overlong) return res.status(400).json({ error: 'Each review answer must be text under 2,000 characters.', code: 'REVIEW_ANSWERS_INVALID' })
     const unanswered = questions.filter((q) => !answers[q.id] || answers[q.id].trim().length === 0)
     if (unanswered.length > 0) {
       return res.status(400).json({
@@ -389,23 +452,49 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
     }
 
     const system = buildReviewEvaluationPrompt({ questions, answers })
-    const result = await generateText({
-      ...llmRequestOptions(config),
-      system,
-      messages: [{ role: 'user', content: 'Evaluate the review answers and return JSON.' }],
-    })
+    session.submitting = true
+    session.submissionAnswers = JSON.stringify(answers)
+    const releaseSubmission = () => {
+      if (reviewSessions.get(sessionId) === session) {
+        session.submitting = false
+        session.submissionAnswers = null
+      }
+    }
+    let result
+    try {
+      result = await generateText({
+        ...llmRequestOptions(config),
+        system,
+        messages: [{ role: 'user', content: 'Evaluate the review answers and return JSON.' }],
+      })
+      assertDataRevision(requestRevision)
+    } catch (error) {
+      releaseSubmission()
+      throw error
+    }
 
     let parsed
     try {
       const text = result.text || '{}'
       parsed = JSON.parse(text)
     } catch {
+      releaseSubmission()
       return res.status(500).json({ error: 'Failed to parse evaluation from LLM. Please try again.', retryable: true })
     }
 
-    const overallScore = typeof parsed.overallScore === 'number' ? parsed.overallScore : 0
+    const overallScore = typeof parsed.overallScore === 'number' && Number.isFinite(parsed.overallScore) ? Math.max(0, Math.min(100, parsed.overallScore)) : null
+    if (overallScore === null || !Array.isArray(parsed.feedback) || parsed.feedback.length !== questions.length) {
+      releaseSubmission()
+      return res.status(502).json({ error: 'Review evaluation did not score every answer. Please retry.', code: 'REVIEW_EVALUATION_INVALID', retryable: true })
+    }
+    const feedback = parsed.feedback
+    const questionIds = new Set(questions.map((question) => question.id))
+    if (feedback.some((item, index) => !questionIds.has(item?.questionId) || typeof item.correct !== 'boolean' || typeof item.explanation !== 'string' || item.explanation.length > 1000 || feedback.findIndex((candidate) => candidate.questionId === item.questionId) !== index)
+      || feedback.length !== questionIds.size || new Set(feedback.map((item) => item.questionId)).size !== questionIds.size) {
+      releaseSubmission()
+      return res.status(502).json({ error: 'Review evaluation did not match the submitted questions. Please retry.', code: 'REVIEW_EVALUATION_INVALID', retryable: true })
+    }
     const passed = overallScore >= 80
-    const feedback = Array.isArray(parsed.feedback) ? parsed.feedback : []
 
     // Group results by lesson/module for per-item SRS updates
     const itemResults = new Map()
@@ -435,7 +524,9 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
     let globalAccelerated = false
     let globalRegressed = false
 
+    assertDataRevision(requestRevision)
     transaction(() => {
+      assertDataRevision(requestRevision)
     for (const [, entry] of itemResults) {
       const itemScore = entry.totalCount > 0 ? Math.round((entry.correctCount / entry.totalCount) * 100) : 0
       let srsUpdate
@@ -498,10 +589,8 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
       }
     }
 
-    // Clean up session
-    reviewSessions.delete(sessionId)
-
-    return res.json({
+    // Keep a short idempotency receipt so response-loss retries do not schedule SRS twice.
+    const response = {
       overallScore,
       passed,
       totalQuestions: questions.length,
@@ -509,12 +598,23 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
       perItemResults,
       accelerated: globalAccelerated,
       regressed: globalRegressed,
-    })
+    }
+    storeCompletedReviewReceipt(sessionId, { answers: JSON.stringify(answers), response, expiresAt: Date.now() + 30 * 60 * 1000 })
+    reviewSessions.delete(sessionId)
+    if (activeReviewSessionId === sessionId) activeReviewSessionId = null
+
+    return res.json(response)
   } catch (err) {
+    const current = reviewSessions.get(req.params.sessionId)
+    if (current) {
+      current.submitting = false
+      current.submissionAnswers = null
+    }
     console.error('POST /api/reviews/:sessionId/submit error:', err.message)
     if (err instanceof LlmClientError) {
       return res.status(400).json({ error: err.message, code: err.code, retryable: err.retryable })
     }
+    if (Number.isInteger(err?.status)) return res.status(err.status).json({ error: err.message, code: err.code, retryable: err.retryable })
     return res.status(500).json({ error: 'Failed to submit review.' })
   }
 })
@@ -526,7 +626,10 @@ router.post('/reviews/:sessionId/submit', async (req, res) => {
 router.post('/reviews/:sessionId/cancel', (req, res) => {
   try {
     const sessionId = req.params.sessionId
+    const session = reviewSessions.get(sessionId)
+    if (session?.submitting) return res.status(409).json({ error: 'This review is already being submitted. Wait for the result.', code: 'REVIEW_SUBMIT_IN_PROGRESS', retryable: true })
     reviewSessions.delete(sessionId)
+    if (activeReviewSessionId === sessionId) activeReviewSessionId = null
     return res.json({ ok: true })
   } catch (err) {
     console.error('POST /api/reviews/:sessionId/cancel error:', err.message)

@@ -1,0 +1,293 @@
+{
+  "result": "pass",
+  "scenarioCount": 45,
+  "themes": 5,
+  "viewportWidths": [
+    320,
+    390,
+    768,
+    1024,
+    1440
+  ],
+  "errors": [],
+  "connectedChecks": [
+    "Six activity types, wrong/correct feedback, double-click guard, and readonly saved response after reload",
+    "Build draft, revision, passed assessment and Chapter prerequisite unlock",
+    "Checkpoint passes core requirements without prematurely completing the Track",
+    "Retrieval practice, feedback, summary and schedule",
+    "New Track setup and continuation reset progress and preserve prior Track",
+    "Sample export/import, required-field validation and confirmation",
+    "Shared provider readiness gates onboarding; denied browser storage fallback"
+  ],
+  "scenarios": [
+    {
+      "view": "trail",
+      "params": {}
+    },
+    {
+      "view": "trail",
+      "params": {
+        "scenario": "empty"
+      }
+    },
+    {
+      "view": "trail",
+      "params": {
+        "scenario": "setup"
+      }
+    },
+    {
+      "view": "trail",
+      "params": {
+        "scenario": "error"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "complete"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "destination"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "starting_point"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "placement"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "learning_rhythm"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "generating",
+        "scenario": "pending"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "generating",
+        "scenario": "resume"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "generating",
+        "scenario": "error"
+      }
+    },
+    {
+      "view": "onboarding",
+      "params": {
+        "step": "preview"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "read"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "worked_example"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "choice"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "ordering"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "short_answer"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "block": "reflection"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "scenario": "resume"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "scenario": "review"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "scenario": "completed"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "id": 104,
+        "scenario": "build"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "id": 104,
+        "scenario": "build-revise"
+      }
+    },
+    {
+      "view": "session",
+      "params": {
+        "id": 104,
+        "scenario": "build-pass"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "scenario": "locked"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "scenario": "ready"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "scenario": "resume"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "scenario": "gaps"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "scenario": "pass"
+      }
+    },
+    {
+      "view": "checkpoint",
+      "params": {
+        "mode": "targeted",
+        "scenario": "ready"
+      }
+    },
+    {
+      "view": "reviews",
+      "params": {}
+    },
+    {
+      "view": "reviews",
+      "params": {
+        "scenario": "empty"
+      }
+    },
+    {
+      "view": "reviews",
+      "params": {
+        "scenario": "error"
+      }
+    },
+    {
+      "view": "review",
+      "params": {}
+    },
+    {
+      "view": "review",
+      "params": {
+        "scenario": "feedback"
+      }
+    },
+    {
+      "view": "review",
+      "params": {
+        "scenario": "summary"
+      }
+    },
+    {
+      "view": "review",
+      "params": {
+        "scenario": "missing"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "complete"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "gated"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "generating"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "preview"
+      }
+    },
+    {
+      "view": "continuation",
+      "params": {
+        "scenario": "error"
+      }
+    },
+    {
+      "view": "settings",
+      "params": {}
+    },
+    {
+      "view": "settings",
+      "params": {
+        "scenario": "error"
+      }
+    }
+  ]
+}

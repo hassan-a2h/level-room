@@ -153,7 +153,12 @@ for (const baseline of manifest) {
   })
 }
 
-for (const theme of ['living-atlas', 'curiosity-engine', 'mission-workshop']) {
+for (const theme of [
+  'morning-mist', 'forest-dusk', 'blue-harbor', 'deep-ocean',
+  'lavender-still', 'night-lavender', 'warm-sand', 'cocoa-evening',
+  'sage-garden', 'moss-night', 'rosewater', 'plum-twilight',
+  'quiet-linen', 'graphite-calm', 'sea-glass', 'midnight-ink',
+]) {
   test(`100-character Trail and Chapter titles stay within the viewport in ${theme} at 200% zoom`, async ({ page, apiMocks }) => {
     apiMocks.useScenario('stressTrail')
     await page.addInitScript((themeId) => localStorage.setItem('mastery-trail-theme-v2', themeId), theme)

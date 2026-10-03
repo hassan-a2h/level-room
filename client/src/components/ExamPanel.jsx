@@ -37,6 +37,11 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   const [retestId, setRetestId] = useState(null)
   const saveTimerRef = useRef(null)
   const saveChainRef = useRef(Promise.resolve())
+  const saveGenerationRef = useRef(0)
+  const attemptIdRef = useRef(null)
+  const answersRevisionRef = useRef(null)
+  const latestAnswersRef = useRef({})
+  const actionLockRef = useRef(false)
   const answerControlRef = useRef(null)
   const navigate = useNavigate()
   const CheckpointThemeView = useThemeView('CheckpointView')
@@ -47,13 +52,28 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   const firstIncompleteLesson = useMemo(() => moduleLessons.find((lesson) => lesson.state !== 'passed'), [moduleLessons])
   const incompleteLessonCount = moduleLessons.filter((lesson) => lesson.state !== 'passed').length
 
-  const persistAnswers = useCallback((snapshot) => {
-    const nextSave = saveChainRef.current.catch(() => {}).then(() => saveExamProgress(topicId, moduleId, snapshot))
+  const persistAnswers = useCallback((snapshot, operation = {}) => {
+    const generation = operation.generation ?? saveGenerationRef.current
+    const attemptId = operation.attemptId ?? attemptIdRef.current
+    const expectedAnswersRevision = operation.expectedAnswersRevision ?? answersRevisionRef.current
+    const nextSave = saveChainRef.current.catch(() => {}).then(async () => {
+      if (generation !== saveGenerationRef.current) return null
+      const options = expectedAnswersRevision ? { attemptId, expectedAnswersRevision } : undefined
+      const result = options ? await saveExamProgress(topicId, moduleId, snapshot, options) : await saveExamProgress(topicId, moduleId, snapshot)
+      if (generation === saveGenerationRef.current && result?.answersRevision) answersRevisionRef.current = result.answersRevision
+      return result
+    })
     saveChainRef.current = nextSave
     return nextSave
   }, [topicId, moduleId])
 
   const acceptAttempt = useCallback((data, partial = false) => {
+    saveGenerationRef.current += 1
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    saveChainRef.current = Promise.resolve()
     setExam(data)
     setQuestions(data.questions || [])
     setAnswers(data.answers || {})
@@ -62,6 +82,9 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     setFocusQuestionId(null)
     setIsPartialRetest(partial || data.type === 'partial')
     setRetestId(data.id || null)
+    attemptIdRef.current = data.id || null
+    answersRevisionRef.current = data.answersRevision || null
+    latestAnswersRef.current = data.answers || {}
     setReady(true)
     setLessonsRemaining(0)
     setError('')
@@ -96,6 +119,8 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   }, [])
 
   const launchAttempt = useCallback(async (action, partial = false) => {
+    if (actionLockRef.current) return
+    actionLockRef.current = true
     setLoading(true)
     setError('')
     try {
@@ -104,6 +129,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     } catch (actionError) {
       setError(toPublicError(actionError, 'We couldn’t prepare this checkpoint. Please try again.').message)
     } finally {
+      actionLockRef.current = false
       setLoading(false)
     }
   }, [acceptAttempt])
@@ -111,16 +137,43 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   const handleAnswerChange = useCallback((questionId, value) => {
     setAnswers((previous) => {
       const next = { ...previous, [questionId]: value }
+      latestAnswersRef.current = next
+      const operation = {
+        generation: saveGenerationRef.current,
+        attemptId: attemptIdRef.current,
+        expectedAnswersRevision: answersRevisionRef.current,
+      }
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       setSaveState('saving')
       saveTimerRef.current = setTimeout(() => {
-        persistAnswers(next)
+        persistAnswers(next, operation)
           .then(() => setSaveState('saved'))
           .catch(() => setSaveState('error'))
       }, SAVE_DEBOUNCE_MS)
       return next
     })
     setError('')
+  }, [persistAnswers])
+
+  const flushPendingSave = useCallback(async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (!attemptIdRef.current || !Object.keys(latestAnswersRef.current).length) return null
+    setSaveState('saving')
+    try {
+    const result = await persistAnswers(latestAnswersRef.current, {
+      generation: saveGenerationRef.current,
+      attemptId: attemptIdRef.current,
+      expectedAnswersRevision: answersRevisionRef.current,
+    })
+      setSaveState('saved')
+      return result
+    } catch (saveError) {
+      setSaveState('error')
+      throw saveError
+    }
   }, [persistAnswers])
 
   const handleReview = useCallback(() => {
@@ -137,7 +190,7 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
   }, [answers, answeredCount, questions])
 
   const handleSubmit = useCallback(async () => {
-    if (phase !== 'answer-review') return
+    if (phase !== 'answer-review' || actionLockRef.current) return
     const incompleteIndex = questions.findIndex((question) => !hasAnswer(answers[question.id]))
     if (incompleteIndex >= 0) {
       setPhase('player')
@@ -147,15 +200,19 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
       return
     }
 
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    actionLockRef.current = true
     setLoading(true)
     setError('')
     try {
-      await persistAnswers(answers)
-      setSaveState('saved')
+      latestAnswersRef.current = answers
+      await flushPendingSave()
       const result = isPartialRetest && retestId
-        ? await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate())
-        : await submitExam(topicId, moduleId, answers, getLocalDate())
+        ? answersRevisionRef.current
+          ? await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate(), { expectedAnswersRevision: answersRevisionRef.current })
+          : await submitPartialRetest(topicId, moduleId, retestId, answers, getLocalDate())
+        : answersRevisionRef.current
+          ? await submitExam(topicId, moduleId, answers, getLocalDate(), { attemptId: attemptIdRef.current, expectedAnswersRevision: answersRevisionRef.current })
+          : await submitExam(topicId, moduleId, answers, getLocalDate())
       setEvaluation(result)
       setPhase('results')
     } catch (submitError) {
@@ -169,9 +226,10 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
       }
       setError(toPublicError(submitError, 'Your checkpoint couldn’t be submitted. Your answers are still here; try again when you’re ready.').message)
     } finally {
+      actionLockRef.current = false
       setLoading(false)
     }
-  }, [answers, isPartialRetest, moduleId, persistAnswers, phase, questions, retestId, topicId])
+  }, [answers, flushPendingSave, isPartialRetest, moduleId, phase, questions, retestId, topicId])
 
   const handlePartialRetest = useCallback(() => {
     const failedOutcomeIds = evaluation?.failedOutcomeIds || []
@@ -202,9 +260,9 @@ export default function ExamPanel({ topicId, moduleId, moduleTitle = '', moduleL
     submit: handleSubmit,
     backToQuestions: () => setPhase('player'),
     editQuestion: (index) => { setCurrentIndex(index); setFocusQuestionId(null); setPhase('player') },
-    back: onBack || (() => navigate('/')),
+    back: async () => { try { await flushPendingSave() } catch { setSaveState('error') } if (onBack) onBack(); else navigate('/') },
     retake: () => launchAttempt(() => retakeExam(topicId, moduleId)),
-    partialRetest: handlePartialRetest,
+    partialRetest: () => { if (!actionLockRef.current) handlePartialRetest() },
     reviewLesson: handleReviewLesson,
   }
   return <Suspense fallback={<div className="checkpoint-loading" role="status">Preparing your Chapter checkpoint…</div>}><CheckpointThemeView model={checkpointModel} /></Suspense>

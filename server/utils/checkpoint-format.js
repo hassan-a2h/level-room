@@ -18,7 +18,7 @@ function exactKeys(value, allowed) {
   return Object.keys(value).every((key) => allowed.has(key))
 }
 
-function validateOutcomes(outcomes) {
+function validateOutcomes(outcomes, { allowBreadthOnly = false } = {}) {
   if (!Array.isArray(outcomes) || outcomes.length === 0) {
     return invalid('CHECKPOINT_OUTCOMES_INVALID', 'outcomes', 'Chapter outcomes are unavailable.')
   }
@@ -40,14 +40,14 @@ function validateOutcomes(outcomes) {
     if (outcome.role === 'core') hasCore = true
   }
 
-  if (!hasCore) return invalid('CHECKPOINT_OUTCOMES_INVALID', 'outcomes', 'A Chapter checkpoint requires at least one core outcome.')
+  if (!hasCore && !allowBreadthOnly) return invalid('CHECKPOINT_OUTCOMES_INVALID', 'outcomes', 'A Chapter checkpoint requires at least one core outcome.')
   return { valid: true, ids }
 }
 
-function validateEnvelope(value, outcomes) {
+function validateEnvelope(value, outcomes, { allowBreadthOnly = false } = {}) {
   if (!isRecord(value) || !exactKeys(value, ENVELOPE_FIELDS)) return invalid()
   if (value.schemaVersion !== 1) return invalid('CHECKPOINT_SCHEMA_UNSUPPORTED', 'checkpoint.schemaVersion', 'This checkpoint schema version is not supported.')
-  const checkedOutcomes = validateOutcomes(outcomes)
+  const checkedOutcomes = validateOutcomes(outcomes, { allowBreadthOnly })
   if (!checkedOutcomes.valid) return checkedOutcomes
   if (!Array.isArray(value.publicQuestions) || value.publicQuestions.length === 0 || value.publicQuestions.length > 25 || !isRecord(value.answerKey)) return invalid()
 
@@ -107,7 +107,7 @@ export function validateCheckpointEnvelope(value, outcomes) {
 }
 
 export function validateGeneratedCheckpointEnvelope(value, outcomes, { targeted = false } = {}) {
-  const checked = validateEnvelope(value, outcomes)
+  const checked = validateEnvelope(value, outcomes, { allowBreadthOnly: targeted })
   if (!checked.valid) return checked
 
   const minimum = targeted ? 2 : 4
@@ -122,7 +122,7 @@ export function validateGeneratedCheckpointEnvelope(value, outcomes, { targeted 
   return checked
 }
 
-export function parseCheckpointEnvelope(raw, outcomes) {
+export function parseCheckpointEnvelope(raw, outcomes, { targeted = false } = {}) {
   let value = raw
   if (typeof raw === 'string') {
     try {
@@ -131,7 +131,7 @@ export function parseCheckpointEnvelope(raw, outcomes) {
       return invalid()
     }
   }
-  return validateEnvelope(value, outcomes)
+  return validateEnvelope(value, outcomes, { allowBreadthOnly: targeted })
 }
 
 export function checkpointPublicQuestions(envelope) {

@@ -1,7 +1,12 @@
 import AxeBuilder from '@axe-core/playwright'
 import { test, expect } from './fixtures/api-fixtures.js'
 
-const themes = ['living-atlas', 'curiosity-engine', 'mission-workshop']
+const themes = [
+  'morning-mist', 'forest-dusk', 'blue-harbor', 'deep-ocean',
+  'lavender-still', 'night-lavender', 'warm-sand', 'cocoa-evening',
+  'sage-garden', 'moss-night', 'rosewater', 'plum-twilight',
+  'quiet-linen', 'graphite-calm', 'sea-glass', 'midnight-ink',
+]
 const routes = [
   { route: '/', scenario: 'emptyDashboard', state: 'empty dashboard' },
   { route: '/', scenario: 'populatedDashboard', state: 'populated Trail' },
@@ -30,13 +35,13 @@ for (const theme of themes) {
 test('theme cards work by keyboard and retain a visible focus indicator in forced colors', async ({ page, apiMocks }) => {
   apiMocks.useScenario('settings')
   await page.goto('/settings')
-  const livingAtlas = page.getByRole('radio', { name: /Living Atlas/ })
-  await livingAtlas.focus()
+  const morningMist = page.getByRole('radio', { name: /Morning Mist/ })
+  await morningMist.focus()
   await page.emulateMedia({ forcedColors: 'active' })
-  await expect.poll(() => livingAtlas.evaluate((radio) => getComputedStyle(radio).outlineStyle)).not.toBe('none')
+  await expect.poll(() => morningMist.evaluate((radio) => getComputedStyle(radio).outlineStyle)).not.toBe('none')
   await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('radio', { name: /Curiosity Engine/ })).toBeChecked()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'curiosity-engine')
+  await expect(page.getByRole('radio', { name: /Forest Dusk/ })).toBeChecked()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'forest-dusk')
 })
 
 test('reduced-motion mode disables celebratory and spatial animations', async ({ page, apiMocks }) => {

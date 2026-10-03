@@ -11,7 +11,9 @@
         const aliases = { 'living-atlas': 'morning-mist', 'curiosity-engine': 'blue-harbor', 'mission-workshop': 'forest-dusk' }
         let theme = 'morning-mist'
         try {
-          const storedTheme = localStorage.getItem('mastery-trail-theme-v2') || localStorage.getItem('mastery-roadmap-theme')
+          const versionedTheme = localStorage.getItem('mastery-trail-theme-v2')
+          const legacyTheme = localStorage.getItem('mastery-roadmap-theme')
+          const storedTheme = versionedTheme || (legacyTheme ? 'living-atlas' : null)
           const resolvedTheme = aliases[storedTheme] || storedTheme
           if (ids.includes(resolvedTheme)) theme = resolvedTheme
         } catch {

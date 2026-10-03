@@ -8,6 +8,7 @@ import { checkPrerequisites } from '../utils/lesson-state-machine.js'
 import { getBlock, parseActivityDocument, sanitizeActivityDocument, validateActivityDocument } from '../utils/activity-schema.js'
 import { isValidDate } from '../utils/streak-tracker.js'
 import { publicOutcome } from '../utils/outcome-manifest.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 const MAX_MESSAGE_LENGTH = 2000
@@ -121,7 +122,7 @@ function buildTaskEvidence(evidence) {
     `Reflection:\n${fields.reflection.trim()}`,
   ].join('\n\n')
   if (Buffer.byteLength(content, 'utf8') > MAX_EVIDENCE_BYTES) throw routeError('Build evidence is too large.', 400, 'INVALID_TASK_EVIDENCE')
-  return content
+  return { content, envelope: { kind: 'build-evidence', version: 1, evidence: fields } }
 }
 
 function readArtifact(progressId) {
@@ -132,10 +133,25 @@ function readArtifact(progressId) {
   if (!artifact) return null
   const scores = parseJson(artifact.rubric_scores, {})
   const feedback = parseJson(artifact.feedback, {})
+  const stored = parseJson(artifact.content, null)
+  const recognizedEnvelope = stored?.kind === 'build-evidence' || stored?.version === 1 && stored?.evidence
+  const candidateEvidence = recognizedEnvelope && stored.kind === 'build-evidence' && stored.version === 1 && stored.evidence && typeof stored.evidence === 'object' && !Array.isArray(stored.evidence)
+    ? stored.evidence
+    : null
+  if (recognizedEnvelope && !candidateEvidence) throw routeError('Stored Build evidence is invalid.', 500, 'ARTIFACT_STORAGE_INVALID')
+  const evidence = candidateEvidence && ['setup', 'actions', 'result', 'reflection'].every((field) => typeof candidateEvidence[field] === 'string' && candidateEvidence[field].trim() && Buffer.byteLength(candidateEvidence[field], 'utf8') <= MAX_EVIDENCE_FIELD_BYTES)
+    ? candidateEvidence
+    : null
+  if (recognizedEnvelope && !evidence) throw routeError('Stored Build evidence is too large or incomplete.', 500, 'ARTIFACT_STORAGE_INVALID')
+  const content = evidence
+    ? [`Setup:\n${evidence.setup}`, `Actions:\n${evidence.actions}`, `Result:\n${evidence.result}`, `Reflection:\n${evidence.reflection}`].join('\n\n')
+    : artifact.content
   const total = RUBRIC_DIMENSIONS.reduce((sum, dimension) => sum + (Number.isInteger(scores?.[dimension]) ? scores[dimension] : 0), 0)
+  if (evidence && Buffer.byteLength(content, 'utf8') > MAX_EVIDENCE_BYTES) throw routeError('Stored Build evidence is too large.', 500, 'ARTIFACT_STORAGE_INVALID')
   return {
     id: artifact.id,
-    content: artifact.content,
+    content,
+    evidence,
     passed: artifact.passed === 1,
     attemptNumber: artifact.attempt_number,
     createdAt: artifact.created_at,
@@ -180,7 +196,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
 
     const document = getActivityDocument(lesson)
     const progress = get(
-      'SELECT state, artifact_passed, started_at, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?',
+      'SELECT id, state, artifact_passed, started_at, completed_at FROM progress WHERE topic_id = ? AND lesson_id = ?',
       topicId,
       lessonId,
     ) || { state: 'not_started', artifact_passed: 0, started_at: null, completed_at: null }
@@ -209,6 +225,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
       activityDocument: document ? sanitizeActivityDocument(document) : null,
       activityState,
       activityProgress,
+      historicalArtifact: progress?.state === 'passed' && !document && progress.id ? readArtifact(progress.id) : null,
       locked: false,
     })
   } catch (error) {
@@ -217,6 +234,7 @@ router.get('/topics/:id/lessons/:lid', (req, res) => {
 })
 
 router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
+  const requestRevision = getDataRevision()
   let abortRequest
   try {
     const topicId = positiveId(req.params.id, 'topicId')
@@ -289,7 +307,9 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
       if (!res.destroyed && !res.writableEnded) res.end()
       return
     }
+    assertDataRevision(requestRevision)
     transaction(() => {
+      assertDataRevision(requestRevision)
       run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'user', body.content.trim())
       run('INSERT INTO messages (topic_id, lesson_id, role, content) VALUES (?, ?, ?, ?)', topicId, lessonId, 'assistant', text.trim())
     })()
@@ -312,6 +332,7 @@ router.post('/topics/:id/lessons/:lid/chat', async (req, res) => {
 })
 
 router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const lessonId = positiveId(req.params.lid, 'lessonId')
@@ -341,10 +362,10 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       return res.status(409).json({ error: 'Complete all required activities before submitting a Build.', code: 'ACTIVITIES_NOT_READY', activityProgress: readiness })
     }
 
-    const evidence = buildTaskEvidence(body.evidence)
-    if (Buffer.byteLength(evidence, 'utf8') > MAX_EVIDENCE_CHARS) return res.status(400).json({ error: 'Build evidence is too large.', code: 'INVALID_TASK_EVIDENCE' })
+    const evidencePayload = buildTaskEvidence(body.evidence)
+    if (Buffer.byteLength(evidencePayload.content, 'utf8') > MAX_EVIDENCE_CHARS) return res.status(400).json({ error: 'Build evidence is too large.', code: 'INVALID_TASK_EVIDENCE' })
     const outcomes = parseOutcomes(lesson.outcomes)
-    const system = `Evaluate the learner's Build evidence for Session "${lesson.title}". Learning outcomes: ${outcomes.map((outcome) => outcome.title).join('; ')}.\nBuild specification: ${JSON.stringify(taskSpec)}\nLearner evidence:\n${evidence}\n\nScore each rubric dimension from 0 to 2 and provide short actionable feedback for each. Return strict JSON only: {"scores":{"Correctness":0,"Completeness":0,"Clarity":0,"Edge Cases":0},"feedback":{"Correctness":"...","Completeness":"...","Clarity":"...","Edge Cases":"..."}}. Do not use markdown.`
+    const system = `Evaluate the learner's Build evidence for Session "${lesson.title}". Learning outcomes: ${outcomes.map((outcome) => outcome.title).join('; ')}.\nBuild specification: ${JSON.stringify(taskSpec)}\nLearner evidence:\n${evidencePayload.content}\n\nScore each rubric dimension from 0 to 2 and provide short actionable feedback for each. Return strict JSON only: {"scores":{"Correctness":0,"Completeness":0,"Clarity":0,"Edge Cases":0},"feedback":{"Correctness":"...","Completeness":"...","Clarity":"...","Edge Cases":"..."}}. Do not use markdown.`
     const config = requireLlmConfig()
     let generated
     try {
@@ -357,6 +378,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       if (error instanceof LlmClientError) return sendError(res, error, 'Failed to evaluate Build.')
       return res.status(502).json({ error: 'Build evaluation failed. Please retry.', code: 'ARTIFACT_EVALUATION_FAILED', retryable: true })
     }
+    assertDataRevision(requestRevision)
 
     let parsed
     try { parsed = JSON.parse(generated?.text) } catch {
@@ -376,6 +398,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
     const evaluation = { overallScore, passed, scores, feedback }
 
     const saved = transaction(() => {
+      assertDataRevision(requestRevision)
       const current = get('SELECT id, state, artifact_passed FROM progress WHERE topic_id = ? AND lesson_id = ?', topicId, lessonId)
       if (current?.state === 'passed' && current.artifact_passed === 1) {
         return { alreadyCompleted: true, artifact: readArtifact(current.id) }
@@ -389,7 +412,7 @@ router.post('/topics/:id/lessons/:lid/artifact', async (req, res) => {
       const inserted = run(
         'INSERT INTO artifacts (progress_id, content, rubric_scores, passed, feedback, attempt_number) VALUES (?, ?, ?, ?, ?, ?)',
         current.id,
-        evidence,
+        JSON.stringify(evidencePayload.envelope),
         JSON.stringify(scores),
         passed ? 1 : 0,
         JSON.stringify(feedback),

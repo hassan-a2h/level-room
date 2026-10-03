@@ -12,18 +12,23 @@ async function readTutorStream(response, onText) {
   const decoder = new TextDecoder()
   let buffer = ''
   let fullText = ''
-  const consume = (line) => {
-    if (!line.startsWith('data:')) return
-    const payload = line.slice(5).trim()
+  let sawDone = false
+  const consume = (eventText) => {
+    const data = eventText.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
+    if (!data) return
+    const payload = data.trim()
     if (!payload) return
     let value
     try { value = JSON.parse(payload) } catch { return }
-    if (value === '[DONE]') return
+    if (value === '[DONE]') { sawDone = true; return }
     if (typeof value === 'string') {
       fullText += value
       onText(fullText)
-    } else if (value?.error) {
-      throw new Error(value.error)
+    } else if (value?.message || value?.error) {
+      const error = new Error(value.message || value.error)
+      error.code = value.code
+      error.retryable = value.retryable
+      throw error
     }
   }
   try {
@@ -31,9 +36,9 @@ async function readTutorStream(response, onText) {
       const { value, done } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split(/\r?\n/)
-      buffer = lines.pop() || ''
-      lines.forEach(consume)
+      const events = buffer.split(/\r?\n\r?\n/)
+      buffer = events.pop() || ''
+      events.forEach(consume)
     }
     buffer += decoder.decode()
     if (buffer) consume(buffer)
@@ -41,6 +46,7 @@ async function readTutorStream(response, onText) {
     await reader.cancel().catch(() => {})
     throw error
   }
+  if (!sawDone) throw new Error('The guide response ended before it finished. Please retry.')
   if (!fullText.trim()) throw new Error('The guide returned no response. Please retry.')
   return fullText.trim()
 }
@@ -64,6 +70,9 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   const trigger = useRef(null)
+  const dialog = useRef(null)
+  const requestId = useRef(0)
+  const sendLock = useRef(false)
   const currentDraft = controlledDraft ?? draft
   const isOpen = controlledOpen ?? open
 
@@ -85,30 +94,49 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
     if (!isOpen) return undefined
     function onKeyDown(event) {
       if (event.key === 'Escape') closeSheet()
+      if (event.key !== 'Tab' || !dialog.current) return
+      const focusable = [...dialog.current.querySelectorAll('button, textarea, input, [href]')].filter((node) => !node.disabled)
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKeyDown)
+    requestAnimationFrame(() => dialog.current?.querySelector('textarea,button')?.focus())
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [isOpen, closeSheet])
 
+  useEffect(() => () => { requestId.current += 1 }, [])
+
+  useEffect(() => {
+    requestId.current += 1
+  }, [activityBlockId, lessonId, topicId])
+
   const send = useCallback(async (message = currentDraft) => {
     const content = message.trim()
-    if (!content || content.length > MAX_MESSAGE_LENGTH || busy) return
+    if (!content || content.length > MAX_MESSAGE_LENGTH || busy || sendLock.current) return
+    sendLock.current = true
+    const requestNumber = ++requestId.current
     setBusy(true)
     setError('')
     setStreamingText('')
     try {
       const response = await sendChatMessage(topicId, lessonId, content, activityBlockId)
-      const text = await readTutorStream(response, setStreamingText)
+      const text = await readTutorStream(response, (nextText) => { if (requestNumber === requestId.current) setStreamingText(nextText) })
+      if (requestNumber !== requestId.current) return
       const nextMessages = [...messages, { id: `user-${Date.now()}`, role: 'user', content }, { id: `guide-${Date.now()}`, role: 'assistant', content: text }]
       setMessages(nextMessages)
       onMessagesChange?.(nextMessages)
       changeDraft('')
       setStreamingText('')
     } catch (requestError) {
+      if (requestNumber !== requestId.current) return
       setError(toPublicError(requestError, 'Your guide is temporarily unavailable. Please retry.').message)
       setStreamingText('')
     } finally {
       setBusy(false)
+      sendLock.current = false
     }
   }, [activityBlockId, busy, changeDraft, currentDraft, lessonId, messages, onMessagesChange, topicId])
 
@@ -128,7 +156,7 @@ export default function TutorSidecar({ topicId, lessonId, activityBlockId, messa
   return <>
     <button ref={trigger} type="button" className="session-guide-trigger" aria-haspopup="dialog" onClick={() => changeOpen(true)}>Ask your guide</button>
     {isOpen && <div className="session-guide-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSheet() }}>
-      <section className="session-guide-sheet" role="dialog" aria-modal="true" aria-label="Ask your guide">
+      <section ref={dialog} className="session-guide-sheet" role="dialog" aria-modal="true" aria-label="Ask your guide">
         <div className="session-tutor-heading"><div><p className="session-eyebrow">Need a nudge?</p><h2>Ask your guide</h2></div><button type="button" aria-label="Close guide" onClick={closeSheet}>Close</button></div>
         {content('sheet')}
       </section>

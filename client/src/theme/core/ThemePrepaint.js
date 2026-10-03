@@ -29,9 +29,9 @@ export function prepaintTheme({ root, storage, packs, storageKey = THEME_STORAGE
     if (storageKey === THEME_STORAGE_KEY) {
       const legacyValue = source.getItem(LEGACY_THEME_STORAGE_KEY)
       if (storedId === null && legacyValue !== null) {
-        storedId = available.some((candidate) => candidate.id === legacyValue) || getTheme(legacyValue)
-          ? legacyValue
-          : DEFAULT_THEME_ID
+        // The old key represented the pre-v2 palette. Keep the migration
+        // deterministic so an obsolete palette cannot select a removed pack.
+        storedId = getTheme(legacyValue) ? 'living-atlas' : DEFAULT_THEME_ID
         source.setItem(storageKey, storedId)
       }
       if (legacyValue !== null) source.removeItem(LEGACY_THEME_STORAGE_KEY)

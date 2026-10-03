@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { createHash } from 'node:crypto'
 import { all, get, run, transaction } from '../db.js'
 import { generateText, LlmClientError } from '../llm/client.js'
 import { llmRequestOptions } from '../llm/request-options.js'
@@ -9,6 +10,7 @@ import { scheduleSrs } from '../utils/lesson-state-machine.js'
 import { scheduleCumulativeReviews } from '../utils/srs-scheduler.js'
 import { recordMasteryEvent } from '../utils/streak-tracker.js'
 import { publicOutcome, validateOutcome } from '../utils/outcome-manifest.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 const MAX_ANSWER_LENGTH = 5000
@@ -137,6 +139,11 @@ function serializeAnswers(rawAnswers, questions) {
   return answers
 }
 
+function answersRevision(answers = {}) {
+  const canonical = Object.fromEntries(Object.entries(answers).sort(([left], [right]) => left.localeCompare(right)))
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
+}
+
 function requiredAnswers(questions, answers) {
   const unanswered = questions.filter((question) => !answers[question.id] || !answers[question.id].trim())
   if (unanswered.length) {
@@ -182,6 +189,7 @@ function responseFor(attempt, envelope, chapter, answers = {}) {
     id: attempt.id,
     questions: checkpointPublicQuestions(envelope),
     answers,
+    answersRevision: answersRevision(answers),
     status: attempt.status || 'pending',
     type: attempt.type || 'full',
     parentExamId: attempt.parent_exam_id || null,
@@ -207,8 +215,27 @@ function getPending(topicId, moduleId, type = null) {
   )
 }
 
-function readEnvelope(row, outcomes) {
-  const checked = parseCheckpointEnvelope(row.questions, outcomes)
+function getAttempt(topicId, moduleId, attemptId, type = null) {
+  if (!Number.isSafeInteger(Number(attemptId)) || Number(attemptId) < 1) return null
+  const typeClause = type ? ' AND type = ?' : ''
+  return get(
+    `SELECT id, questions, answers, evaluation, status, type, parent_exam_id FROM exam_attempts WHERE id = ? AND topic_id = ? AND module_id = ? AND status = ?${typeClause}`,
+    ...(type ? [attemptId, topicId, moduleId, 'pending', type] : [attemptId, topicId, moduleId, 'pending']),
+  )
+}
+
+function assertAttemptRevision(attempt, body = {}) {
+  if (body.attemptId !== undefined && Number(body.attemptId) !== Number(attempt.id)) {
+    throw new CheckpointError('This checkpoint attempt is no longer active. Reload the saved attempt.', 'CHECKPOINT_ATTEMPT_CONFLICT', 409)
+  }
+  if (body.expectedAnswersRevision) {
+    const stored = JSON.parse(attempt.answers || '{}')
+    if (answersRevision(stored) !== body.expectedAnswersRevision) throw new CheckpointError('Saved checkpoint answers changed elsewhere. Choose which draft to keep.', 'CHECKPOINT_ANSWERS_CONFLICT', 409)
+  }
+}
+
+function readEnvelope(row, outcomes, { targeted = false } = {}) {
+  const checked = parseCheckpointEnvelope(row.questions, outcomes, { targeted })
   if (!checked.valid) throw new CheckpointError('Stored checkpoint is invalid. Start a new attempt.', 'CHECKPOINT_STORAGE_INVALID', 500)
   return checked.value
 }
@@ -285,6 +312,7 @@ function sendError(res, error, fallback) {
     ...(error.examNotReady ? { examNotReady: true, lessonsRemaining: error.lessonsRemaining, passedLessons: error.passedLessons, totalLessons: error.totalLessons } : {}),
     ...(error.unansweredQuestionIds ? { unansweredQuestionIds: error.unansweredQuestionIds, unansweredCount: error.unansweredCount, totalQuestions: error.totalQuestions } : {}),
   })
+  if (Number.isInteger(error?.status)) return res.status(error.status).json({ error: error.message, code: error.code, retryable: error.retryable })
   console.error('Checkpoint route error:', error?.message || error)
   return res.status(500).json({ error: fallback, code: 'CHECKPOINT_ERROR', retryable: true })
 }
@@ -297,7 +325,8 @@ router.get('/topics/:id/modules/:mid/exam', (req, res) => {
     ensureReady(topicId, moduleId)
     const existing = getPending(topicId, moduleId)
     if (!existing) return res.status(404).json({ error: 'No checkpoint is in progress. Start one to continue.' })
-    const envelope = readEnvelope(existing, chapter.outcomes)
+    const partial = existing.type === 'partial'
+    const envelope = readEnvelope(existing, partial ? outcomesForAttempt(existing.questions, chapter.outcomes) : chapter.outcomes, { targeted: partial })
     let answers = {}
     try { answers = JSON.parse(existing.answers || '{}') } catch { throw new CheckpointError('Saved checkpoint answers are invalid.', 'CHECKPOINT_STORAGE_INVALID', 500) }
     answers = serializeAnswers(answers, envelope.publicQuestions)
@@ -308,6 +337,7 @@ router.get('/topics/:id/modules/:mid/exam', (req, res) => {
 })
 
 router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
@@ -315,12 +345,14 @@ router.post('/topics/:id/modules/:mid/exam', async (req, res) => {
     ensureReady(topicId, moduleId)
     const existing = getPending(topicId, moduleId)
     if (existing) {
-      const envelope = readEnvelope(existing, chapter.outcomes)
+      const partial = existing.type === 'partial'
+      const envelope = readEnvelope(existing, partial ? outcomesForAttempt(existing.questions, chapter.outcomes) : chapter.outcomes, { targeted: partial })
       let answers = {}
       try { answers = JSON.parse(existing.answers || '{}') } catch { throw new CheckpointError('Saved checkpoint answers are invalid.', 'CHECKPOINT_STORAGE_INVALID', 500) }
       return res.json(responseFor(existing, envelope, chapter, serializeAnswers(answers, envelope.publicQuestions)))
     }
     const envelope = await generateEnvelope(chapter)
+    assertDataRevision(requestRevision)
     const attempt = insertAttempt(topicId, moduleId, envelope)
     return res.status(201).json(responseFor(attempt, envelope, chapter))
   } catch (error) {
@@ -333,22 +365,29 @@ router.post('/topics/:id/modules/:mid/exam/save-progress', (req, res) => {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
     const chapter = readChapter(topicId, moduleId)
-    const existing = getPending(topicId, moduleId)
+    const existing = req.body?.attemptId ? getAttempt(topicId, moduleId, req.body.attemptId) : getPending(topicId, moduleId)
     if (!existing) throw new CheckpointError('No checkpoint in progress to save.', 'CHECKPOINT_NOT_FOUND', 404)
-    const envelope = readEnvelope(existing, chapter.outcomes)
+    assertAttemptRevision(existing, req.body)
+    const partial = existing.type === 'partial'
+    const envelope = readEnvelope(existing, partial ? outcomesForAttempt(existing.questions, chapter.outcomes) : chapter.outcomes, { targeted: partial })
     const answers = serializeAnswers(req.body?.answers, envelope.publicQuestions)
-    run('UPDATE exam_attempts SET answers = ? WHERE id = ? AND status = ?', JSON.stringify(answers), existing.id, 'pending')
-    return res.json({ ok: true, saved: true })
+    const update = run('UPDATE exam_attempts SET answers = ? WHERE id = ? AND status = ?', JSON.stringify(answers), existing.id, 'pending')
+    if (update.changes !== 1) throw new CheckpointError('This checkpoint is no longer active.', 'CHECKPOINT_ATTEMPT_CONFLICT', 409)
+    return res.json({ ok: true, saved: true, attemptId: existing.id, answersRevision: answersRevision(answers) })
   } catch (error) {
     return sendError(res, error, 'Failed to save checkpoint progress.')
   }
 })
 
-async function submitAttempt({ req, res, topicId, moduleId, chapter, attempt, partial = false }) {
-  const envelope = readEnvelope(attempt, partial ? outcomesForAttempt(attempt.questions, chapter.outcomes) : chapter.outcomes)
+async function submitAttempt({ req, res, topicId, moduleId, chapter, attempt, partial = false, requestRevision = getDataRevision() }) {
+  assertAttemptRevision(attempt, req.body)
+  assertDataRevision(requestRevision)
+  const envelope = readEnvelope(attempt, partial ? outcomesForAttempt(attempt.questions, chapter.outcomes) : chapter.outcomes, { targeted: partial })
   const answers = serializeAnswers(req.body?.answers, envelope.publicQuestions)
   requiredAnswers(envelope.publicQuestions, answers)
+  const initialAnswersRevision = answersRevision(JSON.parse(attempt.answers || '{}'))
   const writtenEvaluations = await evaluateWritten(envelope, answers)
+  assertDataRevision(requestRevision)
   const currentEvaluation = scoreCheckpoint({ envelope, outcomes: partial ? chapter.outcomes.filter((outcome) => envelope.publicQuestions.some((question) => question.outcomeIds.includes(outcome.id))) : chapter.outcomes, answers, writtenEvaluations })
   let evaluation = currentEvaluation
   if (partial) {
@@ -356,10 +395,25 @@ async function submitAttempt({ req, res, topicId, moduleId, chapter, attempt, pa
     if (!parent?.evaluation) throw new CheckpointError('The full checkpoint result is missing.', 'CHECKPOINT_STORAGE_INVALID', 500)
     let previous
     try { previous = JSON.parse(parent.evaluation) } catch { throw new CheckpointError('The full checkpoint result is invalid.', 'CHECKPOINT_STORAGE_INVALID', 500) }
+    const priorRetests = all(
+      "SELECT evaluation FROM exam_attempts WHERE parent_exam_id = ? AND type = 'partial' AND status <> 'pending' AND id <> ? ORDER BY id",
+      attempt.parent_exam_id,
+      attempt.id,
+    )
+    for (const prior of priorRetests) {
+      try {
+        if (prior.evaluation) previous = mergePartialEvaluation(previous, JSON.parse(prior.evaluation), chapter.outcomes)
+      } catch { /* malformed historical partials are ignored; the root evaluation remains authoritative */ }
+    }
     evaluation = mergePartialEvaluation(previous, currentEvaluation, chapter.outcomes)
   }
 
   const result = transaction(() => {
+    assertDataRevision(requestRevision)
+    const current = get('SELECT id, answers, status FROM exam_attempts WHERE id = ? AND topic_id = ? AND module_id = ?', attempt.id, topicId, moduleId)
+    if (!current || current.status !== 'pending' || answersRevision(JSON.parse(current.answers || '{}')) !== initialAnswersRevision) {
+      throw new CheckpointError('Checkpoint answers changed while they were being evaluated. Reload and submit the latest answers.', 'CHECKPOINT_ANSWERS_CONFLICT', 409)
+    }
     const nextStatus = evaluation.passed ? 'passed' : 'failed'
     const update = run('UPDATE exam_attempts SET answers = ?, evaluation = ?, status = ? WHERE id = ? AND status = ?', JSON.stringify(answers), JSON.stringify(evaluation), nextStatus, attempt.id, 'pending')
     if (update.changes !== 1) throw new CheckpointError('This checkpoint was already submitted. Reload to see its result.', 'CHECKPOINT_ALREADY_SUBMITTED', 409)
@@ -380,26 +434,32 @@ function outcomesForAttempt(rawEnvelope, outcomes) {
 }
 
 router.post('/topics/:id/modules/:mid/exam/submit', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
     const chapter = readChapter(topicId, moduleId)
-    const attempt = getPending(topicId, moduleId, 'full')
+    const attempt = req.body?.attemptId ? getAttempt(topicId, moduleId, req.body.attemptId, 'full') : getPending(topicId, moduleId, 'full')
     if (!attempt) throw new CheckpointError('No Chapter checkpoint is in progress.', 'CHECKPOINT_NOT_FOUND', 404)
-    return await submitAttempt({ req, res, topicId, moduleId, chapter, attempt })
+    return await submitAttempt({ req, res, topicId, moduleId, chapter, attempt, requestRevision })
   } catch (error) {
     return sendError(res, error, 'Failed to submit checkpoint.')
   }
 })
 
 router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
     const chapter = readChapter(topicId, moduleId)
     ensureReady(topicId, moduleId)
     const envelope = await generateEnvelope(chapter)
-    const attempt = insertAttempt(topicId, moduleId, envelope)
+    assertDataRevision(requestRevision)
+    const attempt = transaction(() => {
+      run('UPDATE exam_attempts SET status = ? WHERE topic_id = ? AND module_id = ? AND status = ?', 'superseded', topicId, moduleId, 'pending')
+      return insertAttempt(topicId, moduleId, envelope)
+    })()
     return res.status(201).json(responseFor(attempt, envelope, chapter))
   } catch (error) {
     return sendError(res, error, 'Failed to create a new checkpoint attempt.')
@@ -407,11 +467,12 @@ router.post('/topics/:id/modules/:mid/exam/retake', async (req, res) => {
 })
 
 router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
     const chapter = readChapter(topicId, moduleId)
-    const latestFailed = get('SELECT id, evaluation FROM exam_attempts WHERE topic_id = ? AND module_id = ? AND type = ? AND status = ? ORDER BY id DESC LIMIT 1', topicId, moduleId, 'full', 'failed')
+    const latestFailed = get("SELECT id, evaluation, type FROM exam_attempts WHERE topic_id = ? AND module_id = ? AND type = 'full' AND status = ? ORDER BY id DESC LIMIT 1", topicId, moduleId, 'failed')
     if (!latestFailed) throw new CheckpointError('Complete a full checkpoint attempt before starting targeted practice.', 'FAILED_CHECKPOINT_REQUIRED', 400)
     let evaluation
     try { evaluation = JSON.parse(latestFailed.evaluation || '{}') } catch { throw new CheckpointError('The previous checkpoint result is invalid.', 'CHECKPOINT_STORAGE_INVALID', 500) }
@@ -421,8 +482,15 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
       throw new CheckpointError('Choose one or more outcomes from the missed-outcome list.', 'RETEST_OUTCOMES_INVALID', 400)
     }
     const envelope = await generateEnvelope(chapter, requested)
+    assertDataRevision(requestRevision)
     if (envelope.publicQuestions.some((question) => question.outcomeIds.some((id) => !requested.includes(id)))) throw new CheckpointError('The targeted checkpoint included an unrelated outcome.', 'CHECKPOINT_OUTPUT_INVALID', 502)
-    const attempt = insertAttempt(topicId, moduleId, envelope, 'partial', latestFailed.id)
+    const attempt = transaction(() => {
+      assertDataRevision(requestRevision)
+      if (get("SELECT id FROM exam_attempts WHERE topic_id = ? AND module_id = ? AND type = 'partial' AND status = 'pending'", topicId, moduleId)) {
+        throw new CheckpointError('A targeted checkpoint is already in progress.', 'CHECKPOINT_RETEST_IN_PROGRESS', 409)
+      }
+      return insertAttempt(topicId, moduleId, envelope, 'partial', latestFailed.id)
+    })()
     return res.status(201).json(responseFor(attempt, envelope, chapter))
   } catch (error) {
     return sendError(res, error, 'Failed to create targeted checkpoint.')
@@ -430,6 +498,7 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest', async (req, res) => 
 })
 
 router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     const topicId = positiveId(req.params.id, 'topicId')
     const moduleId = positiveId(req.params.mid, 'moduleId')
@@ -437,7 +506,7 @@ router.post('/topics/:id/modules/:mid/exam/partial-retest/:rid/submit', async (r
     const chapter = readChapter(topicId, moduleId)
     const attempt = get('SELECT id, questions, answers, evaluation, status, type, parent_exam_id FROM exam_attempts WHERE id = ? AND topic_id = ? AND module_id = ? AND type = ? AND status = ?', retestId, topicId, moduleId, 'partial', 'pending')
     if (!attempt) throw new CheckpointError('Targeted checkpoint is unavailable or already submitted.', 'CHECKPOINT_NOT_FOUND', 404)
-    return await submitAttempt({ req, res, topicId, moduleId, chapter, attempt, partial: true })
+    return await submitAttempt({ req, res, topicId, moduleId, chapter, attempt, partial: true, requestRevision })
   } catch (error) {
     return sendError(res, error, 'Failed to submit targeted checkpoint.')
   }

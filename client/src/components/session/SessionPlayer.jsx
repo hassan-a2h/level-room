@@ -17,7 +17,7 @@ function SessionThemeSurface({ model, actions, slots }) {
 export default function SessionPlayer({ topicId, lessonId, session, progress, messages = [], activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired = false }) {
   const navigate = useNavigate()
   const controller = useSessionController({ topicId, lessonId, session, progress, messages, activityDocument, activityState: initialState, activityProgress: initialProgress, artifactRequired })
-  const { model, activityState, busy, error: mutationError, reviewBlockId, setReviewBlockId, currentBlockId, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild } = controller
+  const { model, activityState, busy, error: mutationError, reviewBlockId, setReviewBlockId, heldFeedbackBlockId, continueAfterFeedback, currentBlockId, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild } = controller
   const activeHeading = useRef(null)
   const blocks = model.blocks
   const currentIndex = blocks.findIndex((block) => block.id === currentBlockId)
@@ -72,6 +72,7 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
       <p className="session-eyebrow">{reviewBlock ? 'Completed step' : `Step ${currentIndex + 1} of ${blocks.filter((block) => block.required).length}`}</p>
       <h2 id={`activity-title-${viewedBlock.id}`} ref={reviewBlock ? undefined : activeHeading} tabIndex={-1}>{viewedBlock.title}</h2>
       <ActivityRenderer
+        key={viewedBlock.id}
         block={viewedBlock}
         persistedBlockState={viewedEntry}
         busy={busy}
@@ -81,8 +82,9 @@ export default function SessionPlayer({ topicId, lessonId, session, progress, me
         draft={draftsByBlockId[viewedBlock.id]?.value}
         onDraftChange={(value) => actions.setBlockDraft(viewedBlock.id, value)}
       />
+      {heldFeedbackBlockId === viewedBlock.id && <div className="session-feedback-actions"><p role="status">Feedback saved. Take a moment to review it.</p><button type="button" className="ui-button ui-button-primary" onClick={continueAfterFeedback}>Continue</button></div>}
     </article>}
-    {allBlocksDone && artifactRequired && <section className="session-build-handoff" aria-labelledby="build-title"><h2 id="build-title">One practical Build remains</h2><p>Apply what you practiced, then this Session will be complete.</p><ArtifactPanel topicId={topicId} lessonId={lessonId} lesson={session} onBack={() => {}} onPassed={refreshAfterBuild} /></section>}
+    {allBlocksDone && artifactRequired && <section className="session-build-handoff" aria-labelledby="build-title"><h2 id="build-title">One practical Build remains</h2><p>Apply what you practiced, then this Session will be complete.</p><ArtifactPanel topicId={topicId} lessonId={lessonId} lesson={session} onBack={() => navigate(`/topic/${topicId}/lesson/${lessonId}`)} onPassed={refreshAfterBuild} /></section>}
     {!currentBlock && !allBlocksDone && <p role="alert">No active Session step is available. Return to your Trail and reload this Session.</p>}
   </>
   const tutorSlot = <TutorSidecar topicId={topicId} lessonId={lessonId} activityBlockId={currentBlockId} messages={tutor.messages} draft={tutor.draft} open={tutor.expanded} onDraftChange={actions.setTutorDraft} onOpenChange={(expanded) => expanded ? actions.openTutor() : actions.closeTutor()} onMessagesChange={(nextMessages) => updateTutor({ messages: nextMessages })} />

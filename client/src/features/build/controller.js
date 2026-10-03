@@ -102,6 +102,11 @@ export function useBuildController({
         setContentValue(data.content)
         setPreviousContent(data.content)
       }
+      if (data.evidence && typeof data.evidence === 'object') {
+        const restored = { setup: '', actions: '', result: '', reflection: '', ...data.evidence }
+        setEvidence(restored)
+        setPreviousEvidence(restored)
+      }
     }).catch(() => {})
     return () => { active = false }
   }, [getArtifactFn, lessonId, topicId])
@@ -161,8 +166,9 @@ export function useBuildController({
   const revise = useCallback(() => {
     setEvaluation(null)
     setError(null)
+    if (taskSpec && previousEvidence) setEvidence({ ...previousEvidence })
     if (!taskSpec) setContentValue(previousContent)
-  }, [previousContent, taskSpec])
+  }, [previousContent, previousEvidence, taskSpec])
 
   const model = useMemo(() => buildBuildViewModel({
     phase: evaluation ? 'results' : taskSpec ? 'evidence' : 'submission',

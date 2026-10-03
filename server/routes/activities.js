@@ -7,11 +7,17 @@ import { createRequestAbortSignal, llmRequestOptions } from '../llm/request-opti
 import { getBlock, parseActivityDocument, sanitizeActivityDocument, validateActivityDocument } from '../utils/activity-schema.js'
 import { ActivityRuntimeError, completeInformationalBlock, getActivityState, getActivityProgress, recordWrittenEvaluation, startActivitySession, submitObjectiveBlock } from '../utils/activity-runtime.js'
 import { checkPrerequisites } from '../utils/lesson-state-machine.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 const MAX_PROVIDER_BYTES = 128 * 1024
 const MAX_PROMPT_BYTES = 24 * 1024
 const inFlightGenerations = new Map()
+
+export function invalidateActivityGenerations() {
+  for (const entry of inFlightGenerations.values()) entry.controller.abort(new Error('Learning data was restored.'))
+  inFlightGenerations.clear()
+}
 
 class ActivityRouteError extends Error {
   constructor(message, code, status = 500) {
@@ -225,6 +231,7 @@ function attachWaiter(entry, req, res) {
 }
 
 function generationEntry(lesson, topicId, lessonId) {
+  const requestRevision = getDataRevision()
   const entry = { controller: new AbortController(), waiters: new Set(), settled: false, promise: null }
   inFlightGenerations.set(lessonId, entry)
   entry.promise = (async () => {
@@ -233,7 +240,9 @@ function generationEntry(lesson, topicId, lessonId) {
     const raw = await collectProviderOutput(config, context, entry.controller.signal)
     const document = parseProviderDocument(raw, lesson, config)
     if (entry.controller.signal.aborted) throw new ActivityRouteError('Activity generation was cancelled.', 'ACTIVITY_GENERATION_CANCELLED', 499)
+    assertDataRevision(requestRevision)
     return transaction(() => {
+      assertDataRevision(requestRevision)
       const serialized = JSON.stringify(document)
       const update = run(
         `UPDATE lessons SET activity_blocks = ?
@@ -316,6 +325,7 @@ async function evaluateWrittenAnswer({ req, res, providerConfig, lesson, documen
 }
 
 router.post('/topics/:id/lessons/:lid/activities', async (req, res) => {
+  const requestRevision = getDataRevision()
   let detach = () => {}
   try {
     const topicId = positiveId(req.params.id, 'topicId')
@@ -330,6 +340,7 @@ router.post('/topics/:id/lessons/:lid/activities', async (req, res) => {
     if (!entry) entry = generationEntry(access.lesson, topicId, lessonId)
     detach = attachWaiter(entry, req, res)
     const response = await entry.promise
+    assertDataRevision(requestRevision)
     if (res.destroyed || res.writableEnded || req.aborted) return
     return res.status(response.status).json(response.body)
   } catch (error) {

@@ -1,20 +1,21 @@
 import { test, expect } from './fixtures/api-fixtures.js'
 
 test('versioned theme selection persists across a reload', async ({ page, apiMocks }) => {
-  await page.addInitScript(() => localStorage.setItem('mastery-trail-theme-v2', 'mission-workshop'))
+  await page.addInitScript(() => localStorage.setItem('mastery-trail-theme-v2', 'forest-dusk'))
   apiMocks.useScenario('settings')
   await page.goto('/settings')
   await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'mission-workshop')
-  await expect(page.getByRole('radio', { name: /Mission Workshop/ })).toBeChecked()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'forest-dusk')
+  await expect(page.getByRole('radio', { name: /Forest Dusk/ })).toBeChecked()
 
   await page.reload()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'mission-workshop')
-  await expect(page.getByRole('radio', { name: /Mission Workshop/ })).toBeChecked()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'forest-dusk')
+  await expect(page.getByRole('radio', { name: /Forest Dusk/ })).toBeChecked()
 })
 
-test('legacy theme storage migrates to Living Atlas and removes the old key', async ({ page }) => {
+test('legacy theme storage migrates to Living Atlas and removes the old key', async ({ page, apiMocks }) => {
   await page.addInitScript(() => localStorage.setItem('mastery-roadmap-theme', 'mission-workshop'))
+  apiMocks.useScenario('emptyDashboard')
   await page.goto('/')
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'living-atlas')

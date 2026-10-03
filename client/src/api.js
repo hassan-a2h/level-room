@@ -1,4 +1,24 @@
 const API_BASE = 'http://localhost:3200'
+let dataRevision = null
+
+async function fetch(url, options) {
+  if (!options) {
+    const response = await globalThis.fetch(url)
+    const nextRevision = response.headers?.get?.('X-Learning-Data-Revision')
+    if (nextRevision) dataRevision = nextRevision
+    return response
+  }
+  let requestOptions = options
+  if (dataRevision && options.method && options.method !== 'GET' && options.method !== 'HEAD') {
+    const headers = Object.fromEntries(new Headers(options.headers || {}).entries())
+    headers['X-Learning-Data-Revision'] = dataRevision
+    requestOptions = { ...options, headers }
+  }
+  const response = await globalThis.fetch(url, requestOptions)
+  const nextRevision = response.headers?.get?.('X-Learning-Data-Revision')
+  if (nextRevision) dataRevision = nextRevision
+  return response
+}
 
 async function structuredRequest(url, options) {
   const res = options === undefined ? await fetch(url) : await fetch(url, options)
@@ -468,11 +488,11 @@ export async function startExam(topicId, moduleId) {
   return body
 }
 
-export async function saveExamProgress(topicId, moduleId, answers) {
+export async function saveExamProgress(topicId, moduleId, answers, { attemptId, expectedAnswersRevision } = {}) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/save-progress`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, ...(attemptId ? { attemptId } : {}), ...(expectedAnswersRevision ? { expectedAnswersRevision } : {}) }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -481,11 +501,11 @@ export async function saveExamProgress(topicId, moduleId, answers) {
   return body
 }
 
-export async function submitExam(topicId, moduleId, answers, localDate) {
+export async function submitExam(topicId, moduleId, answers, localDate, { attemptId, expectedAnswersRevision } = {}) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers, localDate }),
+    body: JSON.stringify({ answers, localDate, ...(attemptId ? { attemptId } : {}), ...(expectedAnswersRevision ? { expectedAnswersRevision } : {}) }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -519,11 +539,11 @@ export async function startPartialRetest(topicId, moduleId, failedOutcomeIds) {
   return body
 }
 
-export async function submitPartialRetest(topicId, moduleId, retestId, answers, localDate) {
+export async function submitPartialRetest(topicId, moduleId, retestId, answers, localDate, { expectedAnswersRevision } = {}) {
   const res = await fetch(`${API_BASE}/api/topics/${topicId}/modules/${moduleId}/exam/partial-retest/${retestId}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers, localDate }),
+    body: JSON.stringify({ answers, localDate, attemptId: retestId, ...(expectedAnswersRevision ? { expectedAnswersRevision } : {}) }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {

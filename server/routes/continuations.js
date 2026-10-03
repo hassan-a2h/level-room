@@ -12,6 +12,7 @@ import {
   getLineage,
 } from '../utils/course-lineage.js'
 import { CURRICULUM_MAX_BYTES, collectCurriculumDraft, validateCurriculum, writeCurriculumSSE, writeCurriculumSSEError } from '../utils/curriculum-draft.js'
+import { assertDataRevision, getDataRevision } from '../utils/data-revision.js'
 
 const router = Router()
 const BALANCED_LANE = 'balanced-next'
@@ -252,6 +253,7 @@ router.get('/topics/:id/continuation-readiness', (req, res) => {
 })
 
 router.post('/topics/:id/continuations/generate', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     rejectLaneSelection(req.body)
     const context = requireEligible(Number(req.params.id))
@@ -264,6 +266,7 @@ router.post('/topics/:id/continuations/generate', async (req, res) => {
       messages: [{ role: 'user', content: 'Generate the complete balanced continuation Track JSON.' }],
     })
     const draft = normalizeBalancedCurriculum(await parseGeneratedCurriculum(streamResult, context), context.readiness.course, context.lineageOutcomes)
+    assertDataRevision(requestRevision)
     return writeCurriculumSSE(res, draft)
   } catch (error) {
     if (error instanceof LlmClientError) return res.status(400).json({ error: error.message, code: error.code, retryable: error.retryable })
@@ -272,6 +275,7 @@ router.post('/topics/:id/continuations/generate', async (req, res) => {
 })
 
 router.post('/topics/:id/continuations/tweak', async (req, res) => {
+  const requestRevision = getDataRevision()
   try {
     rejectLaneSelection(req.body)
     const context = requireEligible(Number(req.params.id))
@@ -291,6 +295,7 @@ router.post('/topics/:id/continuations/tweak', async (req, res) => {
       trackKind: 'continuation',
       lineageOutcomes: context.lineageOutcomes,
     })
+    assertDataRevision(requestRevision)
     return res.json({ curriculum: normalizeBalancedCurriculum(draft, context.readiness.course, context.lineageOutcomes) })
   } catch (error) {
     if (error instanceof LlmClientError) return res.status(400).json({ error: error.message, code: error.code, retryable: error.retryable })

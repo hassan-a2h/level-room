@@ -40,7 +40,8 @@ export function buildSessionViewModel(input = {}) {
   const entries = state.activityState?.blocks || {}
   const currentBlockId = state.activityProgress?.currentBlockId ?? state.activityState?.currentBlockId ?? null
   const currentBlock = blocks.find((block) => block.id === currentBlockId) || null
-  const viewedBlock = blocks.find((block) => block.id === state.reviewBlockId) || currentBlock
+  const heldBlock = blocks.find((block) => block.id === state.heldFeedbackBlockId) || null
+  const viewedBlock = blocks.find((block) => block.id === state.reviewBlockId) || heldBlock || currentBlock
   const error = state.error ? toPublicError(state.error, 'The Session could not be loaded. Your saved progress is safe; try again.') : null
   let phase = state.loading ? 'loading' : state.data?.locked ? 'locked' : error?.kind === 'expired' ? 'expired' : 'active'
   if (!state.loading && !error && (state.sessionComplete || state.progress?.state === 'passed' || state.data?.progress?.state === 'passed')) phase = 'complete'
@@ -54,6 +55,7 @@ export function buildSessionViewModel(input = {}) {
     viewedEntry: viewedBlock ? entries[viewedBlock.id] || {} : null,
     draftsByBlockId: state.draftsByBlockId,
     reviewMode: Boolean(state.reviewBlockId && viewedBlock),
+    heldFeedbackBlockId: state.heldFeedbackBlockId || null,
     artifactRequired: Boolean(state.artifactRequired || state.session?.artifact_required || state.data?.lesson?.artifact_required),
     tutor: state.tutor,
     busy: state.busy,
@@ -67,6 +69,7 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [reviewBlockId, setReviewBlockId] = useState(null)
+  const [heldFeedbackBlockId, setHeldFeedbackBlockId] = useState(null)
   const [sessionComplete, setSessionComplete] = useState(progress?.state === 'passed')
   const [draftsByBlockId, setDraftsByBlockId] = useState({})
   const [tutor, setTutor] = useState({ draft: '', expanded: false, messages })
@@ -74,14 +77,19 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
   const blocks = useMemo(() => activityDocument?.blocks || [], [activityDocument?.blocks])
   const currentBlockId = activityProgress?.currentBlockId ?? activityState?.currentBlockId ?? null
   const currentBlock = blocks.find((block) => block.id === currentBlockId) || null
-  const done = sessionComplete || progress?.state === 'passed' || (!currentBlockId && completedCount(activityDocument, activityState) === (activityProgress?.total ?? blocks.filter((block) => block.required).length) && !artifactRequired)
+  const done = !heldFeedbackBlockId && (sessionComplete || progress?.state === 'passed' || (!currentBlockId && completedCount(activityDocument, activityState) === (activityProgress?.total ?? blocks.filter((block) => block.required).length) && !artifactRequired))
   const completed = activityProgress?.completed ?? completedCount(activityDocument, activityState)
   const total = activityProgress?.total ?? blocks.filter((block) => block.required).length
   const percent = activityProgress?.percent ?? Math.floor(completed / Math.max(1, total) * 100)
   const textualProgress = `${completed} of ${total}`
   const allBlocksDone = !currentBlockId && completed >= total
 
-  useEffect(() => { setActivityState(initialState); setActivityProgress(initialProgress) }, [initialState, initialProgress])
+  useEffect(() => {
+    setActivityState(initialState)
+    setActivityProgress(initialProgress)
+    setHeldFeedbackBlockId(null)
+    setReviewBlockId(null)
+  }, [initialState, initialProgress])
 
   const applyResult = useCallback((result) => {
     if (result?.activityState) setActivityState(result.activityState)
@@ -101,6 +109,7 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
         : await submitActivityBlock(topicId, lessonId, block.id, request)
       applyResult(result)
       setReviewBlockId(null)
+      if (kind === 'submit' && result?.feedback) setHeldFeedbackBlockId(block.id)
     } catch (requestError) {
       if (requestError?.latestState) {
         setActivityState(requestError.latestState)
@@ -113,6 +122,11 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
       setBusy(false)
     }
   }, [activityDocument, applyResult, blocks, done, lessonId, reviewBlockId, topicId])
+
+  const continueAfterFeedback = useCallback(() => {
+    setHeldFeedbackBlockId(null)
+    setError(null)
+  }, [])
 
   const refreshAfterBuild = useCallback(async () => {
     try {
@@ -129,6 +143,6 @@ export function useSessionController({ topicId, lessonId, session, progress, mes
     setDraftsByBlockId((current) => ({ ...current, [blockId]: { ...current[blockId], [field]: value } }))
   }, [])
   const updateTutor = useCallback((changes) => setTutor((current) => ({ ...current, ...changes })), [])
-  const model = useMemo(() => buildSessionViewModel({ session, progress: activityProgress, activityDocument, activityState, sessionComplete, artifactRequired, reviewBlockId, draftsByBlockId, tutor, busy: { mutating: busy }, error }), [activityProgress, activityDocument, activityState, artifactRequired, busy, draftsByBlockId, error, reviewBlockId, session, sessionComplete, tutor])
-  return { model, activityState, activityProgress, busy, error, setError, reviewBlockId, setReviewBlockId, sessionComplete, setSessionComplete, currentBlockId, currentBlock, done, allBlocksDone, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild }
+  const model = useMemo(() => buildSessionViewModel({ session, progress: activityProgress, activityDocument, activityState, sessionComplete, artifactRequired, reviewBlockId, heldFeedbackBlockId, draftsByBlockId, tutor, busy: { mutating: busy }, error }), [activityProgress, activityDocument, activityState, artifactRequired, busy, draftsByBlockId, error, heldFeedbackBlockId, reviewBlockId, session, sessionComplete, tutor])
+  return { model, activityState, activityProgress, busy, error, setError, reviewBlockId, setReviewBlockId, heldFeedbackBlockId, continueAfterFeedback, sessionComplete, setSessionComplete, currentBlockId, currentBlock, done, allBlocksDone: allBlocksDone && !heldFeedbackBlockId, percent, textualProgress, draftsByBlockId, setBlockDraft, tutor, updateTutor, mutate, refreshAfterBuild }
 }

@@ -77,6 +77,20 @@ describe('ThemePrepaint', () => {
     expect(values.has('mastery-roadmap-theme')).toBe(false)
   })
 
+  it('normalizes a recognized legacy pack to the Living Atlas compatibility alias', () => {
+    const root = createRoot()
+    const values = new Map([['mastery-roadmap-theme', 'mission-workshop']])
+    const storage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    }
+
+    expect(prepaintTheme({ root, storage }).theme.id).toBe('living-atlas')
+    expect(values.get(THEME_STORAGE_KEY)).toBe('living-atlas')
+    expect(values.has('mastery-roadmap-theme')).toBe(false)
+  })
+
   it('removes the legacy key when the new key already contains a valid selection', () => {
     const root = createRoot()
     const values = new Map([[THEME_STORAGE_KEY, 'mission-workshop'], ['mastery-roadmap-theme', 'palette-purple']])

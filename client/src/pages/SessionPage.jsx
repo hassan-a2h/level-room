@@ -1,10 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ensureActivities, getLesson } from '../api.js'
 import AppHeader from '../components/AppHeader.jsx'
 import SessionPlayer from '../components/session/SessionPlayer.jsx'
 import { toPublicError } from '../lib/publicError.js'
+
+function HistoricalSessionSummary({ lesson, artifact }) {
+  return (
+    <main className="session-page">
+      <AppHeader variant="focus" title={lesson?.title || 'Completed Session'} detail={lesson?.module_title || ''} returnTo="/" returnLabel="Trail" />
+      <section className="session-complete-card" aria-labelledby="historical-session-title">
+        <p className="session-eyebrow">Completed Session</p>
+        <h2 id="historical-session-title">This Session is already complete</h2>
+        <p>The interactive activity is no longer stored, so this historical result is available in read-only mode.</p>
+        {artifact?.evaluation && <div className="session-takeaway-summary"><h3>Build result</h3><p>{artifact.evaluation.passed ? 'Build passed' : 'Build submitted for revision'} · {artifact.evaluation.overallScore}%</p></div>}
+        {artifact?.content && <div className="session-takeaway-summary"><h3>Saved Build evidence</h3><p>{artifact.content}</p></div>}
+        <Link className="ui-button ui-button-primary" to="/">Back to your Trail</Link>
+      </section>
+    </main>
+  )
+}
 
 function errorMessage(error) {
   if (error?.code === 'ACTIVITY_DOCUMENT_INVALID') return 'The saved Session activity could not be read safely. Return to your Trail or try loading it again.'
@@ -31,6 +47,10 @@ export default function SessionPage() {
         return
       }
       if (sessionData.activityDocument) {
+        setData(sessionData)
+        return
+      }
+      if (sessionData.progress?.state === 'passed') {
         setData(sessionData)
         return
       }
@@ -86,6 +106,10 @@ export default function SessionPage() {
         </section>
       </main>
     )
+  }
+
+  if (data?.progress?.state === 'passed' && !data.activityDocument) {
+    return <HistoricalSessionSummary lesson={data.lesson} artifact={data.historicalArtifact} />
   }
 
   return (
