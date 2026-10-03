@@ -26,9 +26,9 @@ describe('ThemePrepaint', () => {
     if (stylesheetIndex >= 0) expect(scriptIndex).toBeLessThan(stylesheetIndex)
 
     for (const [storedId, expectedId, expectedMode] of [
-      ['mission-workshop', 'mission-workshop', 'dark'],
-      ['unknown-theme', 'living-atlas', 'light'],
-      [null, 'living-atlas', 'light'],
+      ['forest-dusk', 'forest-dusk', 'dark'],
+      ['unknown-theme', 'morning-mist', 'light'],
+      [null, 'morning-mist', 'light'],
     ]) {
       const htmlDocument = document.implementation.createHTMLDocument()
       new Function('document', 'localStorage', inlineScript)(htmlDocument, {
@@ -42,7 +42,7 @@ describe('ThemePrepaint', () => {
     new Function('document', 'localStorage', inlineScript)(deniedDocument, {
       getItem() { throw new Error('denied') },
     })
-    expect(deniedDocument.documentElement.dataset.theme).toBe('living-atlas')
+    expect(deniedDocument.documentElement.dataset.theme).toBe('morning-mist')
   })
 
   it('synchronously paints the saved theme using the versioned storage key', () => {
@@ -56,10 +56,10 @@ describe('ThemePrepaint', () => {
 
   it('falls back for stale IDs and storage denial, while reporting session-only use', () => {
     const staleRoot = createRoot()
-    expect(prepaintTheme({ root: staleRoot, storage: { getItem: () => 'retired-theme' } }).theme.id).toBe('living-atlas')
+    expect(prepaintTheme({ root: staleRoot, storage: { getItem: () => 'retired-theme' } }).theme.id).toBe('morning-mist')
     const deniedRoot = createRoot()
     const result = prepaintTheme({ root: deniedRoot, packs: THEMES, storage: { getItem() { throw new Error('denied') } } })
-    expect(result.theme.id).toBe('living-atlas')
+    expect(result.theme.id).toBe('morning-mist')
     expect(result.message).toMatch(/session/i)
   })
 
@@ -72,8 +72,8 @@ describe('ThemePrepaint', () => {
       removeItem: (key) => values.delete(key),
     }
 
-    expect(prepaintTheme({ root, storage }).theme.id).toBe('living-atlas')
-    expect(values.get(THEME_STORAGE_KEY)).toBe('living-atlas')
+    expect(prepaintTheme({ root, storage }).theme.id).toBe('morning-mist')
+    expect(values.get(THEME_STORAGE_KEY)).toBe('morning-mist')
     expect(values.has('mastery-roadmap-theme')).toBe(false)
   })
 

@@ -7,16 +7,18 @@
     <title>Mastery Roadmap</title>
     <script>
       (() => {
-        const ids = ['living-atlas', 'curiosity-engine', 'mission-workshop']
-        let theme = 'living-atlas'
+        const ids = ['morning-mist', 'forest-dusk', 'blue-harbor', 'deep-ocean', 'lavender-still', 'night-lavender', 'warm-sand', 'cocoa-evening', 'sage-garden', 'moss-night', 'rosewater', 'plum-twilight', 'quiet-linen', 'graphite-calm', 'sea-glass', 'midnight-ink']
+        const aliases = { 'living-atlas': 'morning-mist', 'curiosity-engine': 'blue-harbor', 'mission-workshop': 'forest-dusk' }
+        let theme = 'morning-mist'
         try {
-          const storedTheme = localStorage.getItem('mastery-trail-theme-v2')
-          if (ids.includes(storedTheme)) theme = storedTheme
+          const storedTheme = localStorage.getItem('mastery-trail-theme-v2') || localStorage.getItem('mastery-roadmap-theme')
+          const resolvedTheme = aliases[storedTheme] || storedTheme
+          if (ids.includes(resolvedTheme)) theme = resolvedTheme
         } catch {
           // The default theme is painted when browser storage is unavailable.
         }
         document.documentElement.dataset.theme = theme
-        document.documentElement.style.colorScheme = theme === 'mission-workshop' ? 'dark' : 'light'
+        document.documentElement.style.colorScheme = ['forest-dusk', 'deep-ocean', 'night-lavender', 'cocoa-evening', 'moss-night', 'plum-twilight', 'graphite-calm', 'midnight-ink'].includes(theme) ? 'dark' : 'light'
       })()
     </script>
   </head>

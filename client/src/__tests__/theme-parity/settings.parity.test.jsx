@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { ThemeProvider } from '../../theme/ThemeProvider.jsx'
 import SettingsPage from '../../pages/SettingsPage.jsx'
 
-const themes = ['living-atlas', 'curiosity-engine', 'mission-workshop']
+const themes = ['morning-mist', 'blue-harbor', 'forest-dusk']
 
 describe('settings theme parity', () => {
   beforeEach(() => {
@@ -31,11 +31,11 @@ describe('settings theme parity', () => {
     let scene = document.querySelector('[data-theme-view="SettingsView"]')
     await waitFor(() => expect(scene).toBeInTheDocument())
     expect(within(scene).getByRole('heading', { name: 'Appearance' })).toBeInTheDocument()
-    expect(within(scene).getAllByRole('radio')).toHaveLength(3)
-    expect(within(scene).getAllByRole('img', { name: /preview/i })).toHaveLength(3)
-    fireEvent.click(within(scene).getByRole('radio', { name: /Mission Workshop/ }))
-    expect(document.documentElement).toHaveAttribute('data-theme', 'mission-workshop')
-    await waitFor(() => expect(screen.getByRole('radio', { name: /Mission Workshop/ })).toBeChecked())
+    expect(within(scene).getAllByRole('radio')).toHaveLength(16)
+    expect(within(scene).getAllByRole('img', { name: /preview/i })).toHaveLength(16)
+    fireEvent.click(within(scene).getByRole('radio', { name: /Forest Dusk/ }))
+    expect(document.documentElement).toHaveAttribute('data-theme', 'forest-dusk')
+    await waitFor(() => expect(document.querySelector('input[value="forest-dusk"]')).toBeChecked())
     await waitFor(() => expect(document.querySelector('[data-theme-view="SettingsView"]')).toBeInTheDocument())
     scene = document.querySelector('[data-theme-view="SettingsView"]')
     for (const category of ['Learning', 'AI connection', 'Data & privacy', 'Restore']) {

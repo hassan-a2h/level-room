@@ -25,10 +25,10 @@ afterEach(() => {
 })
 
 describe('ThemeProvider', () => {
-  it('starts with Living Atlas and applies semantic tokens and native control mode', () => {
+  it('starts with Morning Mist and applies semantic tokens and native control mode', () => {
     render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
-    expect(document.documentElement).toHaveAttribute('data-theme', 'living-atlas')
+    expect(screen.getByText('Morning Mist')).toBeInTheDocument()
+    expect(document.documentElement).toHaveAttribute('data-theme', 'morning-mist')
     expect(document.documentElement).toHaveAttribute('data-theme-mode', 'light')
     expect(document.documentElement.style.colorScheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--canvas')).toBeTruthy()
@@ -43,12 +43,12 @@ describe('ThemeProvider', () => {
 
     window.localStorage.setItem(THEME_STORAGE_KEY, 'retired-theme')
     const second = render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
+    expect(screen.getByText('Morning Mist')).toBeInTheDocument()
     second.unmount()
 
     window.localStorage.setItem(THEME_STORAGE_KEY, 'unknown-theme')
     render(<ThemeProvider><Probe /></ThemeProvider>)
-    expect(screen.getByText('Living Atlas')).toBeInTheDocument()
+    expect(screen.getByText('Morning Mist')).toBeInTheDocument()
   })
 
   it('applies a choice immediately and persists it for this browser profile', () => {

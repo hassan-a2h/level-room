@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./styles/tokens.css";
+@import "./styles/generated-themes.css";
 @import "./styles/base.css";
 @import "./styles/components.css";
 @import "./styles/motion.css";

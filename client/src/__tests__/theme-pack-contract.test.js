@@ -10,7 +10,9 @@ import {
 const completePack = (id) => ({
   id,
   name: id,
-  mode: id === 'mission-workshop' ? 'dark' : 'light',
+  mode: id.endsWith('dusk') || id.endsWith('ocean') || id.endsWith('lavender') || id.endsWith('evening') || id.endsWith('night') || id.endsWith('twilight') || id.endsWith('calm') || id === 'midnight-ink' ? 'dark' : 'light',
+  familyId: 'fixture-family',
+  pairedThemeId: id,
   tagline: 'A useful tagline',
   previewAsset: '/assets/preview.webp',
   tokens: Object.fromEntries(REQUIRED_TOKEN_KEYS.map((key) => [key, key.startsWith('radius') || key.startsWith('motion') ? '1rem' : '#123456'])),
@@ -19,9 +21,11 @@ const completePack = (id) => ({
 })
 
 describe('theme pack contract', () => {
-  it('locks the three theme IDs and Living Atlas default', () => {
-    expect(REQUIRED_THEME_IDS).toEqual(['living-atlas', 'curiosity-engine', 'mission-workshop'])
-    expect(DEFAULT_THEME_ID).toBe('living-atlas')
+  it('locks all sixteen theme IDs and Morning Mist default', () => {
+    expect(REQUIRED_THEME_IDS).toHaveLength(16)
+    expect(REQUIRED_THEME_IDS).toContain('morning-mist')
+    expect(REQUIRED_THEME_IDS).toContain('midnight-ink')
+    expect(DEFAULT_THEME_ID).toBe('morning-mist')
     expect(Object.isFrozen(REQUIRED_THEME_IDS)).toBe(true)
     expect(Object.isFrozen(REQUIRED_TOKEN_KEYS)).toBe(true)
     expect(Object.isFrozen(THEME_VIEW_NAMES)).toBe(true)
@@ -36,11 +40,11 @@ describe('theme pack contract', () => {
   it('rejects unknown IDs, invalid modes, missing metadata, tokens, and view loaders', () => {
     const invalidCases = [
       [{ ...completePack('unknown-theme') }, /id/],
-      [{ ...completePack('living-atlas'), mode: 'dark' }, /mode/],
-      [(() => { const pack = completePack('living-atlas'); delete pack.id; return pack })(), /id/],
-      [{ ...completePack('living-atlas'), tokens: Object.fromEntries(REQUIRED_TOKEN_KEYS.filter((key) => key !== 'ink').map((key) => [key, '#123456'])) }, /tokens\.ink/],
-      [{ ...completePack('living-atlas'), tokens: { ...completePack('living-atlas').tokens, ink: '' } }, /tokens\.ink/],
-      [{ ...completePack('living-atlas'), viewLoaders: { ...completePack('living-atlas').viewLoaders, TrailView: null } }, /viewLoaders\.TrailView/],
+      [{ ...completePack('morning-mist'), mode: 'invalid' }, /mode/],
+      [(() => { const pack = completePack('morning-mist'); delete pack.id; return pack })(), /id/],
+      [{ ...completePack('morning-mist'), tokens: Object.fromEntries(REQUIRED_TOKEN_KEYS.filter((key) => key !== 'ink').map((key) => [key, '#123456'])) }, /tokens\.ink/],
+      [{ ...completePack('morning-mist'), tokens: { ...completePack('morning-mist').tokens, ink: '' } }, /tokens\.ink/],
+      [{ ...completePack('morning-mist'), viewLoaders: { ...completePack('morning-mist').viewLoaders, TrailView: null } }, /viewLoaders\.TrailView/],
     ]
 
     for (const [pack, message] of invalidCases) {

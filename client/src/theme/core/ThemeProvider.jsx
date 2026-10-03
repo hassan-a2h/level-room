@@ -1,4 +1,4 @@
-import { createContext, lazy, useCallback, useContext, useLayoutEffect, useMemo, useState } from 'react'
+import { createContext, lazy, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { DEFAULT_THEME_ID } from './packContract.js'
 import { applyThemeTokens, prepaintTheme, THEME_STORAGE_KEY } from './ThemePrepaint.js'
 import { getTheme } from '../index.js'
@@ -29,13 +29,25 @@ export function ThemeProvider({ children }) {
     if (!theme) return false
     let storageMessage = SESSION_ONLY_MESSAGE
     try {
-      globalThis.localStorage.setItem(THEME_STORAGE_KEY, id)
+      globalThis.localStorage.setItem(THEME_STORAGE_KEY, theme.id)
       storageMessage = 'Saved in this browser'
     } catch {
       // The in-memory selection remains available for this session.
     }
     setSelection({ theme, message: storageMessage })
     return true
+  }, [])
+
+  useEffect(() => {
+    if (typeof globalThis.addEventListener !== 'function') return undefined
+    const handleStorage = (event) => {
+      if (event.key !== THEME_STORAGE_KEY && event.key !== 'mastery-roadmap-theme') return
+      const nextTheme = event.newValue ? getTheme(event.newValue) : getTheme(DEFAULT_THEME_ID)
+      if (!nextTheme) return
+      setSelection({ theme: nextTheme, message: event.newValue ? 'Updated from another tab' : '' })
+    }
+    globalThis.addEventListener('storage', handleStorage)
+    return () => globalThis.removeEventListener('storage', handleStorage)
   }, [])
 
   const value = useMemo(() => ({

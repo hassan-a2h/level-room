@@ -1,16 +1,24 @@
-export const DEFAULT_THEME_ID = 'living-atlas'
+export const DEFAULT_THEME_ID = 'morning-mist'
 
 export const REQUIRED_THEME_IDS = Object.freeze([
-  'living-atlas',
-  'curiosity-engine',
-  'mission-workshop',
+  'morning-mist', 'forest-dusk',
+  'blue-harbor', 'deep-ocean',
+  'lavender-still', 'night-lavender',
+  'warm-sand', 'cocoa-evening',
+  'sage-garden', 'moss-night',
+  'rosewater', 'plum-twilight',
+  'quiet-linen', 'graphite-calm',
+  'sea-glass', 'midnight-ink',
 ])
 
 export const REQUIRED_TOKEN_KEYS = Object.freeze([
-  'canvas', 'panel', 'elevated', 'inset', 'border', 'borderStrong', 'ink', 'inkSoft', 'inkMuted',
-  'primary', 'primaryHover', 'primaryContrast', 'secondary', 'accentWarm', 'accentSun', 'success',
-  'warning', 'danger', 'fontDisplay', 'fontBody', 'fontLabel', 'radiusControl', 'radiusPanel',
-  'radiusHero', 'motionFast', 'motionStandard', 'motionSpatial',
+  'canvas', 'canvasSubtle', 'panel', 'surface', 'elevated', 'surfaceRaised', 'inset', 'surfaceSunken',
+  'border', 'borderStrong', 'decorativeBorder', 'ink', 'text', 'inkSoft', 'textSoft', 'inkMuted', 'textMuted',
+  'primary', 'primaryHover', 'primaryContrast', 'primarySoft', 'secondary', 'accentWarm', 'accentSun',
+  'success', 'successSoft', 'successBorder', 'warning', 'warningSoft', 'warningBorder', 'danger', 'dangerSoft', 'dangerBorder',
+  'info', 'infoSoft', 'infoBorder', 'mastery', 'masterySoft', 'roadmapScenery', 'roadmapConnector',
+  'nodeMastered', 'nodeCurrent', 'nodeAvailable', 'nodeLocked', 'buttonShadow', 'panelShadow', 'shadowColor',
+  'fontDisplay', 'fontBody', 'fontLabel', 'radiusControl', 'radiusPanel', 'radiusHero', 'motionFast', 'motionStandard', 'motionSpatial',
 ])
 
 export const THEME_VIEW_NAMES = Object.freeze([
@@ -55,7 +63,7 @@ export const VIEW_MODEL_FIELDS = Object.freeze({
 export const VIEW_MODEL_NAMES = Object.freeze(Object.keys(VIEW_MODEL_FIELDS))
 
 const requiredPackFields = Object.freeze([
-  'id', 'name', 'mode', 'tagline', 'previewAsset', 'tokens', 'artwork', 'viewLoaders',
+  'id', 'name', 'mode', 'familyId', 'pairedThemeId', 'tagline', 'previewAsset', 'tokens', 'artwork', 'viewLoaders',
 ])
 
 function isRecord(value) {
@@ -73,8 +81,9 @@ export function validateThemePack(pack) {
   assertFields(pack, requiredPackFields, 'pack')
 
   if (!REQUIRED_THEME_IDS.includes(pack.id)) throw new Error(`pack.id must be one of: ${REQUIRED_THEME_IDS.join(', ')}`)
-  const expectedMode = pack.id === 'mission-workshop' ? 'dark' : 'light'
-  if (pack.mode !== expectedMode) throw new Error(`pack.mode for ${pack.id} must be ${expectedMode}`)
+  if (!['light', 'dark'].includes(pack.mode)) throw new Error(`pack.mode for ${pack.id} must be light or dark`)
+  if (typeof pack.familyId !== 'string' || pack.familyId.trim() === '') throw new Error('pack.familyId must be a non-empty string')
+  if (!REQUIRED_THEME_IDS.includes(pack.pairedThemeId)) throw new Error(`pack.pairedThemeId for ${pack.id} must be a contracted theme ID`)
   for (const field of ['name', 'tagline', 'previewAsset']) {
     if (typeof pack[field] !== 'string' || pack[field].trim() === '') throw new Error(`pack.${field} must be a non-empty string`)
   }
