@@ -101,6 +101,7 @@ function buildGenerationContext(lesson) {
   }
   const task = parseJsonField(lesson.task_spec, null, 'Build metadata')
   const context = {
+    lessonId: lesson.id,
     topicTitle: boundedText(lesson.topic_title, 180),
     chapterTitle: boundedText(lesson.chapter_title, 180),
     lessonTitle: boundedText(lesson.title, 180),
@@ -123,7 +124,7 @@ Context:
 ${JSON.stringify(context)}
 
 Contract:
-- Return schemaVersion 1, promptVersion "session-activities-v1", lesson {lessonId, outcomeIds, estimatedMinutes}, blocks, and answerKey. Do not return generator metadata; the server adds it.
+- Return schemaVersion 1, promptVersion "session-activities-v1", lesson {lessonId, outcomeIds, estimatedMinutes}, blocks, and answerKey. lesson.lessonId must be the exact numeric lesson ID from the context (never the lesson title or a slug). Copy the context lessonId, outcomeIds, and estimatedMinutes exactly. Do not return generator metadata; the server adds it.
 - Generate 4-8 ordered blocks: at least one read, one worked_example, and at least two active attempts across choice, ordering, and short_answer. At least one active attempt must be in the final two blocks.
 - In version 1, every block is required. Every block has id, type, title, required, estimatedMinutes, and outcomeIds. Use unique stable kebab-case IDs, not array positions.
 - Public block type shapes: read {content}; worked_example {problem, steps:[{id,title,content}], takeaway}; choice {prompt, options:[{id,label}]}; ordering {prompt, items:[{id,label}]}; short_answer {prompt,responseHint,minChars,maxChars}; reflection {prompt,placeholder?,maxChars}.

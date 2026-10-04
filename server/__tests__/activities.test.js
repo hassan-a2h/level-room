@@ -221,6 +221,18 @@ describe('activity generation API', () => {
     expect(llmMocks.streamText.mock.calls[0][0].system).toContain('Beginner')
   })
 
+  it('binds generated activity metadata to the exact numeric lesson ID', async () => {
+    const seeded = seedLesson()
+    respondWith(makeProviderDocument(seeded.lessonId))
+
+    const result = await request(app).post(`/api/topics/${seeded.topicId}/lessons/${seeded.lessonId}/activities`)
+
+    expect(result.status).toBe(201)
+    const prompt = llmMocks.streamText.mock.calls[0][0].system
+    expect(prompt).toContain(`"lessonId":${seeded.lessonId}`)
+    expect(prompt).toContain('lesson.lessonId must be the exact numeric lesson ID from the context')
+  })
+
   it.each([
     ['invalid schema', (doc, lessonId) => ({ ...doc, lesson: { ...doc.lesson, lessonId: lessonId + 1 } }), 422],
     ['malformed JSON', (_doc) => 'not json', 502],
