@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="250" viewBox="0 0 920 250" fill="none">
+  <title>Levelroom</title>
+  <desc>A rounded portal opening onto a winding path with three milestones, followed by the Levelroom wordmark.</desc>
+  <defs>
+    <linearGradient id="portal" x1="28" y1="18" x2="148" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17211C"/>
+      <stop offset="1" stop-color="#337C55"/>
+    </linearGradient>
+    <linearGradient id="path" x1="61" y1="184" x2="123" y2="63" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#337C55"/>
+      <stop offset="1" stop-color="#C8F24A"/>
+    </linearGradient>
+    <filter id="soft" x="0" y="0" width="190" height="235" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#17211C" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <g filter="url(#soft)">
+    <path d="M35 190V76C35 40.102 64.102 11 100 11s65 29.102 65 65v114H35Z" fill="url(#portal)"/>
+    <path d="M59 190V78c0-22.644 18.356-41 41-41s41 18.356 41 41v112H59Z" fill="#F5F1E8"/>
+    <path d="M42 193c19-23 36-29 56-29 24 0 35 10 58 1 14-5 25-4 38 5l-26 26H42v-3Z" fill="url(#path)"/>
+    <circle cx="118" cy="158" r="12" fill="#F2C65B"/>
+    <circle cx="91" cy="183" r="12" fill="#F28A78"/>
+    <circle cx="62" cy="207" r="12" fill="#315FDA"/>
+  </g>
+  <text x="212" y="129" fill="#17211C" font-family="Manrope, Avenir Next, Inter, sans-serif" font-size="86" font-weight="800" letter-spacing="-3">Levelroom</text>
+  <text x="218" y="177" fill="#46534A" font-family="Manrope, Avenir Next, Inter, sans-serif" font-size="21" font-weight="700" letter-spacing="3.2">BUILD SKILLS BY DOING</text>
+</svg>

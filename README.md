@@ -1,6 +1,13 @@
-# Mastery Trail
+<p align="center">
+  <img src="assets/brand/levelroom/levelroom-social-preview.png" alt="Levelroom — build skills by doing">
+</p>
+
+<h1 align="center">Levelroom</h1>
+
+<p align="center"><strong>Build skills by doing.</strong></p>
 
 A local-first learning app that turns a learner’s goal into a guided Trail. AI helps shape a personal plan and tutor explanations; structured practice, explicit outcomes, and scored Chapter checkpoints keep mastery—not chat volume—at the center. Progress is organized as Tracks, Chapters, and Sessions, with saved Builds, spaced Reviews, and a calm, customizable visual experience.
+
 
 ## Table of Contents
 

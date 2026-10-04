@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" fill="none">
+  <title>Levelroom — Build skills by doing</title>
+  <defs>
+    <linearGradient id="veil" x1="0" y1="0" x2="770" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101820" stop-opacity=".98"/>
+      <stop offset=".56" stop-color="#101820" stop-opacity=".78"/>
+      <stop offset="1" stop-color="#101820" stop-opacity=".06"/>
+    </linearGradient>
+    <filter id="shadow" x="54" y="78" width="594" height="430" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <image href="levelroom-banner-dark.png" x="0" y="0" width="1280" height="640" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="1280" height="640" fill="url(#veil)"/>
+  <g filter="url(#shadow)">
+    <rect x="86" y="104" width="122" height="122" rx="34" fill="#17211C"/>
+    <path d="M119 197V145c0-15.464 12.536-28 28-28s28 12.536 28 28v52" stroke="#F5F1E8" stroke-width="15" stroke-linecap="round"/>
+    <path d="M106 201c14-13 27-17 42-17 17 0 25 8 41 1" stroke="#59A56F" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="174" cy="180" r="8" fill="#F2C65B"/>
+    <circle cx="145" cy="200" r="8" fill="#F28A78"/>
+  </g>
+  <text x="86" y="315" fill="#F5F1E8" font-family="Manrope, Avenir Next, Inter, sans-serif" font-size="84" font-weight="800" letter-spacing="-3">Levelroom</text>
+  <text x="91" y="365" fill="#D0D6D3" font-family="Manrope, Avenir Next, Inter, sans-serif" font-size="25" font-weight="700" letter-spacing="4.5">BUILD SKILLS BY DOING</text>
+  <rect x="90" y="424" width="220" height="6" rx="3" fill="#F2C65B"/>
+  <text x="90" y="475" fill="#D0D6D3" font-family="Manrope, Avenir Next, Inter, sans-serif" font-size="20" font-weight="600">Interactive trails · practice · build challenges</text>
+</svg>
