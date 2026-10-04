@@ -5,3 +5,9 @@ data/*.db-shm
 data/*.db-wal
 *.log
 .env
+
+# Local agent instructions
+CLAUDE.md
+claude.md
+AGENTS.md
+agents.md
